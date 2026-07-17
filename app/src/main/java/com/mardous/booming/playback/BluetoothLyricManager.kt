@@ -9,14 +9,13 @@ import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (GS3 零分配极低功耗版)
- * 极致优化：引入状态机缓存，实现零内存分配拦截，彻底根除 CPU 发热与耗电
+ * 车载蓝牙歌词核心引擎 (GS3 终极零功耗 + 延迟补偿版)
+ * 修复：精准调用真实的 Repo 解析方法
+ * 优化：零内存分配拦截 + 400ms前置补偿 + 纯音符间奏
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -26,7 +25,7 @@ class BluetoothLyricManager(
     private var isHooked = false
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
-    // 【发热终结者】：状态机缓存
+    // 【发热终结者】：状态机缓存，阻止无效的内存分配
     private enum class DisplayState { UNKNOWN, PRELUDE, INTERLUDE, LYRIC }
     private var currentDisplayState = DisplayState.UNKNOWN
     private var currentDisplayIndex = -1
@@ -36,7 +35,7 @@ class BluetoothLyricManager(
 
     private var fetchJob: Job? = null
 
-    // 250ms 轮询，配合零分配状态机，既快又省电
+    // 250ms 轮询，配合零分配状态机，极速又极其省电
     private val progressObserver = ProgressObserver(250L)
 
     init {
@@ -70,19 +69,25 @@ class BluetoothLyricManager(
         lastPushedArtist = ""
     }
 
+    /**
+     * 切歌时拉取并解析歌词 (真实 Repo 逻辑)
+     */
     fun loadLyricsForSong(song: Song) {
         fetchJob?.cancel()
         fetchJob = coroutineScope.launch(Dispatchers.IO) {
             try {
-                val lyricsResult = lyricsRepository.getLyrics(song) 
-                
-                if (lyricsResult is Flow<*>) {
-                    lyricsResult.collectLatest { lyrics ->
-                        handleLyricsResult(lyrics)
-                    }
-                } else {
-                    handleLyricsResult(lyricsResult)
+                // 1. 依次尝试获取本地/内嵌/数据库的原始歌词
+                val rawLyrics = lyricsRepository.fileLyrics(song)
+                    ?: lyricsRepository.embeddedLyrics(song)
+                    ?: lyricsRepository.storedLyrics(song, allowDownload = true)
+
+                // 2. 解析为带有时间轴的实体类
+                val parsedLyrics = rawLyrics?.let { 
+                    lyricsRepository.parseRawLyrics(song, it) 
                 }
+
+                // 3. 传给主线程处理
+                handleLyricsResult(parsedLyrics)
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
@@ -94,9 +99,9 @@ class BluetoothLyricManager(
         }
     }
 
-    private suspend fun handleLyricsResult(lyrics: Any?) {
+    private suspend fun handleLyricsResult(lyrics: SyncedLyrics?) {
         withContext(Dispatchers.Main) {
-            if (lyrics is SyncedLyrics && lyrics.lines.isNotEmpty()) {
+            if (lyrics != null && lyrics.lines.isNotEmpty()) {
                 currentLyricsList = lyrics.lines
                 if (player.isPlaying) {
                     syncLyrics()
@@ -111,16 +116,16 @@ class BluetoothLyricManager(
     }
 
     /**
-     * 核心排版引擎 (零内存分配拦截优化)
+     * 核心排版引擎 (时间补偿 + 零内存分配)
      */
     private fun syncLyrics() {
         if (!player.isPlaying || currentLyricsList.isEmpty()) return
         
-        // 400ms 前置补偿，抵消蓝牙传输物理延迟
+        // 400ms 前置补偿，抵消蓝牙和车机渲染的物理延迟
         val compensatedPosition = player.currentPosition + 400L
         val currentIndex = currentLyricsList.indexOfLast { it.start <= compensatedPosition }
 
-        // --- 第一步：纯逻辑计算当前属于什么状态（不创建任何字符串） ---
+        // --- 第一步：零分配状态计算 ---
         val targetState: DisplayState
         
         if (currentIndex == -1) {
@@ -131,21 +136,20 @@ class BluetoothLyricManager(
             val nextLineStart = currentLyricsList.getOrNull(currentIndex + 1)?.start ?: Long.MAX_VALUE
             val timeSinceCurrent = compensatedPosition - currentLineObj.start
             val timeToNext = nextLineStart - compensatedPosition
-            val isInterlude = currentLineObj.content.content.isBlank() || (timeSinceCurrent > 3000L && timeToNext > 5000L)
             
+            // 判断间奏：空行 或 唱完超3秒且下句超5秒
+            val isInterlude = currentLineObj.content.content.isBlank() || (timeSinceCurrent > 3000L && timeToNext > 5000L)
             targetState = if (isInterlude) DisplayState.INTERLUDE else DisplayState.LYRIC
         }
 
         // ==========================================
-        // 【发热终结核心】：零分配空闲检查！
-        // 如果播放状态和唱到的行号都没变，立刻退出！
-        // 绝对不允许代码往下走去分配内存、拼接字符串。
+        // 发热终结核心：如果行号和间奏状态都没变，立刻阻断！
         // ==========================================
         if (targetState == currentDisplayState && currentIndex == currentDisplayIndex) {
             return
         }
 
-        // --- 第二步：状态确实改变了，更新缓存，并执行真正的字符串组装 ---
+        // --- 第二步：只有状态改变才去拼接字符串 ---
         currentDisplayState = targetState
         currentDisplayIndex = currentIndex
 
@@ -153,7 +157,7 @@ class BluetoothLyricManager(
         val artistParts = mutableListOf<String>()
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
-            // 前奏或间奏状态：寻找接下来的两句歌词预告
+            // 空档期：只放音符，下方预告后两句
             var nextIdx = currentIndex + 1
             var found = 0
             while (nextIdx < currentLyricsList.size && found < 2) {
@@ -165,7 +169,7 @@ class BluetoothLyricManager(
                 nextIdx++
             }
         } else {
-            // 正常演唱状态
+            // 演唱期：主区放原词，暗区放翻译和预告
             val currentLineObj = currentLyricsList[currentIndex]
             titleText = currentLineObj.content.content
 
