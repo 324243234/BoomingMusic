@@ -8,12 +8,11 @@ import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * 车载蓝牙歌词核心引擎 (深度优化版)
- * 特性：纯音符间奏、独立暗色翻译、双行未唱歌词、毫秒级防抖、超低 CPU 占用
+ * 车载蓝牙歌词核心引擎 (GS3 极致优化版)
+ * 特性：纯音符间奏、暗色独立翻译、双行未唱歌词预测、毫秒级防抖、超低 CPU 占用
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -27,71 +26,72 @@ class BluetoothLyricManager(
 
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
-    // 【性能核心】：记录上次推送的文本，严格拦截无效的跨进程蓝牙刷新，彻底解决发热问题
+    // 【性能防线】：记录上次推送到车机的文本，严格拦截无效跨进程通信，避免手机发热
     private var lastPushedTitle: String = ""
     private var lastPushedArtist: String = ""
 
     private var fetchJob: Job? = null
 
-    // 【能耗核心】：400ms 轮询间隔，既能保证秒级视觉同步，又不会给 CPU 造成负担
+    // 【能耗控制】：400ms 轮询间隔，保证秒级视觉同步且极其省电
     private val progressObserver = ProgressObserver(400L)
 
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying && currentLyricsList.isNotEmpty()) {
-                    // 秒响应：刚点下播放键，立即同步一次，不等待定时器
                     syncLyrics()
                     progressObserver.start { syncLyrics() }
                 } else {
-                    // 暂停：立刻停掉轮询，并恢复原歌名，防止屏幕卡在某句歌词上
                     progressObserver.stop()
                     restoreOriginalMetadata()
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // 切歌：立即停止老任务，防止数据错乱
                 progressObserver.stop()
                 fetchJob?.cancel()
 
-                // 缓存新歌的原始元数据
                 originalTitle = mediaItem?.mediaMetadata?.title?.toString()
                 originalArtist = mediaItem?.mediaMetadata?.artist?.toString()
                 originalAlbum = mediaItem?.mediaMetadata?.albumTitle?.toString()
                 
-                // 重置状态
                 currentLyricsList = emptyList()
                 lastPushedTitle = ""
                 lastPushedArtist = ""
                 
-                // 秒响应：切歌瞬间立刻显示新歌名，掩盖网络拉取歌词的延迟
+                // 切歌瞬间立刻恢复原歌名，掩盖解析歌词的微小延迟
                 restoreOriginalMetadata()
             }
         })
     }
 
     /**
-     * 外部调用：当切歌完成时，传入新歌信息拉取流
+     * 切歌时拉取并解析歌词
      */
     fun loadLyricsForSong(song: Song) {
         fetchJob?.cancel()
         fetchJob = coroutineScope.launch(Dispatchers.IO) {
             try {
-                lyricsRepository.getLyricsFlow(song.id).collectLatest { lyrics ->
-                    if (lyrics is SyncedLyrics && lyrics.lines.isNotEmpty()) {
-                        currentLyricsList = lyrics.lines
-                        if (player.isPlaying) {
-                            // 获取到歌词，立马显示
-                            syncLyrics()
-                            progressObserver.start { syncLyrics() }
-                        }
-                    } else {
-                        // 无歌词或拉取失败：退回普通蓝牙模式
-                        currentLyricsList = emptyList()
-                        progressObserver.stop()
-                        restoreOriginalMetadata()
+                // 1. 严格按照 BoomingMusic 的底层逻辑，依次尝试获取本地/内嵌/数据库歌词
+                val rawLyrics = lyricsRepository.fileLyrics(song)
+                    ?: lyricsRepository.embeddedLyrics(song)
+                    ?: lyricsRepository.storedLyrics(song, allowDownload = true)
+
+                // 2. 解析原始歌词为时间轴歌词对象
+                val parsedLyrics = rawLyrics?.let { 
+                    lyricsRepository.parseRawLyrics(song, it) 
+                }
+
+                if (parsedLyrics != null && parsedLyrics.lines.isNotEmpty()) {
+                    currentLyricsList = parsedLyrics.lines
+                    if (player.isPlaying) {
+                        syncLyrics()
+                        progressObserver.start { syncLyrics() }
                     }
+                } else {
+                    currentLyricsList = emptyList()
+                    progressObserver.stop()
+                    restoreOriginalMetadata()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -102,7 +102,7 @@ class BluetoothLyricManager(
     }
 
     /**
-     * 核心同步算法：排版与状态控制
+     * 核心排版引擎
      */
     private fun syncLyrics() {
         if (!player.isPlaying || currentLyricsList.isEmpty()) return
@@ -110,13 +110,13 @@ class BluetoothLyricManager(
         val currentPosition = player.currentPosition
         val currentIndex = currentLyricsList.indexOfLast { it.start <= currentPosition }
 
+        // 状态 1：前奏（未到第一句）
         if (currentIndex == -1) {
-            // 状态 1：前奏（还未到第一句）
             val firstLineStart = currentLyricsList.firstOrNull()?.start ?: 0
             if (firstLineStart - currentPosition > 3000L) {
                 pushToBluetooth(
                     titleText = originalTitle ?: "未知歌曲",
-                    artistText = "🎵 🎵 🎵" // 纯音符展示，无多余文字
+                    artistText = "🎵 🎵 🎵" // 极简纯音符前奏
                 )
             }
             return
@@ -124,7 +124,7 @@ class BluetoothLyricManager(
 
         val currentLineObj = currentLyricsList[currentIndex]
         
-        // 状态 2：间奏（检查当前这句是否唱完很久，且下一句还很远）
+        // 状态 2：间奏（当前句唱完很久，且下一句还很远）
         val nextLineStart = currentLyricsList.getOrNull(currentIndex + 1)?.start ?: Long.MAX_VALUE
         val timeToNextLine = nextLineStart - currentPosition
         val timeSinceCurrentLineStart = currentPosition - currentLineObj.start
@@ -132,44 +132,38 @@ class BluetoothLyricManager(
         if (timeSinceCurrentLineStart > 3000L && timeToNextLine > 5000L) {
             pushToBluetooth(
                 titleText = originalTitle ?: "未知歌曲",
-                artistText = "🎵 🎵 🎵" // 纯音符展示，无多余文字
+                artistText = "🎵 🎵 🎵" // 极简纯音符间奏
             )
             return
         }
 
         // 状态 3：正常演唱
-        // 最亮的主标题：只保留当前唱的原文
+        // 最亮的 Title 区域：只放原文主歌词
         val currentText = currentLineObj.content.content
 
-        // 变暗的副标题：组合【翻译】+【未唱的第一句】+【未唱的第二句】
-        val displayArtistText = buildString {
-            // 1. 如果有翻译，先塞入翻译（它会被车机当作歌手名变暗显示）
-            val translation = currentLineObj.translation?.content
-            if (!translation.isNullOrBlank()) {
-                append(translation)
-                append("\n")
-            }
-            // 2. 追加未唱的第一句
-            val nextLine1 = currentLyricsList.getOrNull(currentIndex + 1)?.content?.content
-            if (!nextLine1.isNullOrBlank()) {
-                append(nextLine1)
-            }
-            // 3. 追加未唱的第二句
-            val nextLine2 = currentLyricsList.getOrNull(currentIndex + 2)?.content?.content
-            if (!nextLine2.isNullOrBlank()) {
-                append("\n")
-                append(nextLine2)
-            }
-        }.trimEnd()
+        // 变暗的 Artist 区域：【翻译】+【未唱第一句】+【未唱第二句】
+        val parts = mutableListOf<String>()
+        
+        // (1) 翻译不用高亮，直接塞入暗色区域的第一行
+        currentLineObj.translation?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        
+        // (2) 未唱的第一句
+        currentLyricsList.getOrNull(currentIndex + 1)?.content?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        
+        // (3) 未唱的第二句
+        currentLyricsList.getOrNull(currentIndex + 2)?.content?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+
+        // 用换行符拼接成完整的暗色块
+        val displayArtistText = parts.joinToString("\n")
 
         pushToBluetooth(titleText = currentText, artistText = displayArtistText)
     }
 
     /**
-     * 发送指令：包含严格的防抖校验
+     * 发送指令（带防抖拦截）
      */
     private fun pushToBluetooth(titleText: String, artistText: String) {
-        // 如果文字没变化，直接 return，节省大量 CPU 资源，防止手机发烫
+        // 核心拦截：文字毫无变化时绝对不执行后续跨进程代码，这是解决发热的关键
         if (titleText == lastPushedTitle && artistText == lastPushedArtist) {
             return
         }
@@ -183,9 +177,9 @@ class BluetoothLyricManager(
         }
 
         val updatedMetadata = currentItem.mediaMetadata.buildUpon()
-            .setTitle(titleText)         // 唯一高亮
-            .setArtist(artistText)       // 包含：翻译（暗） + 未唱的两句（暗）
-            .setAlbumTitle(" ")          // 清空专辑避免捣乱
+            .setTitle(titleText)         
+            .setArtist(artistText)       
+            .setAlbumTitle(" ")          
             .build()
 
         val updatedItem = currentItem.buildUpon()
@@ -199,9 +193,6 @@ class BluetoothLyricManager(
         player.replaceMediaItem(player.currentMediaItemIndex, updatedItem)
     }
 
-    /**
-     * 还原车机原始音乐信息
-     */
     private fun restoreOriginalMetadata() {
         if (!isHooked) return
         
