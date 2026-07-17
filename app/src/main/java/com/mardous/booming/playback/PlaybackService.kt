@@ -149,6 +149,17 @@ class PlaybackService :
     // 【需要新增的2行】：
     private val lyricsRepository: LyricsRepository by inject() 
     private lateinit var bluetoothLyricManager: BluetoothLyricManager 
+         // 记录当前播放的这首歌有没有被收藏
+        private var isCurrentSongFavorite = false
+
+      // 动态生成收藏按钮（根据状态自动切换实心/空心图标）
+        private val favoriteCommand: CommandButton
+        get() = CommandButton.Builder()
+            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
+            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+            .setDisplayName(getString(R.string.toggle_favorite))
+            .build()
+
  
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
@@ -293,16 +304,7 @@ class PlaybackService :
         player.addListener(this)
         // 【新增】：初始化我们写好的管理器
         bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-        // 记录当前播放的这首歌有没有被收藏
-        private var isCurrentSongFavorite = false
 
-      // 动态生成收藏按钮（根据状态自动切换实心/空心图标）
-        private val favoriteCommand: CommandButton
-        get() = CommandButton.Builder()
-            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
-            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
-            .setDisplayName(getString(R.string.toggle_favorite))
-            .build()
         
 
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
@@ -947,7 +949,7 @@ class PlaybackService :
         }
 
         updateWidgets()
-        
+
 
         refreshMediaButtonCustomLayout()
         mediaSession?.broadcastCustomCommand(
