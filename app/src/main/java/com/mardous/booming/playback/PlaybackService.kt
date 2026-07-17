@@ -1,5 +1,9 @@
 package com.mardous.booming.playback
 
+import com.mardous.booming.data.local.repository.LyricsRepository
+
+
+
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -142,7 +146,10 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
-
+    // 【需要新增的2行】：
+    private val lyricsRepository: LyricsRepository by inject() 
+    private lateinit var bluetoothLyricManager: BluetoothLyricManager 
+ 
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
     private val mediaStoreObserver = MediaStoreObserver(uiHandler) {
@@ -284,6 +291,10 @@ class PlaybackService :
         player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(0, 0, Random.nextLong())
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
+        // 【新增】：初始化我们写好的管理器
+        bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
+        
+        
 
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
             setId(packageName)
@@ -761,6 +772,9 @@ class PlaybackService :
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)
 
             if (newSong != Song.emptySong) {
+                // 【新增】：把新歌交给管理器，让它去拉歌词
+                bluetoothLyricManager.loadLyricsForSong(newSong)
+                
                 replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
                 if (preferences.getBoolean(ENABLE_HISTORY, true)) {
                     repository.upsertSongInHistory(newSong)
