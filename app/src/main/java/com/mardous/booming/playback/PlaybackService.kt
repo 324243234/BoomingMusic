@@ -293,7 +293,16 @@ class PlaybackService :
         player.addListener(this)
         // 【新增】：初始化我们写好的管理器
         bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-        
+        // 记录当前播放的这首歌有没有被收藏
+        private var isCurrentSongFavorite = false
+
+      // 动态生成收藏按钮（根据状态自动切换实心/空心图标）
+        private val favoriteCommand: CommandButton
+        get() = CommandButton.Builder()
+            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
+            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+            .setDisplayName(getString(R.string.toggle_favorite))
+            .build()
         
 
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
@@ -766,7 +775,16 @@ class PlaybackService :
 
         serviceScope.launch(IO) {
             val newSong = repository.songByMediaItem(mediaItem)
-
+        // 【把这段加在这里】：切歌时查询数据库，看看这首歌是不是你的喜欢
+            isCurrentSongFavorite = if (newSong != Song.emptySong) {
+                repository.isSongFavorite(newSong.id)
+            } else {
+                false
+            }
+            // 切换到主线程刷新通知栏的图标
+            withContext(Main) {
+                refreshMediaButtonCustomLayout()
+            }
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)
@@ -774,7 +792,7 @@ class PlaybackService :
             if (newSong != Song.emptySong) {
                 // 【新增】：把新歌交给管理器，让它去拉歌词
                 bluetoothLyricManager.loadLyricsForSong(newSong)
-                
+
                 replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
                 if (preferences.getBoolean(ENABLE_HISTORY, true)) {
                     repository.upsertSongInHistory(newSong)
@@ -924,9 +942,12 @@ class PlaybackService :
         withContext(IO) {
             val song = repository.songByMediaItem(currentMediaItem)
             repository.toggleFavorite(song)
+            // 【把这行加在这里】：把数据库里最新的收藏状态同步给通知栏
+            isCurrentSongFavorite = repository.isSongFavorite(song.id)
         }
 
         updateWidgets()
+        
 
         refreshMediaButtonCustomLayout()
         mediaSession?.broadcastCustomCommand(
@@ -1075,7 +1096,8 @@ class PlaybackService :
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
             if (mediaSession?.isRemoteController(controllerInfo) == true) {
                 val buttonLayout = if (hasTimeline) {
-                    ImmutableList.of(repeatCommand, shuffleCommand)
+                    // 【关键修改】：把原代码里的 repeatCommand 删掉，换成 favoriteCommand
+                    ImmutableList.of(favoriteCommand, shuffleCommand)
                 } else {
                     emptyList()
                 }
