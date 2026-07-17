@@ -13,9 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (GS3 完美体验版)
- * 修复：暂停时歌词退化为歌名的混乱问题
- * 优化：智能时间补偿（播放时预测，暂停时精准静止）
+ * 车载蓝牙歌词核心引擎 (线程安全最终版)
+ * 修复：强制主线程调度，彻底解决 Player is accessed on the wrong thread 崩溃问题
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -45,10 +44,8 @@ class BluetoothLyricManager(
                     syncLyrics()
                     progressObserver.start { syncLyrics() }
                 } else {
-                    // 【修复核心】：暂停时只停止轮询，绝对不擦除歌词！
                     progressObserver.stop()
                     if (currentLyricsList.isNotEmpty()) {
-                        // 强制再刷一次，将暂停瞬间的精确歌词钉在屏幕上
                         syncLyrics()
                     }
                 }
@@ -74,35 +71,44 @@ class BluetoothLyricManager(
     }
 
     fun loadLyricsForSong(song: Song) {
-        if (song.id == currentPlayingSongId) {
-            return
-        }
+        // ==========================================
+        // 【核心修复】：无论外部从什么线程调用这个方法，
+        // 第一时间强制切回主线程 (Main)，防止 ExoPlayer 崩溃！
+        // ==========================================
+        coroutineScope.launch(Dispatchers.Main) {
+            if (song.id == currentPlayingSongId) {
+                return@launch
+            }
 
-        currentPlayingSongId = song.id
-        restoreOriginalMetadata()
+            currentPlayingSongId = song.id
+            // 现在这句操作播放器的代码绝对安全了
+            restoreOriginalMetadata()
 
-        progressObserver.stop()
-        fetchJob?.cancel()
-        currentLyricsList = emptyList()
-        resetStateCache()
+            progressObserver.stop()
+            fetchJob?.cancel()
+            currentLyricsList = emptyList()
+            resetStateCache()
 
-        fetchJob = coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val rawLyrics = lyricsRepository.fileLyrics(song)
-                    ?: lyricsRepository.embeddedLyrics(song)
-                    ?: lyricsRepository.storedLyrics(song, allowDownload = true)
+            // 再次开启后台线程去读取歌词文件，不卡顿 UI
+            fetchJob = coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val rawLyrics = lyricsRepository.fileLyrics(song)
+                        ?: lyricsRepository.embeddedLyrics(song)
+                        ?: lyricsRepository.storedLyrics(song, allowDownload = true)
 
-                val parsedLyrics = rawLyrics?.let {
-                    lyricsRepository.parseRawLyrics(song, it)
-                }
+                    val parsedLyrics = rawLyrics?.let {
+                        lyricsRepository.parseRawLyrics(song, it)
+                    }
 
-                withContext(Dispatchers.Main) {
-                    handleLyricsResult(parsedLyrics)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    handleLyricsResult(null)
+                    // 拿到歌词后切回主线程渲染
+                    withContext(Dispatchers.Main) {
+                        handleLyricsResult(parsedLyrics)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        handleLyricsResult(null)
+                    }
                 }
             }
         }
@@ -111,7 +117,6 @@ class BluetoothLyricManager(
     private fun handleLyricsResult(lyrics: SyncedLyrics?) {
         if (lyrics != null && lyrics.lines.isNotEmpty()) {
             currentLyricsList = lyrics.lines
-            // 无论是在播放还是暂停状态下切歌，只要解析完，立刻铺上屏幕
             syncLyrics()
             if (player.isPlaying) {
                 progressObserver.start { syncLyrics() }
@@ -126,7 +131,6 @@ class BluetoothLyricManager(
     private fun syncLyrics() {
         if (currentLyricsList.isEmpty()) return
 
-        // 【细节优化】：播放时预测未来 400ms（抵消延迟）；暂停时精准静止（0ms）
         val latencyCompensationMs = if (player.isPlaying) 400L else 0L
         val compensatedPosition = player.currentPosition + latencyCompensationMs
         
