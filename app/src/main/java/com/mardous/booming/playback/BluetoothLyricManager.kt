@@ -13,8 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (线程安全最终版)
- * 修复：强制主线程调度，彻底解决 Player is accessed on the wrong thread 崩溃问题
+ * 车载蓝牙歌词核心引擎 (线程安全防越界 终极版)
+ * 修复：解决前奏期间 Index -1 导致的数组越界崩溃问题
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -71,17 +71,12 @@ class BluetoothLyricManager(
     }
 
     fun loadLyricsForSong(song: Song) {
-        // ==========================================
-        // 【核心修复】：无论外部从什么线程调用这个方法，
-        // 第一时间强制切回主线程 (Main)，防止 ExoPlayer 崩溃！
-        // ==========================================
         coroutineScope.launch(Dispatchers.Main) {
             if (song.id == currentPlayingSongId) {
                 return@launch
             }
 
             currentPlayingSongId = song.id
-            // 现在这句操作播放器的代码绝对安全了
             restoreOriginalMetadata()
 
             progressObserver.stop()
@@ -89,7 +84,6 @@ class BluetoothLyricManager(
             currentLyricsList = emptyList()
             resetStateCache()
 
-            // 再次开启后台线程去读取歌词文件，不卡顿 UI
             fetchJob = coroutineScope.launch(Dispatchers.IO) {
                 try {
                     val rawLyrics = lyricsRepository.fileLyrics(song)
@@ -100,7 +94,6 @@ class BluetoothLyricManager(
                         lyricsRepository.parseRawLyrics(song, it)
                     }
 
-                    // 拿到歌词后切回主线程渲染
                     withContext(Dispatchers.Main) {
                         handleLyricsResult(parsedLyrics)
                     }
@@ -137,9 +130,12 @@ class BluetoothLyricManager(
         val currentIndex = currentLyricsList.indexOfLast { it.start <= compensatedPosition }
         val targetState: DisplayState
 
+        // ==========================================
+        // 【核心修复点】：只要还没到第一句的起唱时间，强制锁定前奏状态！
+        // 绝对不允许去读取 currentIndex (-1) 导致崩溃。
+        // ==========================================
         if (currentIndex == -1) {
-            val firstLineStart = currentLyricsList.firstOrNull()?.start ?: 0
-            targetState = if (firstLineStart - compensatedPosition > 3000L) DisplayState.PRELUDE else DisplayState.LYRIC
+            targetState = DisplayState.PRELUDE
         } else {
             val currentLineObj = currentLyricsList[currentIndex]
             val nextLineStart = currentLyricsList.getOrNull(currentIndex + 1)?.start ?: Long.MAX_VALUE
@@ -161,6 +157,8 @@ class BluetoothLyricManager(
         val artistParts = mutableListOf<String>()
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
+            // 前奏或间奏时，currentIndex 会是 -1 或正常索引
+            // -1 + 1 = 0，刚好安全读取第 0 句（第一句）作为预告
             var nextIdx = currentIndex + 1
             var found = 0
             while (nextIdx < currentLyricsList.size && found < 2) {
@@ -172,6 +170,7 @@ class BluetoothLyricManager(
                 nextIdx++
             }
         } else {
+            // 此时 targetState 必定是 LYRIC，currentIndex 必定 >= 0，绝对安全
             val currentLineObj = currentLyricsList[currentIndex]
             titleText = currentLineObj.content.content
 
