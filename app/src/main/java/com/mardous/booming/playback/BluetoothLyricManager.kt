@@ -13,9 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (精准防误杀 终极版)
- * 修复 1：解决本地/特殊歌曲因 id 相同被误判为“同一首歌”而拒绝加载歌词的致命 Bug。
- * 修复 2：移除过于激进的“空档期隐藏”逻辑，确保正常的 LRC 歌词只要没唱完就一直显示。
+ * 车载蓝牙歌词核心引擎 (精准防误杀 严谨编译版)
+ * 修复：移除未定义的 song.artist 属性调用，解决编译报错
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -26,7 +25,6 @@ class BluetoothLyricManager(
     private var hookedIndex = -1 
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
-    // 【关键修复 1】：放弃单一的 song.id，改用联合唯一标识，彻底防止同 ID 歌曲被误杀
     private var currentPlayingSongKey: String = ""
 
     private enum class DisplayState { UNKNOWN, PRELUDE, INTERLUDE, LYRIC }
@@ -74,8 +72,8 @@ class BluetoothLyricManager(
 
     fun loadLyricsForSong(song: Song) {
         coroutineScope.launch(Dispatchers.Main) {
-            // 【关键修复 1】：使用 ID + 歌名 + 歌手，保证每一首歌都能触发加载！
-            val uniqueSongKey = "${song.id}_${song.title}_${song.artist}"
+            // 【修改点】：严格只调用确定存在的属性，防止编译崩溃
+            val uniqueSongKey = "${song.id}_${song.title}"
             if (uniqueSongKey == currentPlayingSongKey) {
                 return@launch
             }
@@ -138,9 +136,6 @@ class BluetoothLyricManager(
             targetState = DisplayState.PRELUDE
         } else {
             val currentLineObj = currentLyricsList[currentIndex]
-            
-            // 【关键修复 2】：删除了“唱完3秒强制转空档”的危险逻辑！
-            // 现在只认一条死理：只要 LRC 里的这行字不是空的，它就会稳稳停在车机屏幕上，绝不乱消！
             val isInterlude = currentLineObj.content.content.isBlank()
             targetState = if (isInterlude) DisplayState.INTERLUDE else DisplayState.LYRIC
         }
