@@ -26,15 +26,21 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      - name: Build Github Release APK
+        run: ./gradlew assembleGithubRelease
 
-      # 👇 下面这一块的缩进已经帮你完美对齐了，必须和上面对齐
+      # 【新增的绝杀步】：无视所有复杂的子目录，找出所有 apk 文件并复制到当前根目录
+      - name: Extract APK to Root
+        run: |
+          find app/build/outputs/apk -name "*.apk" -exec cp {} . \;
+          ls -la *.apk
+
       - name: Auto Release Direct APK
         uses: marvinpinto/action-automatic-releases@latest
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "latest"
           prerelease: true
-          title: "PixelPlayer测试"
-          files: app/build/outputs/apk/release/*.apk
+          title: "boominglrctest"
+          # 此时 apk 已经在根目录了，直接抓取上传，绝对不会找不到
+          files: "*.apk"
