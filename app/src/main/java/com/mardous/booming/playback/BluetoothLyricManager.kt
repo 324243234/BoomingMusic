@@ -1,5 +1,6 @@
 package com.mardous.booming.playback
 
+import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.mardous.booming.data.local.repository.LyricsRepository
@@ -9,30 +10,27 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (GS3 极致优化版)
- * 特性：纯音符间奏、暗色独立翻译、双行未唱歌词预测、毫秒级防抖、超低 CPU 占用
+ * 车载蓝牙歌词核心引擎 (GS3 终极修复与极低功耗版)
+ * 修复：解决跨线程导致的秒显失效问题
+ * 优化：利用 Bundle 存储原数据，彻底解决发热和列表污染问题
  */
 class BluetoothLyricManager(
     private val player: Player,
     private val coroutineScope: CoroutineScope,
     private val lyricsRepository: LyricsRepository
 ) {
-    private var isHooked = false
-    private var originalTitle: String? = null
-    private var originalArtist: String? = null
-    private var originalAlbum: String? = null
-
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
-    // 【性能防线】：记录上次推送到车机的文本，严格拦截无效跨进程通信，避免手机发热
+    // 【性能防线】：严格拦截重复文本，阻止无效的底层跨进程刷新
     private var lastPushedTitle: String = ""
     private var lastPushedArtist: String = ""
 
     private var fetchJob: Job? = null
 
-    // 【能耗控制】：400ms 轮询间隔，保证秒级视觉同步且极其省电
+    // 【能耗控制】：400ms 刷新间隔
     private val progressObserver = ProgressObserver(400L)
 
     init {
@@ -50,16 +48,12 @@ class BluetoothLyricManager(
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 progressObserver.stop()
                 fetchJob?.cancel()
-
-                originalTitle = mediaItem?.mediaMetadata?.title?.toString()
-                originalArtist = mediaItem?.mediaMetadata?.artist?.toString()
-                originalAlbum = mediaItem?.mediaMetadata?.albumTitle?.toString()
                 
                 currentLyricsList = emptyList()
                 lastPushedTitle = ""
                 lastPushedArtist = ""
                 
-                // 切歌瞬间立刻恢复原歌名，掩盖解析歌词的微小延迟
+                // 切歌瞬间恢复原歌名
                 restoreOriginalMetadata()
             }
         })
@@ -72,31 +66,38 @@ class BluetoothLyricManager(
         fetchJob?.cancel()
         fetchJob = coroutineScope.launch(Dispatchers.IO) {
             try {
-                // 1. 严格按照 BoomingMusic 的底层逻辑，依次尝试获取本地/内嵌/数据库歌词
+                // 1. 在后台线程（IO）拉取并解析歌词
                 val rawLyrics = lyricsRepository.fileLyrics(song)
                     ?: lyricsRepository.embeddedLyrics(song)
                     ?: lyricsRepository.storedLyrics(song, allowDownload = true)
 
-                // 2. 解析原始歌词为时间轴歌词对象
                 val parsedLyrics = rawLyrics?.let { 
                     lyricsRepository.parseRawLyrics(song, it) 
                 }
 
-                if (parsedLyrics != null && parsedLyrics.lines.isNotEmpty()) {
-                    currentLyricsList = parsedLyrics.lines
-                    if (player.isPlaying) {
-                        syncLyrics()
-                        progressObserver.start { syncLyrics() }
+                // 2. 【核心修复】：必须切换回主线程（Main）才能操作播放器和启动 UI 轮询！
+                withContext(Dispatchers.Main) {
+                    if (parsedLyrics != null && parsedLyrics.lines.isNotEmpty()) {
+                        currentLyricsList = parsedLyrics.lines
+                        if (player.isPlaying) {
+                            // 此时在主线程，歌词会瞬间顶替上去，不再需要快进触发
+                            syncLyrics()
+                            progressObserver.start { syncLyrics() }
+                        }
+                    } else {
+                        currentLyricsList = emptyList()
+                        progressObserver.stop()
+                        restoreOriginalMetadata()
                     }
-                } else {
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // 异常时也必须在主线程恢复
+                withContext(Dispatchers.Main) {
                     currentLyricsList = emptyList()
                     progressObserver.stop()
                     restoreOriginalMetadata()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                progressObserver.stop()
-                restoreOriginalMetadata()
             }
         }
     }
@@ -110,13 +111,13 @@ class BluetoothLyricManager(
         val currentPosition = player.currentPosition
         val currentIndex = currentLyricsList.indexOfLast { it.start <= currentPosition }
 
-        // 状态 1：前奏（未到第一句）
+        // 状态 1：前奏
         if (currentIndex == -1) {
             val firstLineStart = currentLyricsList.firstOrNull()?.start ?: 0
             if (firstLineStart - currentPosition > 3000L) {
                 pushToBluetooth(
-                    titleText = originalTitle ?: "未知歌曲",
-                    artistText = "🎵 🎵 🎵" // 极简纯音符前奏
+                    titleText = getOriginalTitle() ?: "未知歌曲",
+                    artistText = "🎵 🎵 🎵"
                 )
             }
             return
@@ -124,94 +125,115 @@ class BluetoothLyricManager(
 
         val currentLineObj = currentLyricsList[currentIndex]
         
-        // 状态 2：间奏（当前句唱完很久，且下一句还很远）
+        // 状态 2：间奏
         val nextLineStart = currentLyricsList.getOrNull(currentIndex + 1)?.start ?: Long.MAX_VALUE
         val timeToNextLine = nextLineStart - currentPosition
         val timeSinceCurrentLineStart = currentPosition - currentLineObj.start
 
         if (timeSinceCurrentLineStart > 3000L && timeToNextLine > 5000L) {
             pushToBluetooth(
-                titleText = originalTitle ?: "未知歌曲",
-                artistText = "🎵 🎵 🎵" // 极简纯音符间奏
+                titleText = getOriginalTitle() ?: "未知歌曲",
+                artistText = "🎵 🎵 🎵"
             )
             return
         }
 
         // 状态 3：正常演唱
-        // 最亮的 Title 区域：只放原文主歌词
         val currentText = currentLineObj.content.content
 
-        // 变暗的 Artist 区域：【翻译】+【未唱第一句】+【未唱第二句】
         val parts = mutableListOf<String>()
-        
-        // (1) 翻译不用高亮，直接塞入暗色区域的第一行
         currentLineObj.translation?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
-        
-        // (2) 未唱的第一句
         currentLyricsList.getOrNull(currentIndex + 1)?.content?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
-        
-        // (3) 未唱的第二句
         currentLyricsList.getOrNull(currentIndex + 2)?.content?.content?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
 
-        // 用换行符拼接成完整的暗色块
         val displayArtistText = parts.joinToString("\n")
 
         pushToBluetooth(titleText = currentText, artistText = displayArtistText)
     }
 
     /**
-     * 发送指令（带防抖拦截）
+     * 获取最纯净的原歌名
+     */
+    private fun getOriginalTitle(): String? {
+        val currentItem = player.currentMediaItem ?: return null
+        val extras = currentItem.mediaMetadata.extras ?: return currentItem.mediaMetadata.title?.toString()
+        return extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString()
+    }
+
+    /**
+     * 发送指令（Bundle 极致护航版）
      */
     private fun pushToBluetooth(titleText: String, artistText: String) {
-        // 核心拦截：文字毫无变化时绝对不执行后续跨进程代码，这是解决发热的关键
+        // CPU 优化核心：文本无变化时，阻断跨进程通信
         if (titleText == lastPushedTitle && artistText == lastPushedArtist) {
             return
         }
 
         val currentItem = player.currentMediaItem ?: return
+        val extras = currentItem.mediaMetadata.extras ?: Bundle()
 
-        if (originalTitle == null) {
-            originalTitle = currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
-            originalArtist = currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
-            originalAlbum = currentItem.mediaMetadata.albumTitle?.toString() ?: "未知专辑"
+        // 【数据隔离优化】：把原始歌名备份到 Bundle 里。
+        // 这样哪怕你疯狂快进、切歌，都不会污染播放器内部的播放列表数据
+        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
+        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
+        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "未知专辑"
+
+        if (!extras.containsKey("BT_ORIGINAL_TITLE")) {
+            extras.putString("BT_ORIGINAL_TITLE", cleanTitle)
+            extras.putString("BT_ORIGINAL_ARTIST", cleanArtist)
+            extras.putString("BT_ORIGINAL_ALBUM", cleanAlbum)
         }
 
         val updatedMetadata = currentItem.mediaMetadata.buildUpon()
             .setTitle(titleText)         
             .setArtist(artistText)       
             .setAlbumTitle(" ")          
+            .setExtras(extras) // 带着原数据走
             .build()
 
         val updatedItem = currentItem.buildUpon()
             .setMediaMetadata(updatedMetadata)
             .build()
 
-        isHooked = true
         lastPushedTitle = titleText
         lastPushedArtist = artistText
 
         player.replaceMediaItem(player.currentMediaItemIndex, updatedItem)
     }
 
+    /**
+     * 完全无痕地恢复原状
+     */
     private fun restoreOriginalMetadata() {
-        if (!isHooked) return
-        
-        lastPushedTitle = ""
-        lastPushedArtist = ""
-        
         val currentItem = player.currentMediaItem ?: return
+        val extras = currentItem.mediaMetadata.extras ?: return
+        
+        // 没被劫持过，不需要恢复
+        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: return 
+        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "未知歌手"
+        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "未知专辑"
+
+        // 构造干净的 Extras
+        val cleanExtras = Bundle(extras).apply {
+            remove("BT_ORIGINAL_TITLE")
+            remove("BT_ORIGINAL_ARTIST")
+            remove("BT_ORIGINAL_ALBUM")
+        }
 
         val restoredMetadata = currentItem.mediaMetadata.buildUpon()
-            .setTitle(originalTitle ?: "未知歌曲")
-            .setArtist(originalArtist ?: "未知歌手")
-            .setAlbumTitle(originalAlbum ?: "未知专辑")
+            .setTitle(cleanTitle)
+            .setArtist(cleanArtist)
+            .setAlbumTitle(cleanAlbum)
+            .setExtras(cleanExtras)
             .build()
 
         val restoredItem = currentItem.buildUpon()
             .setMediaMetadata(restoredMetadata)
             .build()
 
-        isHooked = false
+        lastPushedTitle = ""
+        lastPushedArtist = ""
+        
         player.replaceMediaItem(player.currentMediaItemIndex, restoredItem)
     }
 }
