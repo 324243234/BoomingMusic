@@ -177,7 +177,7 @@ android {
 
             reset()
             include("arm64-v8a")
-            isUniversalApk = true
+            isUniversalApk = false // 【修改点】：改成 false，彻底关掉它
         }
     }
     packaging {
