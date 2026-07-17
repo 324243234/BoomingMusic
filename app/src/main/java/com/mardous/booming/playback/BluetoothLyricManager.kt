@@ -13,8 +13,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (线程安全防越界 终极版)
- * 修复：解决前奏期间 Index -1 导致的数组越界崩溃问题
+ * 车载蓝牙歌词核心引擎 (精准防误杀 终极版)
+ * 修复 1：解决本地/特殊歌曲因 id 相同被误判为“同一首歌”而拒绝加载歌词的致命 Bug。
+ * 修复 2：移除过于激进的“空档期隐藏”逻辑，确保正常的 LRC 歌词只要没唱完就一直显示。
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -25,7 +26,8 @@ class BluetoothLyricManager(
     private var hookedIndex = -1 
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
-    private var currentPlayingSongId: Long = -1L
+    // 【关键修复 1】：放弃单一的 song.id，改用联合唯一标识，彻底防止同 ID 歌曲被误杀
+    private var currentPlayingSongKey: String = ""
 
     private enum class DisplayState { UNKNOWN, PRELUDE, INTERLUDE, LYRIC }
     private var currentDisplayState = DisplayState.UNKNOWN
@@ -53,7 +55,7 @@ class BluetoothLyricManager(
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 if (mediaItem == null) {
-                    currentPlayingSongId = -1L
+                    currentPlayingSongKey = ""
                     progressObserver.stop()
                     fetchJob?.cancel()
                     currentLyricsList = emptyList()
@@ -72,11 +74,13 @@ class BluetoothLyricManager(
 
     fun loadLyricsForSong(song: Song) {
         coroutineScope.launch(Dispatchers.Main) {
-            if (song.id == currentPlayingSongId) {
+            // 【关键修复 1】：使用 ID + 歌名 + 歌手，保证每一首歌都能触发加载！
+            val uniqueSongKey = "${song.id}_${song.title}_${song.artist}"
+            if (uniqueSongKey == currentPlayingSongKey) {
                 return@launch
             }
 
-            currentPlayingSongId = song.id
+            currentPlayingSongKey = uniqueSongKey
             restoreOriginalMetadata()
 
             progressObserver.stop()
@@ -130,19 +134,14 @@ class BluetoothLyricManager(
         val currentIndex = currentLyricsList.indexOfLast { it.start <= compensatedPosition }
         val targetState: DisplayState
 
-        // ==========================================
-        // 【核心修复点】：只要还没到第一句的起唱时间，强制锁定前奏状态！
-        // 绝对不允许去读取 currentIndex (-1) 导致崩溃。
-        // ==========================================
         if (currentIndex == -1) {
             targetState = DisplayState.PRELUDE
         } else {
             val currentLineObj = currentLyricsList[currentIndex]
-            val nextLineStart = currentLyricsList.getOrNull(currentIndex + 1)?.start ?: Long.MAX_VALUE
-            val timeSinceCurrent = compensatedPosition - currentLineObj.start
-            val timeToNext = nextLineStart - compensatedPosition
-
-            val isInterlude = currentLineObj.content.content.isBlank() || (timeSinceCurrent > 3000L && timeToNext > 5000L)
+            
+            // 【关键修复 2】：删除了“唱完3秒强制转空档”的危险逻辑！
+            // 现在只认一条死理：只要 LRC 里的这行字不是空的，它就会稳稳停在车机屏幕上，绝不乱消！
+            val isInterlude = currentLineObj.content.content.isBlank()
             targetState = if (isInterlude) DisplayState.INTERLUDE else DisplayState.LYRIC
         }
 
@@ -157,8 +156,6 @@ class BluetoothLyricManager(
         val artistParts = mutableListOf<String>()
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
-            // 前奏或间奏时，currentIndex 会是 -1 或正常索引
-            // -1 + 1 = 0，刚好安全读取第 0 句（第一句）作为预告
             var nextIdx = currentIndex + 1
             var found = 0
             while (nextIdx < currentLyricsList.size && found < 2) {
@@ -170,7 +167,6 @@ class BluetoothLyricManager(
                 nextIdx++
             }
         } else {
-            // 此时 targetState 必定是 LYRIC，currentIndex 必定 >= 0，绝对安全
             val currentLineObj = currentLyricsList[currentIndex]
             titleText = currentLineObj.content.content
 
