@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -26,105 +25,80 @@
         app:layout_constraintTop_toTopOf="parent"
         app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
-    <!-- 黄金分割线：55% 留给左侧封面和控件，45% 留给右侧标题和歌词 -->
+    <!-- 垂直分割线：左侧 50%，右侧 50% -->
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/center_guideline"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        app:layout_constraintGuide_percent="0.55" />
+        app:layout_constraintGuide_percent="0.5" />
 
-    <!-- ================= 左侧区域 ================= -->
-
-    <com.google.android.material.button.MaterialButtonGroup
-        android:id="@+id/actionGroup"
+    <!-- ================= 左侧：封面、进度条与操作按钮 ================= -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/startContent"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="4dp"
-        android:gravity="center"
-        android:spacing="0dp"
-        app:overflowMode="none"
-        app:innerCornerSize="8dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/showLyricsButton"
-            style="?materialIconButtonFilledTonalStyle"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:insetTop="2dp" android:insetBottom="2dp"
-            app:iconSize="20dp" app:icon="@drawable/ic_lyrics_outline_24dp" />
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle"
-            android:layout_width="44dp" android:layout_height="44dp"
-            app:iconSize="20dp" app:icon="@drawable/ic_repeat_24dp" />
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle"
-            android:layout_width="44dp" android:layout_height="44dp"
-            app:iconSize="20dp" app:icon="@drawable/ic_shuffle_24dp" />
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/favoriteButton" style="?materialIconButtonFilledTonalStyle"
-            android:layout_width="44dp" android:layout_height="44dp"
-            app:iconSize="20dp" app:icon="@drawable/ic_favorite_outline_24dp" />
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle"
-            android:layout_width="44dp" android:layout_height="44dp"
-            app:iconSize="20dp" app:icon="@drawable/ic_more_vert_24dp" />
-    </com.google.android.material.button.MaterialButtonGroup>
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/playerAlbumCoverFragment"
+            android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="16dp"
+            app:layout_constraintDimensionRatio="1:1"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/playbackControlsFragment"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:layout="@layout/fragment_album_cover_m3" />
 
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/playbackControlsFragment"
-        android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="4dp"
-        app:layout_constraintBottom_toTopOf="@+id/actionGroup"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/center_guideline"
-        tools:layout="@layout/fragment_expressive_player_playback_controls" />
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/playbackControlsFragment"
+            android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            app:layout_constraintBottom_toTopOf="@+id/actionGroup"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/playerAlbumCoverFragment"
-        android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_margin="12dp"
-        app:layout_constrainedHeight="true"
-        app:layout_constrainedWidth="true"
-        app:layout_constraintDimensionRatio="1:1"
-        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
-        app:layout_constraintBottom_toTopOf="@+id/playbackControlsFragment"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/center_guideline"
-        tools:layout="@layout/fragment_album_cover_m3" />
+        <com.google.android.material.button.MaterialButtonGroup
+            android:id="@+id/actionGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:gravity="center"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+            <!-- 按钮组内容未删减 -->
+            <com.google.android.material.button.MaterialButton android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" app:icon="@drawable/ic_repeat_24dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" app:icon="@drawable/ic_shuffle_24dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/openQueueButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" app:icon="@drawable/ic_queue_music_24dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/favoriteButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" app:icon="@drawable/ic_favorite_outline_24dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" app:icon="@drawable/ic_more_vert_24dp" />
+        </com.google.android.material.button.MaterialButtonGroup>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- ================= 右侧区域 ================= -->
-
+    <!-- ================= 右侧：顶格标题 + 歌词 ================= -->
     <LinearLayout
         android:id="@+id/titleContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:layout_marginTop="16dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="0dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
         app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent">
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="?textAppearanceBodyMedium"
-            android:textStyle="bold" />
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="?textAppearanceBodySmall"
-            android:textColor="?colorOnSurfaceVariant" />
+        <com.google.android.material.textview.MaterialTextView android:id="@+id/title" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textAppearance="?textAppearanceBodyMedium" android:textStyle="bold" />
+        <com.google.android.material.textview.MaterialTextView android:id="@+id/text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textAppearance="?textAppearanceBodySmall" />
+        <com.google.android.material.textview.MaterialTextView android:id="@+id/songInfo" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textAppearance="?textAppearanceBodySmall" />
     </LinearLayout>
 
     <androidx.fragment.app.FragmentContainerView
@@ -132,10 +106,6 @@
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="0dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="16dp"
         app:layout_constraintTop_toBottomOf="@+id/titleContainer"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
