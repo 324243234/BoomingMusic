@@ -80,8 +80,8 @@ val currentVersionCode = currentVersion.code
 
 android {
     compileSdk = 37
-    //namespace = "com.mardous.booming"
-    namespace = "com.luna.music"
+    namespace = "com.mardous.booming"
+    //namespace = "com.luna.music"
 
     defaultConfig {
         minSdk = 26
