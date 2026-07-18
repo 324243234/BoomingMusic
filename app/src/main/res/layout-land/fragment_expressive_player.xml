@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -18,6 +19,7 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
+    <!-- 顶部的下拉关闭等工具栏保留 -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/playerToolbar"
         android:layout_width="match_parent"
@@ -25,91 +27,17 @@
         app:layout_constraintTop_toTopOf="parent"
         app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/startContent"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintWidth_percent="0.4"
-        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+    <!-- 【新增】：屏幕中轴线，分配给左边45%，右边55%的空间 -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/center_guideline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.45" />
 
-        <androidx.fragment.app.FragmentContainerView
-            android:id="@+id/playerAlbumCoverFragment"
-            android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            app:layout_constraintDimensionRatio="1:1"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toTopOf="@+id/titleContainer"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            tools:layout="@layout/fragment_album_cover_m3" />
+    <!-- ================= 左侧区域：自底向上紧凑排列 ================= -->
 
-        <LinearLayout
-            android:id="@+id/titleContainer"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:layout_marginBottom="16dp"
-            android:layout_marginStart="24dp"
-            android:layout_marginEnd="24dp"
-            android:orientation="vertical"
-            android:layoutDirection="locale"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:freezesText="true"
-                android:singleLine="true"
-                android:ellipsize="end"
-                android:textAppearance="?textAppearanceBodyLarge"
-                android:textStyle="bold"
-                tools:text="@tools:sample/lorem" />
-
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:freezesText="true"
-                android:singleLine="true"
-                android:ellipsize="end"
-                android:textAppearance="?textAppearanceBodyMedium"
-                android:textColor="?colorOnSurfaceVariant"
-                tools:text="@tools:sample/lorem" />
-
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/songInfo"
-                android:layout_height="wrap_content"
-                android:layout_width="wrap_content"
-                android:layout_marginTop="2dp"
-                android:freezesText="true"
-                android:singleLine="true"
-                android:ellipsize="end"
-                android:textAppearance="?textAppearanceBodySmall"
-                android:textColor="?colorOnSurfaceVariant"
-                tools:text="@tools:sample/lorem" />
-
-        </LinearLayout>
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/playbackControlsFragment"
-        android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constrainedHeight="true"
-        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
-        app:layout_constraintBottom_toTopOf="@+id/actionGroup"
-        app:layout_constraintStart_toEndOf="@+id/startContent"
-        app:layout_constraintEnd_toEndOf="parent"
-        tools:layout="@layout/fragment_expressive_player_playback_controls" />
-
+    <!-- 1. 最底层的 5 个功能连体按钮，死死钉在左侧区域最底部 -->
     <com.google.android.material.button.MaterialButtonGroup
         android:id="@+id/actionGroup"
         android:layout_width="0dp"
@@ -119,9 +47,9 @@
         android:spacing="0dp"
         app:overflowMode="none"
         app:innerCornerSize="8dp"
-        app:layout_constraintStart_toStartOf="@+id/playbackControlsFragment"
-        app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
-        app:layout_constraintBottom_toBottomOf="parent">
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/repeatButton"
@@ -187,7 +115,102 @@
             android:contentDescription="@string/action_more"
             app:iconSize="20dp"
             app:icon="@drawable/ic_more_vert_24dp" />
-
     </com.google.android.material.button.MaterialButtonGroup>
+
+    <!-- 2. 中间的播放控制栏，钉在底部连体按钮的上方 -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/playbackControlsFragment"
+        android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintBottom_toTopOf="@+id/actionGroup"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/center_guideline"
+        tools:layout="@layout/fragment_expressive_player_playback_controls" />
+
+    <!-- 3. 歌曲信息栏（歌名、歌手等），钉在播放控制栏上方 -->
+    <!-- 去除了原有的 startContent 嵌套层级，提升性能并精准定位 -->
+    <LinearLayout
+        android:id="@+id/titleContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginBottom="8dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:orientation="vertical"
+        android:layoutDirection="locale"
+        app:layout_constraintBottom_toTopOf="@+id/playbackControlsFragment"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/center_guideline">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:freezesText="true"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAppearance="?textAppearanceBodyLarge"
+            android:textStyle="bold"
+            tools:text="@tools:sample/lorem" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:freezesText="true"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAppearance="?textAppearanceBodyMedium"
+            android:textColor="?colorOnSurfaceVariant"
+            tools:text="@tools:sample/lorem" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/songInfo"
+            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:layout_marginTop="2dp"
+            android:freezesText="true"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAppearance="?textAppearanceBodySmall"
+            android:textColor="?colorOnSurfaceVariant"
+            tools:text="@tools:sample/lorem" />
+    </LinearLayout>
+
+    <!-- 4. 顶部的专辑封面。它会吸收剩下所有的垂直空间！ -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/playerAlbumCoverFragment"
+        android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toTopOf="@+id/titleContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/center_guideline"
+        tools:layout="@layout/fragment_album_cover_m3" />
+
+    <!-- ================= 右侧区域：纯享歌词区 ================= -->
+
+    <!-- 5. 彻底霸占右侧空间的纯歌词 Fragment -->
+    <!-- 更换了 ID 以绕过原源码中的封面点击翻转手势 -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/landscapeLyricsFragment"
+        android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
