@@ -869,48 +869,67 @@ class PlaybackService :
         updateCarWithMetadata()
     }
 
-override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
         serviceScope.launch(IO) {
-            // 1. 并发：获取歌曲详情
+            // 1. 并发获取基础信息
             val newSongDeferred = async { repository.songByMediaItem(mediaItem) }
             val newSong = newSongDeferred.await()
 
-            // 2. 并发：同时查“收藏状态”和“歌词文本”
+            // 2. 并发查库（使用源码正确的获取歌词方法）
             val isFavoriteDeferred = async { if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false }
             val lyricsDeferred = async { 
                 if (newSong != Song.emptySong) {
-                    // 【修正】：使用源码中真实的歌词获取逻辑，按优先级查找 (文件 -> 内嵌 -> 数据库)
                     val rawLyrics = lyricsRepository.fileLyrics(newSong)
                         ?: lyricsRepository.embeddedLyrics(newSong)
                         ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                    
-                    rawLyrics?.lyrics // 提取真正的歌词字符串
+                    rawLyrics?.lyrics 
                 } else null 
             }
-            
-            // 原有的蓝牙歌词逻辑直接并行触发
-            if (newSong != Song.emptySong) {
-                launch { bluetoothLyricManager.loadLyricsForSong(newSong) }
-            }
 
-            // 3. 等待并发查询结束
+            // 3. 等待数据提取完毕
             isCurrentSongFavorite = isFavoriteDeferred.await()
             val rawLyricsText = lyricsDeferred.await()
 
-            // 4. 【修正】：将真实的歌词文本传入间奏处理（因为没有独立翻译字段，第二个参数直接传 null 即可）
-            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
-                processLrcAndInterlude(rawLyricsText, null)
-            } else null
+            if (newSong != Song.emptySong) {
+                // 【核心新增】：实时读取我们在 XML 里设置的开关状态，key 必须完全一致！
+                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
 
-            // 5. 切换到主线程，极速刷新状态栏和车机 UI
-            withContext(Main) {
-                refreshMediaButtonCustomLayout()
-                updateCarWithMetadata()
+                if (isBtLyricsEnabled) {
+                    // ==========================================
+                    // 模式 A：开关打开 -> 运行普通蓝牙歌词引擎
+                    // ==========================================
+                    currentCarWithLrc = null // 清空车机缓存
+                    launch { bluetoothLyricManager.loadLyricsForSong(newSong) }
+                    
+                    withContext(Main) { refreshMediaButtonCustomLayout() }
+                } else {
+                    // ==========================================
+                    // 模式 B：开关关闭 -> 运行 CarWith 桌面卡片纯净模式
+                    // ==========================================
+                    bluetoothLyricManager.stopLyrics() // 主动洗净蓝牙歌名篡改
+                    
+                    // 拼接完整 LRC 文本给 CarWith 渲染
+                    currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
+                        processLrcAndInterlude(rawLyricsText, null)
+                    } else null
+
+                    // 切换主线程推送车机数据
+                    withContext(Main) {
+                        refreshMediaButtonCustomLayout()
+                        updateCarWithMetadata() 
+                    }
+                }
+            } else {
+                currentCarWithLrc = null
+                withContext(Main) {
+                    refreshMediaButtonCustomLayout()
+                    updateCarWithMetadata()
+                }
             }
 
-            // ================= 以下保持你原有的逻辑完全不变 =================
+            // ================= 以下保持原有的播放统计等逻辑不变 =================
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)

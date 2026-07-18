@@ -1007,4 +1007,8 @@
     <string name="uncaught_error_restart_app">Restart app</string>
     <string name="uncaught_error_github">Open issue on GitHub</string>
     <string name="uncaught_error_send">Send report</string>
+
+    <!-- 新增：蓝牙歌词开关文案 -->
+    <string name="pref_enable_bluetooth_lyrics">启用车载蓝牙歌词</string>
+    <string name="pref_enable_bluetooth_lyrics_summary">通过篡改歌名推送单句歌词。连接 CarWith/车机投屏时请关闭此项，避免桌面卡片歌名显示异常。</string>
 </resources>

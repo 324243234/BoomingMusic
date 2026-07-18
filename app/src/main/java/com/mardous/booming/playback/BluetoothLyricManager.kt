@@ -266,4 +266,19 @@ class BluetoothLyricManager(
         hookedIndex = -1
         resetStateCache()
     }
+    // 【新增】：对外暴露的急停方法。用于在开关关闭时主动还原真实的歌名，避免干扰车机
+    fun stopLyrics() {
+        coroutineScope.launch(Dispatchers.Main) {
+            // 1. 停止轮询和请求
+            progressObserver.stop()
+            fetchJob?.cancel()
+            
+            // 2. 清空歌词并重置当前标记
+            currentLyricsList = emptyList()
+            currentPlayingSongKey = "" 
+            
+            // 3. 彻底还原真实元数据
+            restoreOriginalMetadata()
+        }
+    }
 }
