@@ -1500,7 +1500,7 @@ class PlaybackService :
         
         // 【新增】：CarWith 收藏与播放模式控制指令
         private const val CARWITH_ACTION_COLLECT = "ucar.media.action.COLLECT"
-        private const val CARWITH_COLLECT_S0TATUS = "ucar.media.metadata.COLLECT"
+        private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT"
         private const val CARWITH_ACTION_PLAY_MODE = "ucar.media.action.PLAY_MODE"
         private const val CARWITH_BUNDLE_PLAY_MODE = "ucar.media.bundle.PLAY_MODE"
     }
