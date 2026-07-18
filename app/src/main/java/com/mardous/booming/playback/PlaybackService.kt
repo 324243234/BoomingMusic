@@ -153,33 +153,44 @@ class PlaybackService :
 // 【新增】：缓存当前歌曲带时间轴的标准 LRC 全文本
     private var currentCarWithLrc: String? = null
 
-    // 【新增】：安全稳定的间奏处理逻辑（使用纯符号防止车机渲染崩溃）
+// 【修改】：给歌词增加“提前量”补偿，完美解决车机画面慢一拍的问题
     private fun processLrcAndInterlude(lrc: String?, trans: String?): String {
         if (lrc.isNullOrBlank()) return ""
-        
         val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
         if (lines.isEmpty()) return ""
         
         val result = java.lang.StringBuilder()
-        for (i in 0 until lines.size - 1) {
-            result.append(lines[i]).append("\n")
+        
+        // ★ 核心补偿参数：提前 400 毫秒（0.4秒）。
+        // 如果你觉得还是慢，可以加大到 500L 或 600L；如果觉得歌词跑太快了，可以减小到 200L
+        val offsetMs = 400L 
+        
+        for (i in 0 until lines.size) {
+            val originalLine = lines[i]
+            val currentTime = parseLrcTimeMsSafe(originalLine)
             
-            // 安全提取时间
-            val currentTime = parseLrcTimeMsSafe(lines[i]) 
-            val nextTime = parseLrcTimeMsSafe(lines[i+1])
+            // 1. 给当前行的时间戳做减法（强制提前）
+            val adjustedTime = if (currentTime > offsetMs) currentTime - offsetMs else 0L
             
-            // 间奏超过 8 秒时，在第 3 秒处插入音符占位，防止 UI 跳动
-            if (currentTime > 0 && nextTime > 0 && (nextTime - currentTime > 8000)) {
-                val midTime = currentTime + 3000
-                result.append("[${formatLrcTimeMsSafe(midTime)}] ♪ ♪ ♪\n")
+            // 2. 剥离原时间戳，提取纯歌词文字
+            val textPart = originalLine.substringAfter("]") 
+            
+            // 3. 拼装成带有“新时间戳”的 LRC 行
+            result.append("[${formatLrcTimeMsSafe(adjustedTime)}]").append(textPart).append("\n")
+            
+            // 4. 间奏防抖处理
+            if (i < lines.size - 1) {
+                val nextTime = parseLrcTimeMsSafe(lines[i+1])
+                val adjustedNextTime = if (nextTime > offsetMs) nextTime - offsetMs else 0L
+                
+                if (adjustedTime > 0 && adjustedNextTime > 0 && (adjustedNextTime - adjustedTime > 8000)) {
+                    val midTime = adjustedTime + 3000
+                    result.append("[${formatLrcTimeMsSafe(midTime)}] ♪ ♪ ♪\n")
+                }
             }
         }
-        result.append(lines.last())
         
-        // 追加翻译，车机解析时会自动将同时间戳的行合并高亮
-        if (!trans.isNullOrBlank()) {
-            result.append("\n").append(trans)
-        }
+        if (!trans.isNullOrBlank()) result.append("\n").append(trans)
         return result.toString()
     }
 
