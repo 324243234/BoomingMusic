@@ -869,7 +869,7 @@ class PlaybackService :
         updateCarWithMetadata()
     }
 
-    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
         serviceScope.launch(IO) {
@@ -877,31 +877,40 @@ class PlaybackService :
             val newSongDeferred = async { repository.songByMediaItem(mediaItem) }
             val newSong = newSongDeferred.await()
 
-            // 2. 并发：同时去查“红心收藏状态”和“全量歌词”
+            // 2. 并发：同时查“收藏状态”和“歌词文本”
             val isFavoriteDeferred = async { if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false }
-            val lyricsDeferred = async { if (newSong != Song.emptySong) lyricsRepository.getLyricsForSong(newSong.id) else null }
+            val lyricsDeferred = async { 
+                if (newSong != Song.emptySong) {
+                    // 【修正】：使用源码中真实的歌词获取逻辑，按优先级查找 (文件 -> 内嵌 -> 数据库)
+                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                        ?: lyricsRepository.embeddedLyrics(newSong)
+                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                    
+                    rawLyrics?.lyrics // 提取真正的歌词字符串
+                } else null 
+            }
             
-            // 原有的蓝牙歌词逻辑直接并行触发，不阻塞主流程
+            // 原有的蓝牙歌词逻辑直接并行触发
             if (newSong != Song.emptySong) {
                 launch { bluetoothLyricManager.loadLyricsForSong(newSong) }
             }
 
-            // 3. 等待数据库并发查询结束，耗时极短
+            // 3. 等待并发查询结束
             isCurrentSongFavorite = isFavoriteDeferred.await()
-            val lyricsData = lyricsDeferred.await()
+            val rawLyricsText = lyricsDeferred.await()
 
-            // 4. 在后台 IO 线程处理耗时的歌词拼接
-            currentCarWithLrc = if (lyricsData != null) {
-                processLrcAndInterlude(lyricsData.lrcText, lyricsData.translationText)
+            // 4. 【修正】：将真实的歌词文本传入间奏处理（因为没有独立翻译字段，第二个参数直接传 null 即可）
+            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
+                processLrcAndInterlude(rawLyricsText, null)
             } else null
 
-            // 5. 切换到主线程，极速刷新手机状态栏和车机卡片 UI
+            // 5. 切换到主线程，极速刷新状态栏和车机 UI
             withContext(Main) {
                 refreshMediaButtonCustomLayout()
                 updateCarWithMetadata()
             }
 
-            // ================= 以下保持你原有的播放统计、历史记录逻辑不变 =================
+            // ================= 以下保持你原有的逻辑完全不变 =================
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)
