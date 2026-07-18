@@ -153,44 +153,50 @@ class PlaybackService :
 // 【新增】：缓存当前歌曲带时间轴的标准 LRC 全文本
     private var currentCarWithLrc: String? = null
 
+    private var carWithUpdateJob: Job? = null
+
 // 【修改】：给歌词增加“提前量”补偿，完美解决车机画面慢一拍的问题
-    private fun processLrcAndInterlude(lrc: String?, trans: String?): String {
+    // 安全高效的间奏处理与歌词合并逻辑
+    private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
         val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
         if (lines.isEmpty()) return ""
         
+        val offsetMs = 150L // 完美对齐车机渲染延迟
+        val timeMap = mutableMapOf<Long, String>()
+        val timeKeys = mutableListOf<Long>()
+
+        for (line in lines) {
+            val textPart = line.substringAfter("]").trim()
+            if (textPart.isEmpty()) continue
+
+            val originalTime = parseLrcTimeMsSafe(line)
+            if (originalTime <= 0L && !line.startsWith("[00:00")) continue
+
+            val adjustedTime = if (originalTime > offsetMs) originalTime - offsetMs else 0L
+
+            if (timeMap.containsKey(adjustedTime)) {
+                // 强制在一行内合并翻译，适应 CarWith 源码
+                timeMap[adjustedTime] = timeMap[adjustedTime] + " ｜ " + textPart
+            } else {
+                timeMap[adjustedTime] = textPart
+                timeKeys.add(adjustedTime)
+            }
+        }
+
+        timeKeys.sort()
         val result = java.lang.StringBuilder()
-        
-        // ★ 核心补偿参数：提前 400 毫秒（0.4秒）。
-        // 如果你觉得还是慢，可以加大到 500L 或 600L；如果觉得歌词跑太快了，可以减小到 200L
-        val offsetMs = 400L 
-        
-        for (i in 0 until lines.size) {
-            val originalLine = lines[i]
-            val currentTime = parseLrcTimeMsSafe(originalLine)
-            
-            // 1. 给当前行的时间戳做减法（强制提前）
-            val adjustedTime = if (currentTime > offsetMs) currentTime - offsetMs else 0L
-            
-            // 2. 剥离原时间戳，提取纯歌词文字
-            val textPart = originalLine.substringAfter("]") 
-            
-            // 3. 拼装成带有“新时间戳”的 LRC 行
-            result.append("[${formatLrcTimeMsSafe(adjustedTime)}]").append(textPart).append("\n")
-            
-            // 4. 间奏防抖处理
-            if (i < lines.size - 1) {
-                val nextTime = parseLrcTimeMsSafe(lines[i+1])
-                val adjustedNextTime = if (nextTime > offsetMs) nextTime - offsetMs else 0L
-                
-                if (adjustedTime > 0 && adjustedNextTime > 0 && (adjustedNextTime - adjustedTime > 8000)) {
-                    val midTime = adjustedTime + 3000
+        for (i in 0 until timeKeys.size) {
+            val t = timeKeys[i]
+            result.append("[${formatLrcTimeMsSafe(t)}]").append(timeMap[t]).append("\n")
+            if (i < timeKeys.size - 1) {
+                val nextT = timeKeys[i+1]
+                if (nextT - t > 8000) {
+                    val midTime = t + 3000
                     result.append("[${formatLrcTimeMsSafe(midTime)}] ♪ ♪ ♪\n")
                 }
             }
         }
-        
-        if (!trans.isNullOrBlank()) result.append("\n").append(trans)
         return result.toString()
     }
 
@@ -716,22 +722,14 @@ class PlaybackService :
 
             // 【新增】：处理车机发来的切换播放模式指令[cite: 14]
             CARWITH_ACTION_PLAY_MODE -> {
-                val targetModeStr = args.getString(CARWITH_BUNDLE_PLAY_MODE)
-                when (targetModeStr) {
-                    "0" -> { // 顺序播放
-                        player.shuffleModeEnabled = false
-                        player.repeatMode = Player.REPEAT_MODE_ALL
-                    }
-                    "1" -> { // 单曲循环
-                        player.shuffleModeEnabled = false
-                        player.repeatMode = Player.REPEAT_MODE_ONE
-                    }
-                    "2" -> { // 随机播放
-                        player.shuffleModeEnabled = true
-                        player.repeatMode = Player.REPEAT_MODE_ALL
-                    }
+                // 车机传来的是当前状态，手机负责推导并切换下一个状态
+                val currentModeStr = args.getString(CARWITH_BUNDLE_PLAY_MODE)
+                when (currentModeStr) {
+                    "2" -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = true }
+                    "0" -> { player.shuffleModeEnabled = false; player.repeatMode = Player.REPEAT_MODE_ONE }
+                    "1" -> { player.shuffleModeEnabled = false; player.repeatMode = Player.REPEAT_MODE_ALL }
+                    else -> { player.shuffleModeEnabled = false; player.repeatMode = Player.REPEAT_MODE_ALL }
                 }
-                // 注意：这里不用调 updateCarWithMetadata()，因为上面的属性修改会自动触发 onShuffleModeEnabledChanged，从而完美闭环。
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             
@@ -747,10 +745,6 @@ class PlaybackService :
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
-            Playback.TOGGLE_FAVORITE -> {
-                toggleFavorite()
-                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-            }
 
             Playback.RESTORE_PLAYBACK -> {
                 val playOnStartupMode = preferences.requireString(PLAY_ON_STARTUP_MODE, PlayOnStartupMode.NEVER)
@@ -884,11 +878,9 @@ class PlaybackService :
         val isPlaying = player.isPlaying
 
         serviceScope.launch(IO) {
-            // 1. 并发获取基础信息
             val newSongDeferred = async { repository.songByMediaItem(mediaItem) }
             val newSong = newSongDeferred.await()
 
-            // 2. 并发查库（使用源码正确的获取歌词方法）
             val isFavoriteDeferred = async { if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false }
             val lyricsDeferred = async { 
                 if (newSong != Song.emptySong) {
@@ -899,37 +891,32 @@ class PlaybackService :
                 } else null 
             }
 
-            // 3. 等待数据提取完毕
             isCurrentSongFavorite = isFavoriteDeferred.await()
             val rawLyricsText = lyricsDeferred.await()
 
             if (newSong != Song.emptySong) {
-                // 【核心新增】：实时读取我们在 XML 里设置的开关状态，key 必须完全一致！
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
 
                 if (isBtLyricsEnabled) {
-                    // ==========================================
-                    // 模式 A：开关打开 -> 运行普通蓝牙歌词引擎
-                    // ==========================================
-                    currentCarWithLrc = null // 清空车机缓存
+                    currentCarWithLrc = null 
                     launch { bluetoothLyricManager.loadLyricsForSong(newSong) }
-                    
                     withContext(Main) { refreshMediaButtonCustomLayout() }
                 } else {
-                    // ==========================================
-                    // 模式 B：开关关闭 -> 运行 CarWith 桌面卡片纯净模式
-                    // ==========================================
-                    bluetoothLyricManager.stopLyrics() // 主动洗净蓝牙歌名篡改
+                    bluetoothLyricManager.stopLyrics() 
                     
-                    // 拼接完整 LRC 文本给 CarWith 渲染
                     currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
-                        processLrcAndInterlude(rawLyricsText, null)
+                        processLrcAndInterlude(rawLyricsText) // 只传一个参数
                     } else null
 
-                    // 切换主线程推送车机数据
                     withContext(Main) {
                         refreshMediaButtonCustomLayout()
-                        updateCarWithMetadata() 
+                        
+                        // 【狂按切歌防抖 & 高斯模糊护航】
+                        carWithUpdateJob?.cancel()
+                        carWithUpdateJob = serviceScope.launch(Main) {
+                            delay(1000) // 必须给车机留 1 秒运算封面，保护车机不崩溃，优化手机发热
+                            updateCarWithMetadata() 
+                        }
                     }
                 }
             } else {
@@ -940,47 +927,30 @@ class PlaybackService :
                 }
             }
 
-            // ================= 以下保持原有的播放统计等逻辑不变 =================
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)
 
             if (newSong != Song.emptySong) {
                 replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
-                if (preferences.getBoolean(ENABLE_HISTORY, true)) {
-                    repository.upsertSongInHistory(newSong)
-                }
-                if (NetworkFeature.Lastfm.NowPlaying.isAvailable) {
-                    launch { repository.updateNowPlaying(ScrobblingService.Lastfm, newSong) }
-                }
-                if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) {
-                    launch { repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong) }
-                }
+                if (preferences.getBoolean(ENABLE_HISTORY, true)) repository.upsertSongInHistory(newSong)
+                if (NetworkFeature.Lastfm.NowPlaying.isAvailable) launch { repository.updateNowPlaying(ScrobblingService.Lastfm, newSong) }
+                if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) launch { repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong) }
             }
             if (previousSong != Song.emptySong) {
                 val timestampMillis = System.currentTimeMillis()
                 val timestampSeconds = (timestampMillis / 1000)
                 if (shouldBumpPlayCount) {
-                    repository.insertOrIncrementPlayCount(
-                        song = previousSong,
-                        timePlayed = timestampMillis
-                    )
-                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) {
-                        launch { repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds) }
-                    }
-                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) {
-                        launch { repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds) }
-                    }
+                    repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
+                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) launch { repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds) }
+                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) launch { repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds) }
                 } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
                     repository.insertOrIncrementSkipCount(previousSong)
                 }
             }
         }
 
-        if (player.currentMediaItemIndex == stopIndex) {
-            player.exoPlayer.pauseAtEndOfMediaItems = true
-        }
-
+        if (player.currentMediaItemIndex == stopIndex) player.exoPlayer.pauseAtEndOfMediaItems = true
         persistentStorage.saveState()
         updateWidgets(force = true)
     }
@@ -1124,43 +1094,39 @@ class PlaybackService :
     private fun updateCarWithMetadata() {
         if (!::player.isInitialized) return
         val currentItem = player.currentMediaItem ?: return
-        
         val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
         
-        // 计算目标状态
+        // 修正数字映射：0=随机，1=单曲，2=列表循环
         val targetPlayMode = when {
-            player.shuffleModeEnabled -> 2L
+            player.shuffleModeEnabled -> 0L
             player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
-            else -> 0L
+            else -> 2L
         }
-        val targetCollectStatus = if (isCurrentSongFavorite) 1L else 0L
-        
-        // 【修正】：将 null 转换为空字符串，确保比对绝对精准
+        // 修正状态类型：必须为 String 类型 "1" 或 "0"
+        val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
         val targetLrc = if (currentCarWithLrc.isNullOrBlank()) "" else currentCarWithLrc
 
-        // 【极其关键的降温防抖】：如果歌词、模式、收藏都没变，直接 return，零性能消耗！
+        // 【发热终极优化】数据无变化直接 return，切断高耗能传输
         if (oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
             oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
-            oldExtras.getLong(CARWITH_COLLECT_STATUS, -1L) == targetCollectStatus) {
+            oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus) {
             return
         }
 
-        // 有数据更新，开始打包
         val newExtras = Bundle(oldExtras).apply {
             if (targetLrc!!.isNotEmpty()) {
                 putString(CARWITH_LYRICS_WHOLE, targetLrc)
                 putString(CARWITH_LYRICS_LINE, "") 
-                putLong(CARWITH_LYRICS_STATUS, 0L) // 0 表示允许显示歌词
+                putLong(CARWITH_LYRICS_STATUS, 0L) 
             } else {
                 putString(CARWITH_LYRICS_WHOLE, "")
                 putString(CARWITH_LYRICS_LINE, "")
-                putLong(CARWITH_LYRICS_STATUS, 3L) // 3 表示隐藏歌词面板
+                putLong(CARWITH_LYRICS_STATUS, 3L) 
             }
             putLong(CARWITH_PLAY_MODE, targetPlayMode)
-            putLong(CARWITH_COLLECT_STATUS, targetCollectStatus)
+            putString(CARWITH_COLLECT_STATUS, targetCollectStatus) 
         }
 
-        // 无缝替换 MediaItem 触发车机更新
         val newMetadata = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
         val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
         player.replaceMediaItem(player.currentMediaItemIndex, newItem)
@@ -1508,10 +1474,8 @@ class PlaybackService :
         private const val CARWITH_LYRICS_LINE = "ucar.media.metadata.LYRICS_LINE"
         private const val CARWITH_LYRICS_STATUS = "ucar.media.metadata.LYRICS_STATUS"
         private const val CARWITH_PLAY_MODE = "ucar.media.metadata.PLAY_MODE"
-        
-        // 【新增】：CarWith 收藏与播放模式控制指令
         private const val CARWITH_ACTION_COLLECT = "ucar.media.action.COLLECT"
-        private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT"
+        private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT_STATE" // 必须带 _STATE
         private const val CARWITH_ACTION_PLAY_MODE = "ucar.media.action.PLAY_MODE"
         private const val CARWITH_BUNDLE_PLAY_MODE = "ucar.media.bundle.PLAY_MODE"
     }
