@@ -8,6 +8,7 @@
     android:clickable="true"
     android:focusable="true">
 
+    <!-- 背景模糊层 -->
     <ImageView
         android:id="@+id/blur"
         android:layout_width="match_parent"
@@ -18,6 +19,7 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
+    <!-- 顶部工具栏 -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/playerToolbar"
         android:layout_width="match_parent"
@@ -25,7 +27,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
-    <!-- 50% 中轴线 -->
+    <!-- 黄金分割线：左右严格 50% 平分 -->
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/center_guideline"
         android:layout_width="wrap_content"
@@ -33,7 +35,7 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.5" />
 
-    <!-- ================= 左侧区域 ================= -->
+    <!-- ================= 左侧区域：完美正方形封面 + 紧凑单行文字栏 ================= -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/startContent"
         android:layout_width="0dp"
@@ -43,21 +45,21 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
-        <!-- 底部信息栏：高度极限压缩，使用水平 LinearLayout 确保紧凑 -->
+        <!-- 1. 底部信息栏：单行排列，最大化节省垂直高度，给封面让路 -->
         <LinearLayout
             android:id="@+id/leftBottomBar"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="16dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 歌名容器：自动占据剩余宽度 -->
+            <!-- 左侧：歌名、歌手信息 -->
             <LinearLayout
                 android:id="@+id/titleContainer"
                 android:layout_width="0dp"
@@ -97,68 +99,63 @@
                     android:textColor="?colorOnSurfaceVariant" />
             </LinearLayout>
 
-            <!-- 操作按钮：循环 -> 随机 -> 收藏 -->
+            <!-- 右侧：循环、随机、收藏爱心聚合在一起 -->
             <LinearLayout
                 android:id="@+id/leftActionButtons"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_repeat_24dp" />
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_shuffle_24dp" />
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/favoriteButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_favorite_outline_24dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_repeat_24dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_shuffle_24dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/favoriteButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_favorite_outline_24dp" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 封面区域：强行百分比拉满，抵消源码的内缩水 -->
+        <!-- 2. 封面区域：运用系统智能测算，绝对不覆盖文字，保证原汁原味的圆角 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_marginBottom="4dp"
-            app:layout_constraintWidth_percent="0.92"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            app:layout_constraintDimensionRatio="1:1"
             app:layout_constrainedHeight="true"
             app:layout_constrainedWidth="true"
-            app:layout_constraintDimensionRatio="1:1"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintVertical_bias="0.4"
+            app:layout_constraintVertical_bias="0.5"
             tools:layout="@layout/fragment_album_cover_m3" />
 
-        <!-- 玻璃层同步调整 -->
+        <!-- 3. 点击玻璃层：约束紧贴封面，不再溢出 -->
         <View
             android:id="@+id/coverClickOverlay"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_marginBottom="4dp"
             android:clickable="true"
             android:focusable="true"
             android:elevation="2dp"
             android:background="?selectableItemBackground"
-            app:layout_constraintWidth_percent="0.92"
-            app:layout_constrainedHeight="true"
-            app:layout_constrainedWidth="true"
-            app:layout_constraintDimensionRatio="1:1"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintVertical_bias="0.4" />
+            app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- ================= 右侧区域 ================= -->
+
+    <!-- 1. 底部菜单栏：下移至屏幕极低位置，拉开上方控制组件的空间 -->
     <com.google.android.material.button.MaterialButtonGroup
         android:id="@+id/actionGroup"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="32dp"
         android:gravity="center"
         android:spacing="0dp"
         app:overflowMode="none"
@@ -172,7 +169,7 @@
         <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_more_vert_24dp" />
     </com.google.android.material.button.MaterialButtonGroup>
 
-    <!-- 进度条大幅度上移：使用 bias="0.2" 彻底让出下方空间 -->
+    <!-- 2. 核心控制组：包含进度条和播放按钮[cite: 6] -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
@@ -182,7 +179,7 @@
         app:layout_constraintBottom_toTopOf="@+id/actionGroup"
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintVertical_bias="0.2"
+        app:layout_constraintVertical_bias="0.45"
         tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
     <androidx.constraintlayout.widget.Group
@@ -191,7 +188,7 @@
         android:layout_height="wrap_content"
         app:constraint_referenced_ids="playbackControlsFragment,actionGroup" />
 
-    <!-- 全屏歌词：完全贴近右侧边缘 -->
+    <!-- 3. 纯净全屏歌词 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
