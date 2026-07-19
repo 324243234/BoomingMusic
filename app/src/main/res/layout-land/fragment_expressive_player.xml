@@ -8,7 +8,6 @@
     android:clickable="true"
     android:focusable="true">
 
-    <!-- 背景模糊层 -->
     <ImageView
         android:id="@+id/blur"
         android:layout_width="match_parent"
@@ -19,15 +18,15 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <!-- 顶部工具栏 -->
+    <!-- 顶部工具栏：使用 elevation 悬浮在内容之上 -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/playerToolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:elevation="2dp"
         app:layout_constraintTop_toTopOf="parent"
         app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
-    <!-- 黄金分割线：左右严格 50% 平分 -->
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/center_guideline"
         android:layout_width="wrap_content"
@@ -35,28 +34,24 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.5" />
 
-    <!-- ================= 左侧区域：满血版封面 + 底部信息栏 ================= -->
+    <!-- ================= 左侧区域：极限利用屏幕垂直高度 ================= -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/startContent"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintTop_toTopOf="parent" 
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
-        <!-- 
-            【核心重构】：借鉴 Default 主题的逻辑
-            删除了原本左右的 layout_margin，只保留上下的 16dp
-            让 ConstraintLayout 强行将这个 1:1 的容器拉伸到左半屏的物理极限！
-        -->
+        <!-- 封面区域：取消所有 margin，强行利用 constrained 霸占剩余所有空间 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginTop="48dp" 
+            android:layout_marginBottom="4dp"
             app:layout_constraintDimensionRatio="1:1"
             app:layout_constrainedHeight="true"
             app:layout_constrainedWidth="true"
@@ -64,9 +59,9 @@
             app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintVertical_bias="0.5"
             tools:layout="@layout/fragment_album_cover_default" />
 
-        <!-- 玻璃层：依然严格贴合在放大后的封面之上，实现点击切换 -->
         <View
             android:id="@+id/coverClickOverlay"
             android:layout_width="0dp"
@@ -80,14 +75,14 @@
             app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
-        <!-- 底部信息栏：紧凑排列，为上方封面让出空间 -->
+        <!-- 底部信息栏：极限贴底排布，给上方让路 -->
         <LinearLayout
             android:id="@+id/leftBottomBar"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="8dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             app:layout_constraintBottom_toBottomOf="parent"
@@ -133,7 +128,6 @@
                     android:textColor="?colorOnSurfaceVariant" />
             </LinearLayout>
 
-            <!-- 收藏与循环操作区 -->
             <LinearLayout
                 android:id="@+id/leftActionButtons"
                 android:layout_width="wrap_content"
@@ -147,7 +141,7 @@
         </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- ================= 右侧区域 ================= -->
+    <!-- ================= 右侧区域维持稳定逻辑 ================= -->
 
     <com.google.android.material.button.MaterialButtonGroup
         android:id="@+id/actionGroup"
