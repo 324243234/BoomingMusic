@@ -8,12 +8,18 @@
     android:clickable="true"
     android:focusable="true">
 
+    <!-- 背景模糊层 -->
     <ImageView
         android:id="@+id/blur"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:visibility="gone" />
+        android:foreground="@drawable/radial_gradient"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone"
+        tools:src="@tools:sample/backgrounds/scenic"/>
 
+    <!-- 顶部工具栏 -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/playerToolbar"
         android:layout_width="match_parent"
@@ -21,6 +27,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
+    <!-- 黄金分割线：左右严格 50% 平分 -->
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/center_guideline"
         android:layout_width="wrap_content"
@@ -28,7 +35,7 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.5" />
 
-    <!-- 左侧区域：参考 Default 主题大小，通过 Margin 控制 -->
+    <!-- ================= 左侧区域：满血版封面 + 底部信息栏 ================= -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/startContent"
         android:layout_width="0dp"
@@ -38,6 +45,11 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
+        <!-- 
+            【核心重构】：借鉴 Default 主题的逻辑
+            删除了原本左右的 layout_margin，只保留上下的 16dp
+            让 ConstraintLayout 强行将这个 1:1 的容器拉伸到左半屏的物理极限！
+        -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -45,96 +57,146 @@
             android:layout_height="0dp"
             android:layout_marginTop="16dp"
             android:layout_marginBottom="16dp"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
             app:layout_constraintDimensionRatio="1:1"
+            app:layout_constrainedHeight="true"
+            app:layout_constrainedWidth="true"
             app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toTopOf="@+id/title"
+            app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            tools:layout="@layout/fragment_album_cover_default"/>
+            tools:layout="@layout/fragment_album_cover_default" />
 
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:layout_constraintBottom_toTopOf="@+id/text"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:layout_constraintBottom_toTopOf="@+id/songInfo"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/songInfo"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <!-- 玻璃层：必须保留 ID 以便 Fragment 调用 -->
+        <!-- 玻璃层：依然严格贴合在放大后的封面之上，实现点击切换 -->
         <View
             android:id="@+id/coverClickOverlay"
             android:layout_width="0dp"
             android:layout_height="0dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="2dp"
+            android:background="?selectableItemBackground"
             app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
+
+        <!-- 底部信息栏：紧凑排列，为上方封面让出空间 -->
+        <LinearLayout
+            android:id="@+id/leftBottomBar"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <LinearLayout
+                android:id="@+id/titleContainer"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginEnd="8dp">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodyMedium"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodySmall"
+                    android:textColor="?colorOnSurfaceVariant" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/songInfo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodySmall"
+                    android:textColor="?colorOnSurfaceVariant" />
+            </LinearLayout>
+
+            <!-- 收藏与循环操作区 -->
+            <LinearLayout
+                android:id="@+id/leftActionButtons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_repeat_24dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_shuffle_24dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/favoriteButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="40dp" android:layout_height="40dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_favorite_outline_24dp" />
+            </LinearLayout>
+        </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- 右侧区域：所有 ID 原样保留，确保 Kotlin 绑定不出错 -->
+    <!-- ================= 右侧区域 ================= -->
+
+    <com.google.android.material.button.MaterialButtonGroup
+        android:id="@+id/actionGroup"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="32dp"
+        android:gravity="center"
+        android:spacing="0dp"
+        app:overflowMode="none"
+        app:innerCornerSize="8dp"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <com.google.android.material.button.MaterialButton android:id="@+id/showLyricsButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_lyrics_outline_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/openQueueButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_queue_music_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_more_vert_24dp" />
+    </com.google.android.material.button.MaterialButtonGroup>
+
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
         android:layout_width="0dp"
-        android:layout_height="0dp"
+        android:layout_height="wrap_content"
         app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintBottom_toTopOf="@+id/actionGroup"
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- 所有的按钮 ID 必须全部存在 -->
-    <LinearLayout
-        android:id="@+id/actionGroup"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent">
-        
-        <com.google.android.material.button.MaterialButton android:id="@+id/repeatButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/shuffleButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/favoriteButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/openQueueButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/showLyricsButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" android:layout_width="44dp" android:layout_height="44dp" />
-        <com.google.android.material.button.MaterialButton android:id="@+id/soundSettingsButton" android:layout_width="44dp" android:layout_height="44dp" />
-    </LinearLayout>
+        app:layout_constraintVertical_bias="0.45"
+        tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
-    <!-- 隐藏的歌词区域 (必须保留以防代码引用) -->
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/rightLyricsFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/center_guideline"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- 必须保留的组 ID -->
     <androidx.constraintlayout.widget.Group
         android:id="@+id/rightControlsGroup"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         app:constraint_referenced_ids="playbackControlsFragment,actionGroup" />
+
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/rightLyricsFragment"
+        android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="0dp"
+        android:layout_marginBottom="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
