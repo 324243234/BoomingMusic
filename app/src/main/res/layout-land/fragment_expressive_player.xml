@@ -47,11 +47,16 @@
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
         <!-- 【核心修改】：移除所有 Margin，直接撑满父容器，模仿 Default 主题封面行为 -->
+        <!-- 仅调整封面和玻璃层的 Margin，利用系统计算撑大封面 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
             android:layout_width="0dp"
             android:layout_height="0dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
             app:layout_constraintDimensionRatio="1:1"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
@@ -95,12 +100,14 @@
         </LinearLayout>
 
         <!-- 覆盖层仅覆盖封面部分 -->
+        <!-- 玻璃层直接锚定在封面 ID 上，随着封面的放大自动撑满 -->
         <View
             android:id="@+id/coverClickOverlay"
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:clickable="true"
             android:focusable="true"
+            android:elevation="2dp"
             android:background="?selectableItemBackground"
             app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
