@@ -34,7 +34,6 @@
         app:layout_constraintGuide_percent="0.4" />
 
     <!-- ================= 左侧区域：纯净封面（点击区域）================= -->
-    <!-- 把标题移走后，这个容器现在完全被封面铺满 -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/startContent"
         android:layout_width="0dp"
@@ -58,10 +57,9 @@
             tools:layout="@layout/fragment_album_cover_m3" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-
     <!-- ================= 右侧区域 1：标题 + 播放控制面板 ================= -->
 
-    <!-- 1. 底部按钮组（固定在右下角） -->
+    <!-- 1. 底部按钮组（固定在右下角，已加入全屏歌词按钮） -->
     <com.google.android.material.button.MaterialButtonGroup
         android:id="@+id/actionGroup"
         android:layout_width="0dp"
@@ -74,6 +72,14 @@
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- 【核心改动】：将全屏歌词放大按钮放进了这里的控制组！ -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/showLyricsButton"
+            style="?materialIconButtonFilledTonalStyle"
+            android:layout_width="44dp" android:layout_height="44dp" 
+            android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" 
+            app:iconSize="20dp" app:icon="@drawable/ic_lyrics_outline_24dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle"
@@ -103,7 +109,7 @@
         app:layout_constraintEnd_toEndOf="parent"
         tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
-    <!-- 3. 【核心改动】：移至右侧的歌曲标题信息，钉在进度条正上方 -->
+    <!-- 3. 歌曲标题信息，钉在进度条正上方 -->
     <LinearLayout
         android:id="@+id/titleContainer"
         android:layout_width="0dp"
@@ -153,20 +159,22 @@
             tools:text="@tools:sample/lorem" />
     </LinearLayout>
 
-    <!-- 4. 【核心改动】：Group 打包，把标题、进度条、功能键全绑在一起 -->
+    <!-- 4. Group 打包：标题、进度条、功能键全绑在一起 -->
     <androidx.constraintlayout.widget.Group
         android:id="@+id/rightControlsGroup"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         app:constraint_referenced_ids="titleContainer,playbackControlsFragment,actionGroup" />
 
-
-    <!-- ================= 右侧区域 2：替代歌词面板 ================= -->
+    <!-- ================= 右侧区域 2：纯净歌词面板 ================= -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:layout_marginStart="16dp" 
+        android:layout_marginEnd="0dp" 
+        android:layout_marginBottom="8dp"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintBottom_toBottomOf="parent"
