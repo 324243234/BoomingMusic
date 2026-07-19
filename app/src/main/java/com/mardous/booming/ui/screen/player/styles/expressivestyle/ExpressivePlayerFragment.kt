@@ -62,29 +62,71 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
         setupToolbar()
         setupActions()
 
-        // 【新增横屏逻辑】：点击左侧封面，交替显示/隐藏右侧的所有控件与歌词
+        // ================= 这里是你新加的第二步逻辑 =================
+        // 判断当前是不是横屏（平板或车机横放）
         if (isLandscape()) {
+            // 给左边整个 40% 的封面区域设置点击事件
             binding.startContent.setOnClickListener {
                 val lyricsView = binding.rightLyricsFragment
                 val controlsGroup = binding.rightControlsGroup
 
+                // 确保这两个控件存在（防止竖屏模式下报错）
                 if (lyricsView != null && controlsGroup != null) {
                     val isLyricsVisible = lyricsView.isVisible
                     
                     if (isLyricsVisible) {
-                        // 如果当前是歌词 -> 隐藏歌词，恢复显示标题、进度条、功能按钮
+                        // 歌词显示时 -> 隐藏歌词，恢复显示标题、进度条、功能按钮
                         lyricsView.isVisible = false
                         controlsGroup.isVisible = true
                     } else {
-                        // 如果当前是控件 -> 隐藏标题、进度条、功能按钮，显示纯享歌词
+                        // 控件显示时 -> 隐藏标题、进度条、功能按钮，显示纯享歌词
                         lyricsView.isVisible = true
                         controlsGroup.isVisible = false
                     }
                 }
             }
         }
+        // ==========================================================
 
-        // ... 保留后续原有的 viewLifecycleOwner.launchAndRepeatWithViewLifecycle 等代码 ...
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            playerViewModel.repeatModeFlow.collect { repeatMode ->
+                binding.repeatButton.apply {
+                    val iconResource = when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one_24dp
+                        else -> R.drawable.ic_repeat_24dp
+                    }
+                    setIconResource(iconResource)
+                    applyColor(
+                        color = if (repeatMode != Player.REPEAT_MODE_OFF) {
+                            playerViewModel.colorScheme.primaryColor
+                        } else {
+                            playerViewModel.colorScheme.secondaryContainerColor
+                        }
+                    )
+                }
+            }
+        }
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            playerViewModel.shuffleModeFlow.collect { shuffleModeEnabled ->
+                binding.shuffleButton.apply {
+                    applyColor(
+                        color = if (shuffleModeEnabled) {
+                            playerViewModel.colorScheme.primaryColor
+                        } else {
+                            playerViewModel.colorScheme.secondaryContainerColor
+                        }
+                    )
+                }
+            }
+        }
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            playerViewModel.currentSongFlow.collect { currentSong ->
+                _binding?.let { nonNullBinding ->
+                    nonNullBinding.title.text = currentSong.title
+                    nonNullBinding.text.text = getSongArtist(currentSong)
+                }
+            }
+        }
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.extraInfoFlow.collect { extraInfo ->
                 _binding?.let { nonNullBinding ->
