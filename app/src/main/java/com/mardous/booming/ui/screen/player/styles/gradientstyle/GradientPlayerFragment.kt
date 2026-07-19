@@ -134,7 +134,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.openQueueButton.iconTint.defaultColor
         
-        // 【终极修复】：使用 listOfNotNull 完美处理可选按钮，且补齐了逗号，杜绝一切语法与类型报错
+        // 【终极修复】：使用 listOfNotNull 完美处理可选按钮，且补齐 了逗号，杜绝一切语法与类型报错
         return listOfNotNull(
             binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
             binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor),
