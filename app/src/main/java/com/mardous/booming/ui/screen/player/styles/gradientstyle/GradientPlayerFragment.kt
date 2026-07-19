@@ -1,7 +1,5 @@
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
-import com.mardous.booming.extensions.navigation.findActivityNavController
-import com.mardous.booming.ui.screen.MainActivity
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.graphics.Color
@@ -13,7 +11,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
-import androidx.navigation.fragment.findNavController
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.*
@@ -21,6 +18,8 @@ import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
 import com.mardous.booming.extensions.isLandscape
 import com.mardous.booming.extensions.whichFragment
+import com.mardous.booming.extensions.navigation.findActivityNavController
+import com.mardous.booming.ui.screen.MainActivity
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.util.Preferences
@@ -95,6 +94,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     val navId = resources.getIdentifier("nav_lyrics", "id", requireContext().packageName)
                     if (navId != 0) {
                         findActivityNavController(R.id.fragment_container).navigate(navId)
+                    } else {
+                        val fallbackId = resources.getIdentifier("nav_lyrics_editor", "id", requireContext().packageName)
+                        if (fallbackId != 0) {
+                            findActivityNavController(R.id.fragment_container).navigate(fallbackId)
+                        }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -130,23 +134,24 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldMaskColor = binding.mask.backgroundTintList?.defaultColor
-            ?: Color.TRANSPARENT
+        val oldMaskColor = binding.mask.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.openQueueButton.iconTint.defaultColor
         
         // 【新增】：获取收藏按钮原本的背景色
-        val oldFavBgColor = binding.lyricsFavoriteButton?.backgroundTintList?.defaultColor 
-            ?: Color.TRANSPARENT
-        // 【终极修复】：使用 listOfNotNull 完美处理可选按钮，且补齐 了逗号，杜绝一切语法与类型报错
+        val oldFavBgColor = binding.lyricsFavoriteButton?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
+        
+        // 【终极修复】：完美处理所有可选按钮，杜绝一切语法与类型报错
         return listOfNotNull(
             binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
             binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor),
             binding.openQueueButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+            
             // 【精准修复】：同时给收藏按钮的 背景(tintTarget) 和 图标(iconButtonTintTarget) 动态上色！
             binding.lyricsFavoriteButton?.tintTarget(oldFavBgColor, scheme.secondaryContainerColor),
             binding.lyricsFavoriteButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+            
             binding.fullscreenLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
         ).toMutableList().also {
             it.addAll(playerControlsFragment.getTintTargets(scheme))
