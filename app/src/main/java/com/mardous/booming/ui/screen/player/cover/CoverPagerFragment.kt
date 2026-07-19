@@ -261,23 +261,26 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         isAnimatingLyrics = true
 
         val animatorSet = AnimatorSet()
-        // 【核心修改】：判断如果是横屏模式，保持封面可见 (1f)，并将内置歌词隐蔽 (0f)
-        if (isLandscape()) {
+        
+        // 【精准拦截】：只针对 (横屏 且 是 Expressive 主题) 保持封面可见
+        if (isLandscape() && nps == NowPlayingScreen.Expressive) {
             animatorSet.playTogether(
                 ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 0f),
                 ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 1f)
             )
         } else {
+            // 其他所有情况（竖屏、或其他主题横屏），按原版逻辑正常消失
             animatorSet.playTogether(
                 ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 1f),
                 ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 0f)
             )
         }
-        
-        // ... 下面的 animatorSet.duration = BOOMING_ANIM_TIME 保持原样不动 ..
         animatorSet.duration = BOOMING_ANIM_TIME
         animatorSet.doOnEnd {
-            _binding?.viewPager?.isInvisible = true
+            // 【精准拦截】：同样，只有非 (横屏且Expressive主题) 才执行隐藏
+            if (!(isLandscape() && nps == NowPlayingScreen.Expressive)) {
+                _binding?.viewPager?.isInvisible = true
+            }
             isAnimatingLyrics = false
             it.removeAllListeners()
         }
