@@ -62,31 +62,7 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
         setupToolbar()
         setupActions()
 
-        // ================= 这里是你新加的第二步逻辑 =================
-        // 判断当前是不是横屏（平板或车机横放）
-        // 【新增横屏逻辑】：通过拦截层接收点击，避免源码冲突
-        if (isLandscape()) {
-            // 将点击事件绑定到透明的覆盖层 (coverClickOverlay) 上
-            binding.coverClickOverlay?.setOnClickListener {
-                val lyricsView = binding.rightLyricsFragment
-                val controlsGroup = binding.rightControlsGroup
-
-                if (lyricsView != null && controlsGroup != null) {
-                    val isLyricsVisible = lyricsView.isVisible
-                    
-                    if (isLyricsVisible) {
-                        // 隐藏歌词，显示控件
-                        lyricsView.isVisible = false
-                        controlsGroup.isVisible = true
-                    } else {
-                        // 隐藏控件，显示歌词
-                        lyricsView.isVisible = true
-                        controlsGroup.isVisible = false
-                    }
-                }
-            }
-        }
-        // ==========================================================
+    
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.repeatModeFlow.collect { repeatMode ->
@@ -255,6 +231,13 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
                 it.contentDescription = getString(R.string.action_show_lyrics)
             }
         }
+        // 【核心新增】：通过系统原生逻辑的触发，来切换横屏下右侧的控制组和歌词界面
+        if (isLandscape()) {
+            _binding?.rightLyricsFragment?.isVisible = lyricsVisible
+            _binding?.rightControlsGroup?.isVisible = !lyricsVisible
+        }
+
+
     }
 
     override fun onShow() {

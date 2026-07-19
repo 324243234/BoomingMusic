@@ -261,10 +261,20 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         isAnimatingLyrics = true
 
         val animatorSet = AnimatorSet()
-        animatorSet.playTogether(
-            ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 1f),
-            ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 0f)
-        )
+        // 【核心修改】：判断如果是横屏模式，保持封面可见 (1f)，并将内置歌词隐蔽 (0f)
+        if (isLandscape()) {
+            animatorSet.playTogether(
+                ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 0f),
+                ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 1f)
+            )
+        } else {
+            animatorSet.playTogether(
+                ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 1f),
+                ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 0f)
+            )
+        }
+        
+        // ... 下面的 animatorSet.duration = BOOMING_ANIM_TIME 保持原样不动 ..
         animatorSet.duration = BOOMING_ANIM_TIME
         animatorSet.doOnEnd {
             _binding?.viewPager?.isInvisible = true
