@@ -118,17 +118,6 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
     }
 
     private fun applyCurrentTransition() {
-
-        // 【核心破解】：如果当前是 Expressive 主题，强行剥夺所有边距限制和缩放特效
-        if (nps == NowPlayingScreen.Expressive) {
-            viewPager.clipToPadding = true
-            viewPager.setPadding(0, 0, 0, 0)
-            viewPager.pageMargin = 0
-            viewPager.offscreenPageLimit = 2
-            viewPager.setPageTransformer(false, null) // null 代表不使用任何特效缩放图片
-            return
-        }
-
         if (nps.supportsCarouselEffect && Preferences.isCarouselEffect && !resources.isLandscape) {
             val metrics = resources.displayMetrics
             val ratio = metrics.heightPixels.toFloat() / metrics.widthPixels.toFloat()
@@ -139,12 +128,6 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
             viewPager.offscreenPageLimit = 1 // Only adjacent pages are visible in carousel
             viewPager.setPageTransformer(false, CarouselPagerTransformer(requireContext()))
         } else {
-            // 【安全修复】：重置可能被其它主题污染的 Padding
-            viewPager.clipToPadding = true
-            viewPager.setPadding(0, 0, 0, 0)
-            viewPager.pageMargin = 0
-
-
             val (transformer, reverse) = Preferences.getNowPlayingTransition(nps)
                 .transformerFactory(R.id.player_image)
             viewPager.offscreenPageLimit = 2 // Parallax and other transitions need more pages
@@ -261,26 +244,13 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         isAnimatingLyrics = true
 
         val animatorSet = AnimatorSet()
-        
-        // 【精准拦截】：只针对 (横屏 且 是 Expressive 主题) 保持封面可见
-        if (isLandscape() && nps == NowPlayingScreen.Expressive) {
-            animatorSet.playTogether(
-                ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 0f),
-                ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 1f)
-            )
-        } else {
-            // 其他所有情况（竖屏、或其他主题横屏），按原版逻辑正常消失
-            animatorSet.playTogether(
-                ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 1f),
-                ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 0f)
-            )
-        }
+        animatorSet.playTogether(
+            ObjectAnimator.ofFloat(binding.coverLyricsFragment, View.ALPHA, 1f),
+            ObjectAnimator.ofFloat(binding.viewPager, View.ALPHA, 0f)
+        )
         animatorSet.duration = BOOMING_ANIM_TIME
         animatorSet.doOnEnd {
-            // 【精准拦截】：同样，只有非 (横屏且Expressive主题) 才执行隐藏
-            if (!(isLandscape() && nps == NowPlayingScreen.Expressive)) {
-                _binding?.viewPager?.isInvisible = true
-            }
+            _binding?.viewPager?.isInvisible = true
             isAnimatingLyrics = false
             it.removeAllListeners()
         }

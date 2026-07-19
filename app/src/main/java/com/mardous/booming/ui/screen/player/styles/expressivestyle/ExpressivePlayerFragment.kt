@@ -61,9 +61,6 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
         _binding = FragmentExpressivePlayerBinding.bind(view)
         setupToolbar()
         setupActions()
-
-    
-
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.repeatModeFlow.collect { repeatMode ->
                 binding.repeatButton.apply {
@@ -231,13 +228,6 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
                 it.contentDescription = getString(R.string.action_show_lyrics)
             }
         }
-        // 【核心新增】：通过系统原生逻辑的触发，来切换横屏下右侧的控制组和歌词界面
-        if (isLandscape()) {
-            _binding?.rightLyricsFragment?.isVisible = lyricsVisible
-            _binding?.rightControlsGroup?.isVisible = !lyricsVisible
-        }
-
-
     }
 
     override fun onShow() {

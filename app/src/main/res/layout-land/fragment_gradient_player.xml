@@ -14,6 +14,8 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
+        <!-- ================= 左侧区域 ================= -->
+        <!-- 原有封面，保持 100% 原样[cite: 15] -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -25,6 +27,7 @@
             app:layout_constraintStart_toStartOf="parent"
             tools:layout="@layout/fragment_album_cover"/>
 
+        <!-- 原有遮罩[cite: 15] -->
         <View
             android:id="@+id/mask"
             android:layout_width="0dp"
@@ -36,6 +39,22 @@
             app:layout_constraintTop_toTopOf="@id/playerAlbumCoverFragment"
             tools:backgroundTint="?colorSurface"/>
 
+        <!-- 【新增】：玻璃层！完美覆盖封面，拦截点击并产生点击水波纹 -->
+        <View
+            android:id="@+id/coverClickOverlay"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="2dp"
+            android:background="?selectableItemBackground"
+            app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
+
+        <!-- ================= 原有右侧区域 ================= -->
+        <!-- 播放控制核心区[cite: 15] -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playbackControlsFragment"
             android:name="com.mardous.booming.ui.screen.player.styles.gradientstyle.GradientPlayerControlsFragment"
@@ -47,6 +66,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:layout="@layout/fragment_gradient_player_playback_controls"/>
 
+        <!-- 底部三个按钮[cite: 15] -->
         <LinearLayout
             android:id="@+id/bottomActionContainer"
             android:layout_width="0dp"
@@ -83,9 +103,59 @@
                 android:contentDescription="@string/sound_settings"
                 app:icon="@drawable/ic_volume_up_24dp"
                 app:iconTint="?colorOnSurface" />
+        </LinearLayout>
 
+        <!-- 【新增】：打包原有右侧元素，方便代码一键隐藏 -->
+        <androidx.constraintlayout.widget.Group
+            android:id="@+id/rightControlsGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:constraint_referenced_ids="playbackControlsFragment,bottomActionContainer" />
+
+        <!-- ================= 【新增】：右侧全屏歌词与悬浮按钮 ================= -->
+        <!-- 纯净歌词层 -->
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/rightLyricsFragment"
+            android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:elevation="4dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- 歌词右下角悬浮堆叠按钮组 (全屏在上，收藏在下) -->
+        <LinearLayout
+            android:id="@+id/lyricsFloatingButtons"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:elevation="6dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginBottom="32dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- 全屏按钮 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lyricsFullscreenButton"
+                style="?materialIconButtonFilledTonalStyle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginBottom="16dp"
+                app:icon="@drawable/ic_fullscreen_24dp" />
+
+            <!-- 收藏心形按钮 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lyricsFavoriteButton"
+                style="?materialIconButtonFilledTonalStyle"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                app:icon="@drawable/ic_favorite_outline_24dp" />
         </LinearLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
-
 </FrameLayout>

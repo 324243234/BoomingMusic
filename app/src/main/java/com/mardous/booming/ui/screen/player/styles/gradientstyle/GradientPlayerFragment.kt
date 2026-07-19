@@ -51,6 +51,24 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         get() = controlsFragment
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+    if (isLandscape()) {
+            // 点击左侧封面玻璃层，切换右侧显示状态
+            binding.coverClickOverlay?.setOnClickListener {
+                val isLyricsVisible = binding.rightLyricsFragment?.isVisible == true
+                
+                // 取反切换
+                binding.rightLyricsFragment?.isVisible = !isLyricsVisible
+                binding.lyricsFloatingButtons?.isVisible = !isLyricsVisible
+                
+                // 原有控件隐藏
+                binding.rightControlsGroup?.isVisible = isLyricsVisible
+            }
+
+            // 让新的悬浮收藏按钮具备收藏功能
+            binding.lyricsFavoriteButton?.let { 
+                setViewAction(it, NowPlayingAction.ToggleFavoriteState) 
+            }
+        }
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentGradientPlayerBinding.bind(view)
         ViewCompat.setOnApplyWindowInsetsListener(binding.bottomActionContainer) { v: View, insets: WindowInsetsCompat ->
@@ -78,6 +96,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
+    if (this.isFavorite != isFavorite) {
+            this.isFavorite = isFavorite
+            // 同步原来的收藏按钮（如果有的话）
+            binding.favoriteButton?.setIsFavorite(isFavorite, withAnimation)
+            
+            // 【新增】：同步歌词悬浮的收藏按钮状态
+            binding.lyricsFavoriteButton?.setIsFavorite(isFavorite, withAnimation)
+        }
         controlsFragment.setFavorite(isFavorite, withAnimation)
     }
 
