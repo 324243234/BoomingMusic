@@ -61,45 +61,30 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
         _binding = FragmentExpressivePlayerBinding.bind(view)
         setupToolbar()
         setupActions()
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.repeatModeFlow.collect { repeatMode ->
-                binding.repeatButton.apply {
-                    val iconResource = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one_24dp
-                        else -> R.drawable.ic_repeat_24dp
+
+        // 【新增横屏逻辑】：点击左侧封面，交替显示/隐藏右侧的所有控件与歌词
+        if (isLandscape()) {
+            binding.startContent.setOnClickListener {
+                val lyricsView = binding.rightLyricsFragment
+                val controlsGroup = binding.rightControlsGroup
+
+                if (lyricsView != null && controlsGroup != null) {
+                    val isLyricsVisible = lyricsView.isVisible
+                    
+                    if (isLyricsVisible) {
+                        // 如果当前是歌词 -> 隐藏歌词，恢复显示标题、进度条、功能按钮
+                        lyricsView.isVisible = false
+                        controlsGroup.isVisible = true
+                    } else {
+                        // 如果当前是控件 -> 隐藏标题、进度条、功能按钮，显示纯享歌词
+                        lyricsView.isVisible = true
+                        controlsGroup.isVisible = false
                     }
-                    setIconResource(iconResource)
-                    applyColor(
-                        color = if (repeatMode != Player.REPEAT_MODE_OFF) {
-                            playerViewModel.colorScheme.primaryColor
-                        } else {
-                            playerViewModel.colorScheme.secondaryContainerColor
-                        }
-                    )
                 }
             }
         }
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.shuffleModeFlow.collect { shuffleModeEnabled ->
-                binding.shuffleButton.apply {
-                    applyColor(
-                        color = if (shuffleModeEnabled) {
-                            playerViewModel.colorScheme.primaryColor
-                        } else {
-                            playerViewModel.colorScheme.secondaryContainerColor
-                        }
-                    )
-                }
-            }
-        }
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.currentSongFlow.collect { currentSong ->
-                _binding?.let { nonNullBinding ->
-                    nonNullBinding.title.text = currentSong.title
-                    nonNullBinding.text.text = getSongArtist(currentSong)
-                }
-            }
-        }
+
+        // ... 保留后续原有的 viewLifecycleOwner.launchAndRepeatWithViewLifecycle 等代码 ...
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.extraInfoFlow.collect { extraInfo ->
                 _binding?.let { nonNullBinding ->
