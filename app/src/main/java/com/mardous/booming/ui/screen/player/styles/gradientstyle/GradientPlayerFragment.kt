@@ -1,20 +1,3 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
 import android.animation.AnimatorSet
@@ -26,12 +9,14 @@ import android.view.View
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.*
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
+import com.mardous.booming.extensions.isLandscape
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
@@ -43,6 +28,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val binding get() = _binding!!
 
     private lateinit var controlsFragment: GradientPlayerControlsFragment
+    
+    // 【修复1】：补齐缺失的 isFavorite 属性，防止代码引用报错[cite: 17]
+    private var isFavorite: Boolean = false 
 
     override val colorSchemeMode: PlayerColorSchemeMode
         get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
@@ -51,7 +39,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         get() = controlsFragment
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-    if (isLandscape()) {
+        super.onViewCreated(view, savedInstanceState)
+        
+        // 【修复2】：必须先执行 bind，再调用 binding 设置点击事件，否则会引发空指针闪退[cite: 17]
+        _binding = FragmentGradientPlayerBinding.bind(view)
+        
+        if (isLandscape()) {
             // 点击左侧封面玻璃层，切换右侧显示状态
             binding.coverClickOverlay?.setOnClickListener {
                 val isLyricsVisible = binding.rightLyricsFragment?.isVisible == true
@@ -69,8 +62,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 setViewAction(it, NowPlayingAction.ToggleFavoriteState) 
             }
         }
-        super.onViewCreated(view, savedInstanceState)
-        _binding = FragmentGradientPlayerBinding.bind(view)
+
         ViewCompat.setOnApplyWindowInsetsListener(binding.bottomActionContainer) { v: View, insets: WindowInsetsCompat ->
             val navigationBar = insets.getInsets(Type.systemBars())
             v.updatePadding(bottom = navigationBar.bottom)
@@ -96,12 +88,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
-    if (this.isFavorite != isFavorite) {
+        if (this.isFavorite != isFavorite) {
             this.isFavorite = isFavorite
-            // 同步原来的收藏按钮（如果有的话）
-            binding.favoriteButton?.setIsFavorite(isFavorite, withAnimation)
-            
-            // 【新增】：同步歌词悬浮的收藏按钮状态
+            // 【修复3】：只对右侧悬浮的心形按钮进行变色控制。去掉了旧代码对 binding.favoriteButton 的错误调用，因为该ID在 Gradient 的根部 XML 中不存在[cite: 17]
             binding.lyricsFavoriteButton?.setIsFavorite(isFavorite, withAnimation)
         }
         controlsFragment.setFavorite(isFavorite, withAnimation)
