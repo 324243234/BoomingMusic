@@ -279,6 +279,11 @@ fun CoverLyricsScreen(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
 
+    // 【关键修复】：必须在这里定义这两个变量，且使用全称路径防止没导包报错！
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isGradientTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Gradient
+
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
             LyricsSurface(
@@ -299,6 +304,7 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+            
             // 【精准修复】：只在 非(横屏且Gradient主题) 时，才显示这个原始的右下角放大按钮
             if (!(isLandscape && isGradientTheme)) {
                 FilledIconButton(
@@ -318,8 +324,6 @@ fun CoverLyricsScreen(
                     )
                 }
             }
-
-            
         }
     }
 }
