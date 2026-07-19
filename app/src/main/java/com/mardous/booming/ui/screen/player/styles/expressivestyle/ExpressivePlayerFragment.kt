@@ -64,22 +64,22 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
 
         // ================= 这里是你新加的第二步逻辑 =================
         // 判断当前是不是横屏（平板或车机横放）
+        // 【新增横屏逻辑】：通过拦截层接收点击，避免源码冲突
         if (isLandscape()) {
-            // 给左边整个 40% 的封面区域设置点击事件
-            binding.startContent?.setOnClickListener {
+            // 将点击事件绑定到透明的覆盖层 (coverClickOverlay) 上
+            binding.coverClickOverlay?.setOnClickListener {
                 val lyricsView = binding.rightLyricsFragment
                 val controlsGroup = binding.rightControlsGroup
 
-                // 确保这两个控件存在（防止竖屏模式下报错）
                 if (lyricsView != null && controlsGroup != null) {
                     val isLyricsVisible = lyricsView.isVisible
                     
                     if (isLyricsVisible) {
-                        // 歌词显示时 -> 隐藏歌词，恢复显示标题、进度条、功能按钮
+                        // 隐藏歌词，显示控件
                         lyricsView.isVisible = false
                         controlsGroup.isVisible = true
                     } else {
-                        // 控件显示时 -> 隐藏标题、进度条、功能按钮，显示纯享歌词
+                        // 隐藏控件，显示歌词
                         lyricsView.isVisible = true
                         controlsGroup.isVisible = false
                     }
