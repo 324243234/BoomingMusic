@@ -66,7 +66,7 @@ class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_
         // 判断当前是不是横屏（平板或车机横放）
         if (isLandscape()) {
             // 给左边整个 40% 的封面区域设置点击事件
-            binding.startContent.setOnClickListener {
+            binding.startContent?.setOnClickListener {
                 val lyricsView = binding.rightLyricsFragment
                 val controlsGroup = binding.rightControlsGroup
 
