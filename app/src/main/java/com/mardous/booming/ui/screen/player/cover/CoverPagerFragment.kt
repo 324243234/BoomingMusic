@@ -118,6 +118,17 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
     }
 
     private fun applyCurrentTransition() {
+
+        // 【核心破解】：如果当前是 Expressive 主题，强行剥夺所有边距限制和缩放特效
+        if (nps == NowPlayingScreen.Expressive) {
+            viewPager.clipToPadding = true
+            viewPager.setPadding(0, 0, 0, 0)
+            viewPager.pageMargin = 0
+            viewPager.offscreenPageLimit = 2
+            viewPager.setPageTransformer(false, null) // null 代表不使用任何特效缩放图片
+            return
+        }
+
         if (nps.supportsCarouselEffect && Preferences.isCarouselEffect && !resources.isLandscape) {
             val metrics = resources.displayMetrics
             val ratio = metrics.heightPixels.toFloat() / metrics.widthPixels.toFloat()
@@ -128,6 +139,12 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
             viewPager.offscreenPageLimit = 1 // Only adjacent pages are visible in carousel
             viewPager.setPageTransformer(false, CarouselPagerTransformer(requireContext()))
         } else {
+            // 【安全修复】：重置可能被其它主题污染的 Padding
+            viewPager.clipToPadding = true
+            viewPager.setPadding(0, 0, 0, 0)
+            viewPager.pageMargin = 0
+
+
             val (transformer, reverse) = Preferences.getNowPlayingTransition(nps)
                 .transformerFactory(R.id.player_image)
             viewPager.offscreenPageLimit = 2 // Parallax and other transitions need more pages
