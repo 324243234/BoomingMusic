@@ -1,274 +1,207 @@
-package com.mardous.booming.ui.screen.player.styles.expressivestyle
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?colorSurface"
+    android:clickable="true"
+    android:focusable="true">
 
-import android.animation.AnimatorSet
-import android.graphics.Color
-import android.os.Bundle
-import android.view.Menu
-import android.view.View
-import android.widget.ImageView
-import androidx.appcompat.widget.PopupMenu
-import androidx.appcompat.widget.Toolbar
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsCompat.Type
-import androidx.core.view.isVisible
-import androidx.core.view.updatePadding
-import androidx.media3.common.Player
-import com.mardous.booming.R
-import com.mardous.booming.core.model.action.NowPlayingAction
-import com.mardous.booming.core.model.player.PlayerColorScheme
-import com.mardous.booming.core.model.player.PlayerColorSchemeMode
-import com.mardous.booming.core.model.player.PlayerTintTarget
-import com.mardous.booming.core.model.player.surfaceTintTarget
-import com.mardous.booming.core.model.player.tintTarget
-import com.mardous.booming.core.model.theme.NowPlayingScreen
-import com.mardous.booming.databinding.FragmentExpressivePlayerBinding
-import com.mardous.booming.extensions.getOnBackPressedDispatcher
-import com.mardous.booming.extensions.isLandscape
-import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
-import com.mardous.booming.extensions.resources.applyColor
-import com.mardous.booming.extensions.whichFragment
-import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
-import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.component.preferences.dialog.ExtraInfoPreferenceDialog
-import com.mardous.booming.util.Preferences
+    <ImageView
+        android:id="@+id/blur"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:foreground="@drawable/radial_gradient"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone"
+        tools:src="@tools:sample/backgrounds/scenic"/>
 
-class ExpressivePlayerFragment : AbsPlayerFragment(R.layout.fragment_expressive_player),
-    View.OnClickListener, View.OnLongClickListener {
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/playerToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toTopOf="parent"
+        app:navigationIcon="@drawable/ic_keyboard_arrow_down_24dp" />
 
-    private var _binding: FragmentExpressivePlayerBinding? = null
-    private val binding get() = _binding!!
+    <!-- 完美的 50% 中轴线 -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/center_guideline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.5" />
 
-    private lateinit var controlsFragment: ExpressivePlayerControlsFragment
+    <!-- ================= 左侧区域 ================= -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/startContent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
-    override val playerControlsFragment: AbsPlayerControlsFragment
-        get() = controlsFragment
+        <!-- 底部信息栏（歌名 + 收藏按钮）保持不变 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/leftBottomBar"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="24dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-    override val playerToolbar: Toolbar
-        get() = binding.playerToolbar
+            <LinearLayout
+                android:id="@+id/titleContainer"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginEnd="8dp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@+id/favoriteButton"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent">
 
-    override val blurView: ImageView
-        get() = binding.blur
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodyMedium"
+                    android:textStyle="bold" />
 
-    override val colorSchemeMode: PlayerColorSchemeMode
-        get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Expressive)
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodySmall"
+                    android:textColor="?colorOnSurfaceVariant" />
 
-    private var popupMenu: PopupMenu? = null
-    private var isFavorite = false
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/songInfo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:freezesText="true"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textAppearance="?textAppearanceBodySmall"
+                    android:textColor="?colorOnSurfaceVariant" />
+            </LinearLayout>
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        _binding = FragmentExpressivePlayerBinding.bind(view)
-        setupToolbar()
-        setupActions()
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/favoriteButton"
+                style="?materialIconButtonFilledTonalStyle"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:insetTop="2dp"
+                android:insetBottom="2dp"
+                android:insetRight="2dp"
+                android:insetLeft="2dp"
+                app:iconSize="20dp"
+                app:icon="@drawable/ic_favorite_outline_24dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
-        // ================= 这里是你新加的第二步逻辑 =================
-        // 判断当前是不是横屏（平板或车机横放）
-        // 【新增横屏逻辑】：通过拦截层接收点击，避免源码冲突
-        if (isLandscape()) {
-            // 将点击事件绑定到透明的覆盖层 (coverClickOverlay) 上
-            binding.coverClickOverlay?.setOnClickListener {
-                val lyricsView = binding.rightLyricsFragment
-                val controlsGroup = binding.rightControlsGroup
+        <!-- 【重点修复 1】：封面区域释放宽度限制，强制撑满上方空间 -->
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/playerAlbumCoverFragment"
+            android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="16dp"
+            app:layout_constraintDimensionRatio="1:1"
+            app:layout_constrainedHeight="true"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintVertical_bias="0.2"
+            tools:layout="@layout/fragment_album_cover_m3" />
 
-                if (lyricsView != null && controlsGroup != null) {
-                    val isLyricsVisible = lyricsView.isVisible
-                    
-                    if (isLyricsVisible) {
-                        // 隐藏歌词，显示控件
-                        lyricsView.isVisible = false
-                        controlsGroup.isVisible = true
-                    } else {
-                        // 隐藏控件，显示歌词
-                        lyricsView.isVisible = true
-                        controlsGroup.isVisible = false
-                    }
-                }
-            }
-        }
-        // ==========================================================
+        <!-- 透明玻璃拦截层 -->
+        <View
+            android:id="@+id/coverClickOverlay"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="2dp"
+            android:background="?selectableItemBackground"
+            app:layout_constraintDimensionRatio="1:1"
+            app:layout_constrainedHeight="true"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintVertical_bias="0.2" />
 
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.repeatModeFlow.collect { repeatMode ->
-                binding.repeatButton.apply {
-                    val iconResource = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one_24dp
-                        else -> R.drawable.ic_repeat_24dp
-                    }
-                    setIconResource(iconResource)
-                    applyColor(
-                        color = if (repeatMode != Player.REPEAT_MODE_OFF) {
-                            playerViewModel.colorScheme.primaryColor
-                        } else {
-                            playerViewModel.colorScheme.secondaryContainerColor
-                        }
-                    )
-                }
-            }
-        }
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.shuffleModeFlow.collect { shuffleModeEnabled ->
-                binding.shuffleButton.apply {
-                    applyColor(
-                        color = if (shuffleModeEnabled) {
-                            playerViewModel.colorScheme.primaryColor
-                        } else {
-                            playerViewModel.colorScheme.secondaryContainerColor
-                        }
-                    )
-                }
-            }
-        }
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.currentSongFlow.collect { currentSong ->
-                _binding?.let { nonNullBinding ->
-                    nonNullBinding.title.text = currentSong.title
-                    nonNullBinding.text.text = getSongArtist(currentSong)
-                }
-            }
-        }
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.extraInfoFlow.collect { extraInfo ->
-                _binding?.let { nonNullBinding ->
-                    if (isExtraInfoEnabled()) {
-                        nonNullBinding.songInfo.text = extraInfo
-                        nonNullBinding.songInfo.isVisible = true
-                    } else {
-                        nonNullBinding.songInfo.isVisible = false
-                    }
-                }
-            }
-        }
-        ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
-            val systemBars = insets.getInsets(Type.systemBars())
-            v.updatePadding(top = systemBars.top, bottom = systemBars.bottom)
-            val displayCutout = insets.getInsets(Type.displayCutout())
-            v.updatePadding(left = displayCutout.left, right = displayCutout.right)
-            WindowInsetsCompat.CONSUMED
-        }
-    }
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
-    private fun setupActions() {
-        popupMenu = inflateMenuInView(binding.moreButton)
-        binding.songInfo.setOnLongClickListener(this)
-        binding.repeatButton.setOnClickListener(this)
-        binding.shuffleButton.setOnClickListener(this)
-        setViewAction(binding.favoriteButton, NowPlayingAction.ToggleFavoriteState)
-        setViewAction(binding.openQueueButton, NowPlayingAction.OpenPlayQueue)
-        binding.showLyricsButton?.let { setViewAction(it, NowPlayingAction.Lyrics) }
-        binding.soundSettingsButton?.let { setViewAction(it, NowPlayingAction.SoundSettings) }
-    }
+    <!-- ================= 右侧区域 ================= -->
+    <com.google.android.material.button.MaterialButtonGroup
+        android:id="@+id/actionGroup"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:spacing="0dp"
+        app:overflowMode="none"
+        app:innerCornerSize="8dp"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
 
-    private fun setupToolbar() {
-        playerToolbar.setNavigationOnClickListener {
-            getOnBackPressedDispatcher().onBackPressed()
-        }
-    }
+        <com.google.android.material.button.MaterialButton android:id="@+id/showLyricsButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_lyrics_outline_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/repeatButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_repeat_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/shuffleButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_shuffle_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/openQueueButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_queue_music_24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_more_vert_24dp" />
+    </com.google.android.material.button.MaterialButtonGroup>
 
-    override fun onClick(view: View) {
-        when (view) {
-            binding.repeatButton -> playerViewModel.cycleRepeatMode()
-            binding.shuffleButton -> playerViewModel.toggleShuffleMode()
-        }
-    }
+    <!-- 【重点修复 2】：为进度条增加顶部约束，并让它悬浮在右侧中央 -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/playbackControlsFragment"
+        android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toTopOf="@+id/actionGroup"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_bias="0.55"
+        tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
-    override fun onLongClick(view: View): Boolean {
-        if (binding.songInfo == view) {
-            ExtraInfoPreferenceDialog
-                .nowPlaying(requireContext())
-                .show(childFragmentManager, "NOW_PLAYING_EXTRA_INFO")
-            return true
-        }
-        return false
-    }
+    <androidx.constraintlayout.widget.Group
+        android:id="@+id/rightControlsGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:constraint_referenced_ids="playbackControlsFragment,actionGroup" />
 
-    override fun onMenuInflated(menu: Menu) {
-        super.onMenuInflated(menu)
-        menu.removeItem(R.id.action_favorite)
-        menu.removeItem(R.id.action_playing_queue)
-        menu.findItem(R.id.action_show_lyrics)?.isVisible = isLandscape()
-        menu.findItem(R.id.action_sound_settings)?.isVisible = isLandscape()
-    }
+    <!-- 纯净全屏歌词面板：右侧已极限贴边 -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/rightLyricsFragment"
+        android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="0dp"
+        android:layout_marginBottom="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent" />
 
-    override fun onCreateChildFragments() {
-        super.onCreateChildFragments()
-        controlsFragment = whichFragment(R.id.playbackControlsFragment)
-    }
-
-    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldPrimaryTextColor = binding.title.currentTextColor
-        val oldSecondaryTextColor = binding.text.currentTextColor
-
-        val oldTonalColor = binding.favoriteButton.backgroundTintList?.defaultColor
-            ?: Color.TRANSPARENT
-
-        val oldIconColor = binding.openQueueButton.backgroundTintList?.defaultColor
-            ?: Color.TRANSPARENT
-
-        val oldRepeatColor = binding.repeatButton.backgroundTintList?.defaultColor
-            ?: oldPrimaryTextColor
-        val newRepeatColor = if (playerViewModel.repeatMode != Player.REPEAT_MODE_OFF) {
-            scheme.primaryColor
-        } else {
-            scheme.secondaryContainerColor
-        }
-
-        val oldShuffleColor = binding.shuffleButton.backgroundTintList?.defaultColor
-            ?: oldPrimaryTextColor
-        val newShuffleColor = if (playerViewModel.shuffleModeEnabled) {
-            scheme.primaryColor
-        } else {
-            scheme.secondaryContainerColor
-        }
-        return listOfNotNull(
-            binding.root.surfaceTintTarget(scheme.surfaceColor),
-            binding.playerToolbar.tintTarget(oldIconColor, scheme.onSurfaceColor),
-            binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
-            binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songInfo.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.favoriteButton.tintTarget(oldTonalColor, scheme.secondaryContainerColor),
-            binding.moreButton.tintTarget(oldTonalColor, scheme.secondaryContainerColor),
-            binding.repeatButton.tintTarget(oldRepeatColor, newRepeatColor),
-            binding.shuffleButton.tintTarget(oldShuffleColor, newShuffleColor),
-            binding.openQueueButton.tintTarget(oldTonalColor, scheme.secondaryContainerColor),
-            binding.showLyricsButton?.tintTarget(oldTonalColor, scheme.secondaryContainerColor),
-            binding.soundSettingsButton?.tintTarget(oldTonalColor, scheme.secondaryContainerColor)
-        ).toMutableList().also {
-            it.addAll(playerControlsFragment.getTintTargets(scheme))
-        }
-    }
-
-    override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
-        if (this.isFavorite != isFavorite) {
-            this.isFavorite = isFavorite
-            binding.favoriteButton.setIsFavorite(isFavorite, withAnimation)
-        }
-    }
-
-    override fun onLyricsVisibilityChange(animatorSet: AnimatorSet, lyricsVisible: Boolean) {
-        _binding?.showLyricsButton?.let {
-            if (lyricsVisible) {
-                it.setIconResource(R.drawable.ic_lyrics_24dp)
-                it.contentDescription = getString(R.string.action_hide_lyrics)
-            } else {
-                it.setIconResource(R.drawable.ic_lyrics_outline_24dp)
-                it.contentDescription = getString(R.string.action_show_lyrics)
-            }
-        }
-    }
-
-    override fun onShow() {
-        super.onShow()
-        setMarquee(binding.title, binding.text, binding.songInfo, marquee = true)
-    }
-
-    override fun onHide() {
-        super.onHide()
-        setMarquee(binding.title, binding.text, binding.songInfo, marquee = false)
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
-    }
-}
+</androidx.constraintlayout.widget.ConstraintLayout>
