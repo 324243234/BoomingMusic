@@ -33,7 +33,7 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.5" />
 
-    <!-- ================= 左侧区域：封面霸屏 + 底部歌名收藏栏 ================= -->
+    <!-- ================= 左侧区域 ================= -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/startContent"
         android:layout_width="0dp"
@@ -43,7 +43,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/center_guideline">
 
-        <!-- 底部信息栏（歌名 + 收藏按钮） -->
+        <!-- 底部信息栏（歌名 + 收藏按钮）保持不变 -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/leftBottomBar"
             android:layout_width="0dp"
@@ -113,7 +113,7 @@
                 app:layout_constraintBottom_toBottomOf="parent"/>
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- 封面区域 -->
+        <!-- 【重点修复 1】：封面区域释放宽度限制，强制撑满上方空间 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -122,14 +122,14 @@
             android:layout_margin="16dp"
             app:layout_constraintDimensionRatio="1:1"
             app:layout_constrainedHeight="true"
-            app:layout_constrainedWidth="true"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintVertical_bias="0.2"
             tools:layout="@layout/fragment_album_cover_m3" />
 
-        <!-- 【核心修复】：优化后的透明玻璃拦截层，使用与封面完全一致的坐标体系和边距 -->
+        <!-- 透明玻璃拦截层 -->
         <View
             android:id="@+id/coverClickOverlay"
             android:layout_width="0dp"
@@ -141,20 +141,20 @@
             android:background="?selectableItemBackground"
             app:layout_constraintDimensionRatio="1:1"
             app:layout_constrainedHeight="true"
-            app:layout_constrainedWidth="true"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@+id/leftBottomBar"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintVertical_bias="0.2" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- ================= 右侧区域 1：纯粹的播放控制区 ================= -->
+    <!-- ================= 右侧区域 ================= -->
     <com.google.android.material.button.MaterialButtonGroup
         android:id="@+id/actionGroup"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
+        android:layout_marginBottom="16dp"
         android:gravity="center"
         android:spacing="0dp"
         app:overflowMode="none"
@@ -170,14 +170,17 @@
         <com.google.android.material.button.MaterialButton android:id="@+id/moreButton" style="?materialIconButtonFilledTonalStyle" android:layout_width="44dp" android:layout_height="44dp" android:insetTop="2dp" android:insetBottom="2dp" android:insetRight="2dp" android:insetLeft="2dp" app:iconSize="20dp" app:icon="@drawable/ic_more_vert_24dp" />
     </com.google.android.material.button.MaterialButtonGroup>
 
+    <!-- 【重点修复 2】：为进度条增加顶部约束，并让它悬浮在右侧中央 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.expressivestyle.ExpressivePlayerControlsFragment"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintBottom_toTopOf="@+id/actionGroup"
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_bias="0.55"
         tools:layout="@layout/fragment_expressive_player_playback_controls" />
 
     <androidx.constraintlayout.widget.Group
@@ -186,15 +189,15 @@
         android:layout_height="wrap_content"
         app:constraint_referenced_ids="playbackControlsFragment,actionGroup" />
 
-    <!-- ================= 右侧区域 2：纯净全屏歌词面板 ================= -->
+    <!-- 纯净全屏歌词面板：右侧已极限贴边 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginStart="16dp"
+        android:layout_marginStart="8dp"
         android:layout_marginEnd="0dp"
-        android:layout_marginBottom="8dp"
+        android:layout_marginBottom="0dp"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@+id/playerToolbar"
         app:layout_constraintBottom_toBottomOf="parent"
