@@ -51,7 +51,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 
                 // 取反切换
                 binding.rightLyricsFragment?.isVisible = !isLyricsVisible
-                binding.lyricsFloatingButtons?.isVisible = !isLyricsVisible
+                binding.lyricsFavoriteButton?.isVisible = !isLyricsVisible
                 
                 // 原有控件隐藏
                 binding.rightControlsGroup?.isVisible = isLyricsVisible
