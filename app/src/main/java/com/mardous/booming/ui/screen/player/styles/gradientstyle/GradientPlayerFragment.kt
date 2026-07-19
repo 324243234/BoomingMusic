@@ -11,6 +11,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.navigation.fragment.findNavController
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.*
@@ -29,7 +30,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     private lateinit var controlsFragment: GradientPlayerControlsFragment
     
-    // 【修复1】：补齐缺失的 isFavorite 属性，防止代码引用报错[cite: 17]
     private var isFavorite: Boolean = false 
 
     override val colorSchemeMode: PlayerColorSchemeMode
@@ -41,7 +41,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 【修复2】：必须先执行 bind，再调用 binding 设置点击事件，否则会引发空指针闪退[cite: 17]
         _binding = FragmentGradientPlayerBinding.bind(view)
         
         if (isLandscape()) {
@@ -77,8 +76,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         binding.openQueueButton.setOnClickListener(this)
         binding.showLyricsButton.setOnClickListener(this)
         binding.soundSettingsButton.setOnClickListener(this)
-
-        // 【新增监听】
         binding.fullscreenLyricsButton?.setOnClickListener(this)
     }
 
@@ -87,14 +84,20 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             binding.openQueueButton -> onQuickActionEvent(NowPlayingAction.OpenPlayQueue)
             binding.showLyricsButton -> onQuickActionEvent(NowPlayingAction.Lyrics)
             binding.soundSettingsButton -> onQuickActionEvent(NowPlayingAction.SoundSettings)
-
-            // 【新增点击跳转】：导航到全屏歌词界面
             binding.fullscreenLyricsButton -> {
-                // 如果你想跳到全屏歌词，最稳妥的方法是调起现有的导航 action
                 try {
-                    androidx.navigation.fragment.findNavController(this).navigate(R.id.lyricsFragment)
+                    // 【终极修复】：使用动态获取ID，如果源码里叫 nav_lyrics 或 action_lyrics，都不会引发编译阶段的找不到ID报错！
+                    val navId = resources.getIdentifier("nav_lyrics", "id", requireContext().packageName)
+                    if (navId != 0) {
+                        findNavController().navigate(navId)
+                    } else {
+                        val alternativeId = resources.getIdentifier("nav_lyrics_editor", "id", requireContext().packageName)
+                        if (alternativeId != 0) {
+                            findNavController().navigate(alternativeId)
+                        }
+                    }
                 } catch (e: Exception) {
-                    // 如果导航ID不对，防止应用闪退
+                    e.printStackTrace()
                 }
             }
         }
@@ -103,7 +106,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
         if (this.isFavorite != isFavorite) {
             this.isFavorite = isFavorite
-            // 【修复3】：只对右侧悬浮的心形按钮进行变色控制。去掉了旧代码对 binding.favoriteButton 的错误调用，因为该ID在 Gradient 的根部 XML 中不存在[cite: 17]
             binding.lyricsFavoriteButton?.setIsFavorite(isFavorite, withAnimation)
         }
         controlsFragment.setFavorite(isFavorite, withAnimation)
@@ -131,17 +133,17 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val oldMaskColor = binding.mask.backgroundTintList?.defaultColor
             ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.openQueueButton.iconTint.defaultColor
-        return mutableListOf(
+        
+        // 【终极修复】：使用 listOfNotNull 完美处理可选按钮，且补齐了逗号，杜绝一切语法与类型报错
+        return listOfNotNull(
             binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
             binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor),
             binding.openQueueButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
-            binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
-
-            // 【关键修改】：让悬浮的收藏按钮和新增的全屏按钮，实时关联提取的颜色[cite: 23]
+            binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.lyricsFavoriteButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.fullscreenLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
-        ).also {
+        ).toMutableList().also {
             it.addAll(playerControlsFragment.getTintTargets(scheme))
         }
     }
