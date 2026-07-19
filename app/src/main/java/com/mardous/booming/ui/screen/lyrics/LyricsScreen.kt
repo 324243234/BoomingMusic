@@ -299,6 +299,25 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+            // 【精准修复】：只在 非(横屏且Gradient主题) 时，才显示这个原始的右下角放大按钮
+            if (!(isLandscape && isGradientTheme)) {
+                FilledIconButton(
+                    modifier = Modifier
+                        .wrapContentSize()
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurface,
+                        contentColor = MaterialTheme.colorScheme.surface
+                    ),
+                    onClick = onExpandClick
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_open_in_full_24dp),
+                        contentDescription = stringResource(R.string.action_lyrics_editor)
+                    )
+                }
+            }
 
             
         }
