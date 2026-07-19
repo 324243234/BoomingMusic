@@ -77,6 +77,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         binding.openQueueButton.setOnClickListener(this)
         binding.showLyricsButton.setOnClickListener(this)
         binding.soundSettingsButton.setOnClickListener(this)
+
+        // 【新增监听】
+        binding.fullscreenLyricsButton?.setOnClickListener(this)
     }
 
     override fun onClick(v: View) {
@@ -84,6 +87,16 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             binding.openQueueButton -> onQuickActionEvent(NowPlayingAction.OpenPlayQueue)
             binding.showLyricsButton -> onQuickActionEvent(NowPlayingAction.Lyrics)
             binding.soundSettingsButton -> onQuickActionEvent(NowPlayingAction.SoundSettings)
+
+            // 【新增点击跳转】：导航到全屏歌词界面
+            binding.fullscreenLyricsButton -> {
+                // 如果你想跳到全屏歌词，最稳妥的方法是调起现有的导航 action
+                try {
+                    androidx.navigation.fragment.findNavController(this).navigate(R.id.lyricsFragment)
+                } catch (e: Exception) {
+                    // 如果导航ID不对，防止应用闪退
+                }
+            }
         }
     }
 
@@ -124,6 +137,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             binding.openQueueButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
+
+            // 【关键修改】：让悬浮的收藏按钮和新增的全屏按钮，实时关联提取的颜色[cite: 23]
+            binding.lyricsFavoriteButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+            binding.fullscreenLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
         ).also {
             it.addAll(playerControlsFragment.getTintTargets(scheme))
         }

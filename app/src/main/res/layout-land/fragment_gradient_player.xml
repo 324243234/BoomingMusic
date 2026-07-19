@@ -99,6 +99,15 @@
                 android:contentDescription="@string/sound_settings"
                 app:icon="@drawable/ic_volume_up_24dp"
                 app:iconTint="?colorOnSurface" />
+
+                <!-- 【新增】：移到这里的全屏放大按钮，变成了第4个按钮 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/fullscreenLyricsButton"
+                style="?materialIconButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:icon="@drawable/ic_open_in_full_24dp"
+                app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
         <!-- 打包控制区，点击时一键隐藏 -->
@@ -123,13 +132,14 @@
             app:layout_constraintEnd_toEndOf="parent" />
 
         <!-- 单独悬浮的收藏按钮，通过 Margin 精准盖在全屏按钮正上方 -->
+        <!-- 【修改】：去掉了原本给放大按钮留的空间 (marginBottom 从 80dp 改为 16dp)，让它优雅地待在右下角 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
             style="?materialIconButtonFilledTonalStyle"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginEnd="16dp"
-            android:layout_marginBottom="80dp"
+            android:layout_marginBottom="16dp"
             android:visibility="gone"
             android:elevation="6dp"
             app:icon="@drawable/ic_favorite_outline_24dp"
