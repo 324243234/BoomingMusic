@@ -137,10 +137,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val oldMaskColor = binding.mask.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.openQueueButton.iconTint.defaultColor
         
-        // 【新增】：获取收藏按钮原本的背景色
-        val oldFavBgColor = binding.lyricsFavoriteButton?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
-        
-        // 【终极修复】：完美处理所有可选按钮，杜绝一切语法与类型报错
         return listOfNotNull(
             binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
             binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor),
@@ -148,10 +144,8 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             
-            // 【精准修复】：同时给收藏按钮的 背景(tintTarget) 和 图标(iconButtonTintTarget) 动态上色！
-            binding.lyricsFavoriteButton?.tintTarget(oldFavBgColor, scheme.secondaryContainerColor),
+            // 【精准修复】：只调用 iconButtonTintTarget 给里面的“心形图标”上色，彻底抛弃背景上色逻辑！
             binding.lyricsFavoriteButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
-            
             binding.fullscreenLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
         ).toMutableList().also {
             it.addAll(playerControlsFragment.getTintTargets(scheme))
