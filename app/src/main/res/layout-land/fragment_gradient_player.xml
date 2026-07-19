@@ -131,7 +131,7 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- 单独悬浮的收藏按钮，通过 Margin 精准盖在全屏按钮正上方 -->
+        <!-- 单独 悬浮的收藏按钮，通过 Margin 精准盖在全屏按钮正上方 -->
         <!-- 【修改】：去掉了原本给放大按钮留的空间 (marginBottom 从 80dp 改为 16dp)，让它优雅地待在右下角 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
