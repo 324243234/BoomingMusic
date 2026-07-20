@@ -61,7 +61,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
                 // 2. 双击 ->播放下一首！
                 override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                    onQuickActionEvent(NowPlayingAction.SkipNext)
+                    onQuickActionEvent(NowPlayingAction.SkipToNext)
                     return true
                 }
 

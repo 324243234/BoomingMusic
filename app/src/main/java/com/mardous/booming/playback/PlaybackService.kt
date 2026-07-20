@@ -158,7 +158,7 @@ class PlaybackService :
         val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
         if (lines.isEmpty()) return ""
 
-        // 【优化】：歌词时间补偿提前量精细设定为 50 毫秒，既不突兀又能弥补蓝牙/渲染延迟
+        // 【参数应用】：精准提前 50 毫秒
         val offsetMs = 50L 
         val timeMap = mutableMapOf<Long, String>()
         val timeKeys = mutableListOf<Long>()
@@ -481,9 +481,10 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
-        // 【打通】：声明接受从车机传来的 UI 交互指令
+        // 注册车机专属 Action
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
+        
         availableCommands.add(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.TOGGLE_SHUFFLE, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
@@ -705,7 +706,7 @@ class PlaybackService :
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
-            // 【解密修复】：响应车机大屏点按切换循环模式，并精确遵循 0=随机, 1=单曲, 2=列表规范
+            // 【精确修复】：响应车机循环按钮，0=随机, 1=单曲, 2=列表规范
             CARWITH_ACTION_PLAY_MODE -> {
                 val modeString = args.getString(CARWITH_BUNDLE_PLAY_MODE)
                 if (modeString != null) {
@@ -899,7 +900,7 @@ class PlaybackService :
                         refreshMediaButtonCustomLayout()
                         carWithUpdateJob?.cancel()
                         carWithUpdateJob = serviceScope.launch(Main) {
-                            // 【系统稳定保护】：锁定 1000 毫秒，保护车机内存，规避切歌闪退/卡顿
+                            // 【参数应用】：保护机制：锁定 1000 毫秒，保护车机内存
                             delay(1000)
                             updateCarWithMetadata(forceImageLoad = true)
                         }
@@ -1018,7 +1019,7 @@ class PlaybackService :
             SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
-        // 收藏状态变更，强制将实心/空心状态推送给车机卡片
+        // 收藏状态变更，强制告知车机
         withContext(Main) {
             updateCarWithMetadata(forceImageLoad = false)
         }
@@ -1027,7 +1028,7 @@ class PlaybackService :
 
     // =========================================================================================
     // 【终极武器：完全兼容 CarWith 的私有通信框架层拦截重构】
-    // 将封面强制转换为 320x320 黄金尺寸 Bitmap 数组，避开 URI 越权，将原生与私有的双轨配置封入 Metadata！
+    // 将封面强制转换为 400x400 清晰 Bitmap 数组，避开 URI 越权，将原生与私有的双轨配置封入 Metadata！
     // =========================================================================================
     private fun updateCarWithMetadata(forceImageLoad: Boolean) {
         if (!::player.isInitialized) return
@@ -1080,18 +1081,18 @@ class PlaybackService :
             if (songId != null && forceImageLoad) {
                 val song = repository.songById(songId)
                 try {
-                    // 【黄金画质】：控制在 320px 既不糊，又不会超过 Binder 的 1MB 传输硬性限制
+                    // 【黄金画质】：400x400 既保证车机大屏清晰，配合 JPEG 85 压缩又绝不触发 1MB Binder 限制
                     val result = SingletonImageLoader.get(this@PlaybackService).execute(
                         ImageRequest.Builder(this@PlaybackService)
                             .data(song)
-                            .size(320)
+                            .size(400)
                             .scale(Scale.FILL)
                             .build()
                     )
-                    val bitmap = result.image?.toBitmap(320, 320)
+                    val bitmap = result.image?.toBitmap(400, 400)
                     if (bitmap != null) {
                         val stream = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream) // 90画质非常清晰
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
                         val artworkBytes = stream.toByteArray()
 
                         // Media3 官方方式赋值
