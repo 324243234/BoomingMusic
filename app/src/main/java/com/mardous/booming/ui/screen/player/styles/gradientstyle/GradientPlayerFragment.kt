@@ -182,7 +182,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             
-            // 【精准修复】：只调用 iconButtonTintTarget 给里面的“心形图标”上色，彻底抛弃背景上色逻辑！
+            // 【终极修复】：只调用 iconButtonTintTarget 给内部的心形图案染色，绝对不碰背景！背景将彻底透明！
             binding.lyricsFavoriteButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.fullscreenLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)
         ).toMutableList().also {

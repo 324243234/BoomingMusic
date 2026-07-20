@@ -283,7 +283,6 @@ fun CoverLyricsScreen(
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isGradientTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Gradient
 
-    // 【终极物理开关】：直接绑定底层源码真实的翻译控制 Key
     val translationKey = "lyrics_show_translation" 
     val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
@@ -309,7 +308,6 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             
-            // 全局悬浮功能区
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
@@ -318,21 +316,21 @@ fun CoverLyricsScreen(
                         end = 16.dp, 
                         bottom = if (isLandscape && isGradientTheme) 80.dp else 16.dp
                     ),
-                // 间距改小到 0.dp，让译字紧紧贴着放大按钮
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp),
+                // 【修复】：加大间距到 12.dp，让按钮不那么拥挤
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 
-                // 1. 物理翻译开关 (尺寸极致缩小为 30.dp)
+                // 1. 物理翻译开关
                 androidx.compose.material3.IconButton(
-                    modifier = Modifier.size(30.dp),
+                    // 【修复】：将尺寸设为 48.dp，严格与 XML 的心形按钮宽度保持一致，实现完美居中对齐
+                    modifier = Modifier.size(48.dp),
                     onClick = {
                         try {
                             val newState = !isTranslationEnabled
                             isTranslationEnabled = newState
-                            // 物理写入底层配置，ViewModel 会自动捕获并瞬间刷新屏幕上的歌词
                             prefs.edit().putBoolean(translationKey, newState).apply()
-                            android.widget.Toast.makeText(context, if (newState) "歌词翻译已开启" else "歌词翻译已关闭", android.widget.Toast.LENGTH_SHORT).show()
+                            // 【修复】：去掉了多余的 Toast 提示
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
@@ -340,18 +338,18 @@ fun CoverLyricsScreen(
                 ) {
                     Text(
                         text = "译",
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        // 【修复】：将字号放大到 titleLarge
+                        style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         ),
-                        // 你的要求：关闭(false)正常亮(1.0f)，开启(true)变灰(0.4f)
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
                     )
                 }
 
-                // 2. 原始放大按钮 (尺寸同步缩小，视觉更紧凑)
+                // 2. 原始放大按钮
                 if (!(isLandscape && isGradientTheme)) {
                     FilledIconButton(
-                        modifier = Modifier.size(36.dp), 
+                        modifier = Modifier.size(48.dp), // 尺寸也设为 48.dp 保持全列对齐
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
                             contentColor = MaterialTheme.colorScheme.surface
@@ -361,7 +359,7 @@ fun CoverLyricsScreen(
                         Icon(
                             painter = painterResource(R.drawable.ic_open_in_full_24dp),
                             contentDescription = stringResource(R.string.action_lyrics_editor),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
