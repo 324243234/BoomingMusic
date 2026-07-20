@@ -63,6 +63,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:layout="@layout/fragment_gradient_player_playback_controls"/>
 
+        <!-- 还原最干净的底部控制栏，剥离残余的 XML 翻译按钮，消灭那个“怪点” -->
         <LinearLayout
             android:id="@+id/bottomActionContainer"
             android:layout_width="0dp"
@@ -100,7 +101,6 @@
                 app:icon="@drawable/ic_volume_up_24dp"
                 app:iconTint="?colorOnSurface" />
 
-                <!-- 【新增】：移到这里的全屏放大按钮，变成了第4个按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/fullscreenLyricsButton"
                 style="?materialIconButtonStyle"
@@ -117,10 +117,7 @@
             android:layout_height="wrap_content"
             app:constraint_referenced_ids="playbackControlsFragment,bottomActionContainer" />
 
-        <!-- ================= 右侧歌词及悬浮层 ================= -->
-        <!-- 歌词容器：自带全屏按钮 -->
-        <!-- 歌词容器：自带全屏按钮 -->
-        <!-- 【修复】：删除了 android:elevation="4dp"，防止它遮挡按钮 -->
+        <!-- 歌词容器 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/rightLyricsFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
@@ -132,8 +129,8 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- 单独悬浮的收藏按钮 -->
-        <!-- 【修复】：加上了 translationZ 强制悬浮，并用 stateListAnimator="@null" 屏蔽丑陋阴影 -->
+        <!-- 终极净化的爱心收藏按钮 -->
+        <!-- 【修复】：强加 backgroundTint 为 transparent，重置所有 padding 偏移 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
             style="?materialIconButtonStyle"
@@ -144,6 +141,9 @@
             android:visibility="gone"
             android:translationZ="10dp"
             android:stateListAnimator="@null"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            app:backgroundTint="@android:color/transparent"
             app:icon="@drawable/ic_favorite_outline_24dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />

@@ -314,23 +314,22 @@ fun CoverLyricsScreen(
                     .align(Alignment.BottomEnd)
                     .padding(
                         end = 16.dp, 
-                        bottom = if (isLandscape && isGradientTheme) 80.dp else 16.dp
+                        // 【完美对齐】：原来是 80dp 太高了。下方爱心是 48dp高+16dp边距=64dp。设为 68.dp 刚好贴着头顶！
+                        bottom = if (isLandscape && isGradientTheme) 68.dp else 16.dp
                     ),
-                // 【修复】：加大间距到 12.dp，让按钮不那么拥挤
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 
                 // 1. 物理翻译开关
                 androidx.compose.material3.IconButton(
-                    // 【修复】：将尺寸设为 48.dp，严格与 XML 的心形按钮宽度保持一致，实现完美居中对齐
-                    modifier = Modifier.size(48.dp),
+                    // 【调整】：大小再小一丢丢，改为 40.dp
+                    modifier = Modifier.size(40.dp),
                     onClick = {
                         try {
                             val newState = !isTranslationEnabled
                             isTranslationEnabled = newState
                             prefs.edit().putBoolean(translationKey, newState).apply()
-                            // 【修复】：去掉了多余的 Toast 提示
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
@@ -338,8 +337,8 @@ fun CoverLyricsScreen(
                 ) {
                     Text(
                         text = "译",
-                        // 【修复】：将字号放大到 titleLarge
-                        style = MaterialTheme.typography.titleLarge.copy(
+                        // 【调整】：字号随之变小为 titleMedium
+                        style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         ),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
@@ -349,7 +348,7 @@ fun CoverLyricsScreen(
                 // 2. 原始放大按钮
                 if (!(isLandscape && isGradientTheme)) {
                     FilledIconButton(
-                        modifier = Modifier.size(48.dp), // 尺寸也设为 48.dp 保持全列对齐
+                        modifier = Modifier.size(40.dp), // 同步改小
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
                             contentColor = MaterialTheme.colorScheme.surface
@@ -359,7 +358,7 @@ fun CoverLyricsScreen(
                         Icon(
                             painter = painterResource(R.drawable.ic_open_in_full_24dp),
                             contentDescription = stringResource(R.string.action_lyrics_editor),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
