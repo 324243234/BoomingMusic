@@ -130,21 +130,24 @@
             app:layout_constraintEnd_toEndOf="parent" />
 
         <!-- 终极净化的爱心收藏按钮 -->
-        <!-- 【修复】：强加 backgroundTint 为 transparent，重置所有 padding 偏移 -->
+        <!-- 【彻底修复】：移除 translationZ 消除黑圈阴影，添加 cornerRadius 修复方形波纹，重置 elevation -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
-            style="?materialIconButtonStyle"
+            style="@style/Widget.Material3.Button.IconButton"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="16dp"
             android:visibility="gone"
-            android:translationZ="10dp"
-            android:stateListAnimator="@null"
             android:insetTop="0dp"
             android:insetBottom="0dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            app:elevation="0dp"
+            app:cornerRadius="24dp"
             app:backgroundTint="@android:color/transparent"
             app:icon="@drawable/ic_favorite_outline_24dp"
+            app:iconSize="24dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 

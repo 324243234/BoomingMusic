@@ -313,18 +313,19 @@ fun CoverLyricsScreen(
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
                     .padding(
-                        end = 16.dp, 
-                        // 【完美对齐】：原来是 80dp 太高了。下方爱心是 48dp高+16dp边距=64dp。设为 68.dp 刚好贴着头顶！
-                        bottom = if (isLandscape && isGradientTheme) 68.dp else 16.dp
+                        // 【精准对齐】：XML爱心宽48+边距16(中心点距右侧40dp)。Compose译字宽36，要中心对齐，边距必须是 40 - 18 = 22dp！
+                        end = if (isLandscape && isGradientTheme) 22.dp else 16.dp, 
+                        // 【下移位置】：原68dp偏高，改低到 64.dp 紧贴着爱心的头顶
+                        bottom = if (isLandscape && isGradientTheme) 64.dp else 16.dp
                     ),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 
                 // 1. 物理翻译开关
                 androidx.compose.material3.IconButton(
-                    // 【调整】：大小再小一丢丢，改为 40.dp
-                    modifier = Modifier.size(40.dp),
+                    // 【再缩小一丢丢】：改为 36.dp，小巧精致
+                    modifier = Modifier.size(36.dp),
                     onClick = {
                         try {
                             val newState = !isTranslationEnabled
@@ -337,7 +338,6 @@ fun CoverLyricsScreen(
                 ) {
                     Text(
                         text = "译",
-                        // 【调整】：字号随之变小为 titleMedium
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         ),
@@ -348,7 +348,7 @@ fun CoverLyricsScreen(
                 // 2. 原始放大按钮
                 if (!(isLandscape && isGradientTheme)) {
                     FilledIconButton(
-                        modifier = Modifier.size(40.dp), // 同步改小
+                        modifier = Modifier.size(36.dp), // 尺寸同步改小
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
                             contentColor = MaterialTheme.colorScheme.surface
