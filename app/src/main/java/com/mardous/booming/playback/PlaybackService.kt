@@ -152,14 +152,20 @@ class PlaybackService :
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
+    
+    // 专门缓存最后一次提取的原版 LRC，方便随时在翻译开关切换时重建
+    private var currentRawLyricsData: String? = null
 
+    // 【智能翻译分离器】：解析 LRC 并根据用户的全局开关决定是否带翻译发给车机
     private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
         val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
         if (lines.isEmpty()) return ""
 
-        // 【优化】：歌词时间补偿提前量精细设定为 50 毫秒，既不突兀又能弥补蓝牙/渲染延迟
-        val offsetMs = 60L 
+        val offsetMs = 50L 
+        // 实时读取最新的物理开关状态
+        val showTranslation = preferences.getBoolean("lyrics_show_translation", true)
+        
         val timeMap = mutableMapOf<Long, String>()
         val timeKeys = mutableListOf<Long>()
 
@@ -169,11 +175,14 @@ class PlaybackService :
 
             val originalTime = parseLrcTimeMsSafe(line)
             if (originalTime <= 0L && !line.startsWith("[00:00")) continue
-
             val adjustedTime = if (originalTime > offsetMs) originalTime - offsetMs else 0L
 
             if (timeMap.containsKey(adjustedTime)) {
-                timeMap[adjustedTime] = timeMap[adjustedTime] + " ｜ " + textPart
+                // 如果是同时间戳的第二行（通常是翻译），判断当前开关：
+                // 若开启翻译，将它追加在原歌词后面；若关闭翻译，直接丢弃该行！
+                if (showTranslation) {
+                    timeMap[adjustedTime] = timeMap[adjustedTime] + " ｜ " + textPart
+                }
             } else {
                 timeMap[adjustedTime] = textPart
                 timeKeys.add(adjustedTime)
@@ -481,7 +490,6 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
-        // 注册车机专属 Action
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
         
@@ -700,20 +708,18 @@ class PlaybackService :
     ): ListenableFuture<SessionResult> {
         return when (customCommand.customAction) {
 
-            // 【双向打通】：车机发送的收藏动作和应用内部收藏保持一致
             Playback.TOGGLE_FAVORITE, CARWITH_ACTION_COLLECT -> {
                 toggleFavorite()
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
-            // 【解密修复】：响应车机大屏点按切换循环模式，并精确遵循 0=随机, 1=单曲, 2=列表规范
             CARWITH_ACTION_PLAY_MODE -> {
                 val modeString = args.getString(CARWITH_BUNDLE_PLAY_MODE)
                 if (modeString != null) {
                     when (modeString.toIntOrNull() ?: 2) {
-                        0 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = true } // 收到随机指令 -> 开启随机
-                        1 -> { player.repeatMode = Player.REPEAT_MODE_ONE; player.shuffleModeEnabled = false } // 收到单曲指令 -> 开启单曲循环
-                        2 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = false } // 收到列表指令 -> 开启列表循环
+                        0 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = true } 
+                        1 -> { player.repeatMode = Player.REPEAT_MODE_ONE; player.shuffleModeEnabled = false }
+                        2 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = false } 
                     }
                     updateCarWithMetadata(forceImageLoad = false)
                 }
@@ -857,7 +863,6 @@ class PlaybackService :
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-        // 防止自造的数据被无限循环捕获
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
             return
@@ -881,6 +886,7 @@ class PlaybackService :
 
             isCurrentSongFavorite = isFavoriteDeferred.await()
             val rawLyricsText = lyricsDeferred.await()
+            currentRawLyricsData = rawLyricsText // 缓存一份原歌词
 
             if (newSong != Song.emptySong) {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
@@ -900,7 +906,6 @@ class PlaybackService :
                         refreshMediaButtonCustomLayout()
                         carWithUpdateJob?.cancel()
                         carWithUpdateJob = serviceScope.launch(Main) {
-                            // 【保护机制】：锁定 1000 毫秒，保护车机内存，规避切歌闪退/卡顿
                             delay(1000)
                             updateCarWithMetadata(forceImageLoad = true)
                         }
@@ -978,6 +983,14 @@ class PlaybackService :
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
+            // 【重点】：如果翻译物理开关被切换，立刻重新拉取原 LRC 进行重组，并推送给车机
+            "lyrics_show_translation" -> {
+                if (!currentRawLyricsData.isNullOrBlank()) {
+                    currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
+                    updateCarWithMetadata(forceImageLoad = false)
+                }
+            }
+
             QUEUE_NEXT_MODE -> { player.setSequentialTimelineEnabled(sequentialTimeline) }
             ENABLE_HISTORY -> { if (!preferences.getBoolean(key, true)) { serviceScope.launch(IO) { repository.clearSongHistory() } } }
             IGNORE_AUDIO_FOCUS -> { player.setAudioAttributes(player.audioAttributes, handleAudioFocus) }
@@ -1019,34 +1032,29 @@ class PlaybackService :
             SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
-        // 收藏状态变更，强制告知车机
         withContext(Main) {
             updateCarWithMetadata(forceImageLoad = false)
         }
     }
 
-
     // =========================================================================================
     // 【终极武器：完全兼容 CarWith 的私有通信框架层拦截重构】
-    // 强制转换为 500x500 高清防崩溃 Bitmap，避开 URI 越权，原生与私有配置双轨并行入列！
+    // 将封面强制转换为 500x500 黄金画质 Bitmap 数组，避开 URI 越权！
     // =========================================================================================
     private fun updateCarWithMetadata(forceImageLoad: Boolean) {
         if (!::player.isInitialized) return
         val currentItem = player.currentMediaItem ?: return
         val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
 
-        // 【严格匹配 CarWith 源码】：0=随机播放, 1=单曲循环, 2=列表循环
         val targetPlayMode = when {
             player.shuffleModeEnabled -> 0L
             player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
             else -> 2L
         }
         
-        // 【核心解密】：车机验证的是 String 类型的 "1" 而非 Long
         val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
         val targetLrc = if (currentCarWithLrc.isNullOrBlank()) "" else currentCarWithLrc!!
 
-        // 防死循环保护机制
         if (!forceImageLoad &&
             oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
             oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
@@ -1056,7 +1064,6 @@ class PlaybackService :
         }
 
         serviceScope.launch(IO) {
-            // 组装发给底层 Session 和车机的通信 Bundle
             val newExtras = Bundle(oldExtras).apply {
                 putBoolean("carwith_injected", true)
                 if (targetLrc.isNotEmpty()) {
@@ -1072,16 +1079,15 @@ class PlaybackService :
                 putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
             }
 
-            // 【摧毁 URI 干扰】：车机通过 URI 越权失败会黑屏，必须强行将所有 URI 设置为 NULL
             val metadataBuilder = currentItem.mediaMetadata.buildUpon()
                 .setUserRating(HeartRating(isCurrentSongFavorite)) 
-                .setArtworkUri(null)
+                .setArtworkUri(null) // 摧毁 URI，绝对防止黑屏
 
             val songId = currentItem.mediaId.toLongOrNull()
             if (songId != null && forceImageLoad) {
                 val song = repository.songById(songId)
                 try {
-                    // 【黄金画质】：500x500 搭配 JPEG 85，清晰且只有极小的体积 (~40KB)，绝不触发 1MB Binder 限制
+                    // 【画质保障】：500x500 JPEG 85，清晰且控制在40KB左右，绝不触发 1MB Binder 限制
                     val result = SingletonImageLoader.get(this@PlaybackService).execute(
                         ImageRequest.Builder(this@PlaybackService)
                             .data(song)
@@ -1095,10 +1101,8 @@ class PlaybackService :
                         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
                         val artworkBytes = stream.toByteArray()
 
-                        // Media3 官方方式赋值
                         metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
 
-                        // 【越狱式赋值】：直接把 Bitmap 实例挂到 Bundle 上送入底层旧版 MediaSessionCompat
                         newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
                         newExtras.putParcelable("android.media.metadata.ART", bitmap)
                         newExtras.putParcelable("android.media.metadata.DISPLAY_ICON", bitmap)
@@ -1113,7 +1117,6 @@ class PlaybackService :
             val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
 
             withContext(Main) {
-                // 原地平滑无缝替换 Metadata，不会引起播放中断
                 if (player.currentMediaItem?.mediaId == newItem.mediaId) {
                     player.replaceMediaItem(player.currentMediaItemIndex, newItem)
                 }
@@ -1450,12 +1453,10 @@ class PlaybackService :
 
         private const val FOREGROUND_SERVICE_TIMEOUT = (60 * 1000) * 2L
 
-        // 【保留最新状态】：完全符合 CarWith 定义的私有键协议
         private const val CARWITH_LYRICS_WHOLE = "ucar.media.metadata.LYRICS_WHOLE"
         private const val CARWITH_LYRICS_LINE = "ucar.media.metadata.LYRICS_LINE"
         private const val CARWITH_LYRICS_STATUS = "ucar.media.metadata.LYRICS_STATUS"
         private const val CARWITH_PLAY_MODE = "ucar.media.metadata.PLAY_MODE"
-        // 收藏状态底层通讯专用键：
         private const val CARWITH_COLLECT = "ucar.media.metadata.COLLECT"
         private const val CARWITH_ACTION_COLLECT = "ucar.media.action.COLLECT"
         private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT_STATE"

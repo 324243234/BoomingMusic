@@ -283,6 +283,11 @@ fun CoverLyricsScreen(
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isGradientTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Gradient
 
+    // 【终极物理开关】：直接绑定底层源码真实的翻译控制 Key
+    val translationKey = "lyrics_show_translation" 
+    val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
             LyricsSurface(
@@ -304,29 +309,30 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             
-            // 【全局悬浮功能区】：将翻译按钮和全屏按钮纵向打包在一起
+            // 全局悬浮功能区
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    // 智能边距：如果是 Gradient 平板，底部留出 80dp 给 XML 的收藏按钮让位，否则正常 16dp
                     .padding(
                         end = 16.dp, 
                         bottom = if (isLandscape && isGradientTheme) 80.dp else 16.dp
                     ),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                // 间距改小到 0.dp，让译字紧紧贴着放大按钮
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 
-                // 1. 全局物理翻译开关
+                // 1. 物理翻译开关 (尺寸极致缩小为 30.dp)
                 androidx.compose.material3.IconButton(
+                    modifier = Modifier.size(30.dp),
                     onClick = {
                         try {
-                            val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
-                            val key = "enable_lyrics_translation" // 盲猜键名，如果有偏差请改成你项目里控制翻译的真实 key
-                            val isEnabled = prefs.getBoolean(key, false)
-                            prefs.edit().putBoolean(key, !isEnabled).apply()
-                            android.widget.Toast.makeText(context, if (!isEnabled) "歌词翻译已开启" else "歌词翻译已关闭", android.widget.Toast.LENGTH_SHORT).show()
+                            val newState = !isTranslationEnabled
+                            isTranslationEnabled = newState
+                            // 物理写入底层配置，ViewModel 会自动捕获并瞬间刷新屏幕上的歌词
+                            prefs.edit().putBoolean(translationKey, newState).apply()
+                            android.widget.Toast.makeText(context, if (newState) "歌词翻译已开启" else "歌词翻译已关闭", android.widget.Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
@@ -334,17 +340,18 @@ fun CoverLyricsScreen(
                 ) {
                     Text(
                         text = "译",
-                        style = MaterialTheme.typography.titleLarge.copy(
+                        style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         ),
-                        // 动态提取主题色，与下面的按钮完美同色
-                        color = MaterialTheme.colorScheme.onSurface 
+                        // 你的要求：关闭(false)正常亮(1.0f)，开启(true)变灰(0.4f)
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
                     )
                 }
 
-                // 2. 原始的右下角放大按钮（非 Gradient 横屏时显示）
+                // 2. 原始放大按钮 (尺寸同步缩小，视觉更紧凑)
                 if (!(isLandscape && isGradientTheme)) {
                     FilledIconButton(
+                        modifier = Modifier.size(36.dp), 
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
                             contentColor = MaterialTheme.colorScheme.surface
@@ -353,7 +360,8 @@ fun CoverLyricsScreen(
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_open_in_full_24dp),
-                            contentDescription = stringResource(R.string.action_lyrics_editor)
+                            contentDescription = stringResource(R.string.action_lyrics_editor),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

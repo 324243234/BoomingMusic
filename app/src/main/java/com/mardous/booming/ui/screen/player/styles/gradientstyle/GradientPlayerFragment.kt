@@ -59,12 +59,22 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     return true
                 }
 
-                // 2. 双击 -> 播放下一首 (使用系统级原生媒体按键事件，绝对不会报编译错误)
+                // 2. 双击 -> 左右分区切歌！
                 override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
                     try {
+                        val overlayWidth = binding.coverClickOverlay?.width ?: 0
                         val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-                        val eventDown = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
-                        val eventUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+                        
+                        // 【二等分切割逻辑】：手指X坐标大于总宽度一半即为右侧，否则为左侧
+                        val keyCode = if (overlayWidth > 0 && e.x > overlayWidth / 2) {
+                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT     // 点击右半部分 -> 下一首
+                        } else {
+                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS // 点击左半部分 -> 上一首
+                        }
+
+                        // 发送系统原生物理媒体键，百分百兼容且绝对不报编译错
+                        val eventDown = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+                        val eventUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
                         audioManager.dispatchMediaKeyEvent(eventDown)
                         audioManager.dispatchMediaKeyEvent(eventUp)
                     } catch (ex: Exception) {
