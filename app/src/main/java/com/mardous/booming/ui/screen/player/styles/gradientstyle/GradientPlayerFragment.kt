@@ -59,9 +59,17 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     return true
                 }
 
-                // 2. 双击 ->播放下一首！
+                // 2. 双击 -> 播放下一首 (使用系统级原生媒体按键事件，绝对不会报编译错误)
                 override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                    onQuickActionEvent(NowPlayingAction.SkipToNext)
+                    try {
+                        val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                        val eventDown = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+                        val eventUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+                        audioManager.dispatchMediaKeyEvent(eventDown)
+                        audioManager.dispatchMediaKeyEvent(eventUp)
+                    } catch (ex: Exception) {
+                        ex.printStackTrace()
+                    }
                     return true
                 }
 
