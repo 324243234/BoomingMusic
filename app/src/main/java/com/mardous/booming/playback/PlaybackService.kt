@@ -708,7 +708,7 @@ class PlaybackService :
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
-            // 【彻底解药】：直接抛弃从Bundle读取int导致的Crash，改在播放器内部闭环模式循环。绝对不再罢工！
+            // 【彻底解药】：直接在播放器内部闭环模式循环，无视传入的脏参数，绝不再罢工！
             CARWITH_ACTION_PLAY_MODE -> {
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
@@ -720,7 +720,7 @@ class PlaybackService :
                     player.shuffleModeEnabled = true
                     player.repeatMode = Player.REPEAT_MODE_ALL
                 }
-                requestCarWithUpdate(forceImageLoad = false)
+                requestCarWithUpdate(forceImageLoad = false, bustCache = false)
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
@@ -849,14 +849,14 @@ class PlaybackService :
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        requestCarWithUpdate(forceImageLoad = false)
+        requestCarWithUpdate(forceImageLoad = false, bustCache = false)
         persistentStorage.saveState()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        requestCarWithUpdate(forceImageLoad = false)
+        requestCarWithUpdate(forceImageLoad = false, bustCache = false)
         persistentStorage.saveState()
     }
 
@@ -901,15 +901,15 @@ class PlaybackService :
 
                     withContext(Main) {
                         refreshMediaButtonCustomLayout()
-                        // 【零延迟无缝加载架构】：直接用协程挂起和自动取消机制管理加载过程，完全抛弃 delay！
-                        requestCarWithUpdate(forceImageLoad = true)
+                        // 【零延迟无缝挂起架构】：极速秒传图片与歌词，解决慢一拍卡顿
+                        requestCarWithUpdate(forceImageLoad = true, bustCache = false)
                     }
                 }
             } else {
                 currentCarWithLrc = null
                 withContext(Main) {
                     refreshMediaButtonCustomLayout()
-                    requestCarWithUpdate(forceImageLoad = true)
+                    requestCarWithUpdate(forceImageLoad = true, bustCache = false)
                 }
             }
 
@@ -977,10 +977,11 @@ class PlaybackService :
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
+            // 【洗脑疗法】：翻译被切换时，立刻发空包清空车机缓存，再瞬间推新包，强迫车机同步翻译！
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    requestCarWithUpdate(forceImageLoad = false)
+                    requestCarWithUpdate(forceImageLoad = true, bustCache = true)
                 }
             }
 
@@ -1026,16 +1027,15 @@ class PlaybackService :
             Bundle.EMPTY
         )
         withContext(Main) {
-            requestCarWithUpdate(forceImageLoad = false)
+            requestCarWithUpdate(forceImageLoad = false, bustCache = false)
         }
     }
 
     // =========================================================================================
-    // 【终极武器：智能无缝加载架构】
-    // 通过 Coroutine Cancellation 直接抛弃 Delay，在 500x500 黄金画质下实现极速秒切，绝对防抖！
+    // 【终极武器：智能无缝加载架构与 50ms 洗脑刷新机制】
     // =========================================================================================
-    private fun requestCarWithUpdate(forceImageLoad: Boolean) {
-        carWithUpdateJob?.cancel() // 瞬间熔断上一首正在加载的任务，完美防抖，无缝切换
+    private fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
+        carWithUpdateJob?.cancel() 
         carWithUpdateJob = serviceScope.launch(Main) {
             val currentItem = player.currentMediaItem ?: return@launch
 
@@ -1049,12 +1049,28 @@ class PlaybackService :
 
             val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
 
-            if (!forceImageLoad &&
+            if (!forceImageLoad && !bustCache &&
                 oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
                 oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
                 oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
                 oldExtras.getBoolean("carwith_injected", false)) {
                 return@launch
+            }
+
+            // 【强制清理车机顽固缓存（洗脑疗法）】：只有在切换翻译开关且歌词非空时触发
+            if (bustCache && targetLrc.isNotEmpty()) {
+                val flushExtras = Bundle(oldExtras).apply {
+                    putBoolean("carwith_injected", true)
+                    putString(CARWITH_LYRICS_WHOLE, "")
+                    putLong(CARWITH_LYRICS_STATUS, 3L) // 用3L（无歌词）瞬间清空车机的UI缓存
+                    putLong(CARWITH_PLAY_MODE, targetPlayMode)
+                    putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
+                }
+                val flushMetadata = currentItem.mediaMetadata.buildUpon().setExtras(flushExtras).build()
+                val flushItem = currentItem.buildUpon().setMediaMetadata(flushMetadata).build()
+                player.replaceMediaItem(player.currentMediaItemIndex, flushItem)
+                
+                delay(50) // 给车机 50ms 清空内存的时间（极快，肉眼无感）
             }
 
             val newExtras = Bundle(oldExtras).apply {
@@ -1079,10 +1095,10 @@ class PlaybackService :
             val songId = currentItem.mediaId.toLongOrNull()
 
             withContext(IO) {
-                if (songId != null && forceImageLoad) {
+                // 如果需要刷新封面，或者执行过洗脑疗法（会弄丢封面），都必须重新附上 JPEG
+                if (songId != null && (forceImageLoad || bustCache)) {
                     val song = repository.songById(songId)
                     try {
-                        // Coil 会完美配合协程挂起，在加载期间如果发生切歌，会自动引发 CancellationException 中止加载
                         val result = SingletonImageLoader.get(this@PlaybackService).execute(
                             ImageRequest.Builder(this@PlaybackService)
                                 .data(song)
