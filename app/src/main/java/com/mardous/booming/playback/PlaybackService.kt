@@ -153,17 +153,14 @@ class PlaybackService :
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
     
-    // 专门缓存最后一次提取的原版 LRC，方便随时在翻译开关切换时重建
     private var currentRawLyricsData: String? = null
 
-    // 【智能翻译分离器】：解析 LRC 并根据用户的全局开关决定是否带翻译发给车机
     private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
         val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
         if (lines.isEmpty()) return ""
 
         val offsetMs = 50L 
-        // 实时读取最新的物理开关状态
         val showTranslation = preferences.getBoolean("lyrics_show_translation", true)
         
         val timeMap = mutableMapOf<Long, String>()
@@ -178,8 +175,6 @@ class PlaybackService :
             val adjustedTime = if (originalTime > offsetMs) originalTime - offsetMs else 0L
 
             if (timeMap.containsKey(adjustedTime)) {
-                // 如果是同时间戳的第二行（通常是翻译），判断当前开关：
-                // 若开启翻译，将它追加在原歌词后面；若关闭翻译，直接丢弃该行！
                 if (showTranslation) {
                     timeMap[adjustedTime] = timeMap[adjustedTime] + " ｜ " + textPart
                 }
@@ -713,16 +708,19 @@ class PlaybackService :
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
+            // 【彻底解药】：直接抛弃从Bundle读取int导致的Crash，改在播放器内部闭环模式循环。绝对不再罢工！
             CARWITH_ACTION_PLAY_MODE -> {
-                val modeString = args.getString(CARWITH_BUNDLE_PLAY_MODE)
-                if (modeString != null) {
-                    when (modeString.toIntOrNull() ?: 2) {
-                        0 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = true } 
-                        1 -> { player.repeatMode = Player.REPEAT_MODE_ONE; player.shuffleModeEnabled = false }
-                        2 -> { player.repeatMode = Player.REPEAT_MODE_ALL; player.shuffleModeEnabled = false } 
-                    }
-                    updateCarWithMetadata(forceImageLoad = false)
+                if (player.shuffleModeEnabled) {
+                    player.shuffleModeEnabled = false
+                    player.repeatMode = Player.REPEAT_MODE_ONE
+                } else if (player.repeatMode == Player.REPEAT_MODE_ONE) {
+                    player.shuffleModeEnabled = false
+                    player.repeatMode = Player.REPEAT_MODE_ALL
+                } else {
+                    player.shuffleModeEnabled = true
+                    player.repeatMode = Player.REPEAT_MODE_ALL
                 }
+                requestCarWithUpdate(forceImageLoad = false)
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
@@ -851,14 +849,14 @@ class PlaybackService :
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        updateCarWithMetadata(forceImageLoad = false)
+        requestCarWithUpdate(forceImageLoad = false)
         persistentStorage.saveState()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        updateCarWithMetadata(forceImageLoad = false)
+        requestCarWithUpdate(forceImageLoad = false)
         persistentStorage.saveState()
     }
 
@@ -886,7 +884,7 @@ class PlaybackService :
 
             isCurrentSongFavorite = isFavoriteDeferred.await()
             val rawLyricsText = lyricsDeferred.await()
-            currentRawLyricsData = rawLyricsText // 缓存一份原歌词
+            currentRawLyricsData = rawLyricsText 
 
             if (newSong != Song.emptySong) {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
@@ -897,25 +895,21 @@ class PlaybackService :
                     withContext(Main) { refreshMediaButtonCustomLayout() }
                 } else {
                     bluetoothLyricManager.stopLyrics()
-
                     currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
                         processLrcAndInterlude(rawLyricsText)
                     } else null
 
                     withContext(Main) {
                         refreshMediaButtonCustomLayout()
-                        carWithUpdateJob?.cancel()
-                        carWithUpdateJob = serviceScope.launch(Main) {
-                            delay(1000)
-                            updateCarWithMetadata(forceImageLoad = true)
-                        }
+                        // 【零延迟无缝加载架构】：直接用协程挂起和自动取消机制管理加载过程，完全抛弃 delay！
+                        requestCarWithUpdate(forceImageLoad = true)
                     }
                 }
             } else {
                 currentCarWithLrc = null
                 withContext(Main) {
                     refreshMediaButtonCustomLayout()
-                    updateCarWithMetadata(forceImageLoad = true)
+                    requestCarWithUpdate(forceImageLoad = true)
                 }
             }
 
@@ -983,11 +977,10 @@ class PlaybackService :
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
-            // 【重点】：如果翻译物理开关被切换，立刻重新拉取原 LRC 进行重组，并推送给车机
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    updateCarWithMetadata(forceImageLoad = false)
+                    requestCarWithUpdate(forceImageLoad = false)
                 }
             }
 
@@ -1033,37 +1026,37 @@ class PlaybackService :
             Bundle.EMPTY
         )
         withContext(Main) {
-            updateCarWithMetadata(forceImageLoad = false)
+            requestCarWithUpdate(forceImageLoad = false)
         }
     }
 
     // =========================================================================================
-    // 【终极武器：完全兼容 CarWith 的私有通信框架层拦截重构】
-    // 将封面强制转换为 500x500 黄金画质 Bitmap 数组，避开 URI 越权！
+    // 【终极武器：智能无缝加载架构】
+    // 通过 Coroutine Cancellation 直接抛弃 Delay，在 500x500 黄金画质下实现极速秒切，绝对防抖！
     // =========================================================================================
-    private fun updateCarWithMetadata(forceImageLoad: Boolean) {
-        if (!::player.isInitialized) return
-        val currentItem = player.currentMediaItem ?: return
-        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
+    private fun requestCarWithUpdate(forceImageLoad: Boolean) {
+        carWithUpdateJob?.cancel() // 瞬间熔断上一首正在加载的任务，完美防抖，无缝切换
+        carWithUpdateJob = serviceScope.launch(Main) {
+            val currentItem = player.currentMediaItem ?: return@launch
 
-        val targetPlayMode = when {
-            player.shuffleModeEnabled -> 0L
-            player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
-            else -> 2L
-        }
-        
-        val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
-        val targetLrc = if (currentCarWithLrc.isNullOrBlank()) "" else currentCarWithLrc!!
+            val targetPlayMode = when {
+                player.shuffleModeEnabled -> 0L
+                player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
+                else -> 2L
+            }
+            val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
+            val targetLrc = if (currentCarWithLrc.isNullOrBlank()) "" else currentCarWithLrc!!
 
-        if (!forceImageLoad &&
-            oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
-            oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
-            oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
-            oldExtras.getBoolean("carwith_injected", false)) {
-            return
-        }
+            val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
 
-        serviceScope.launch(IO) {
+            if (!forceImageLoad &&
+                oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
+                oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
+                oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
+                oldExtras.getBoolean("carwith_injected", false)) {
+                return@launch
+            }
+
             val newExtras = Bundle(oldExtras).apply {
                 putBoolean("carwith_injected", true)
                 if (targetLrc.isNotEmpty()) {
@@ -1080,45 +1073,47 @@ class PlaybackService :
             }
 
             val metadataBuilder = currentItem.mediaMetadata.buildUpon()
-                .setUserRating(HeartRating(isCurrentSongFavorite)) 
-                .setArtworkUri(null) // 摧毁 URI，绝对防止黑屏
+                .setUserRating(HeartRating(isCurrentSongFavorite))
+                .setArtworkUri(null) 
 
             val songId = currentItem.mediaId.toLongOrNull()
-            if (songId != null && forceImageLoad) {
-                val song = repository.songById(songId)
-                try {
-                    // 【画质保障】：500x500 JPEG 85，清晰且控制在40KB左右，绝不触发 1MB Binder 限制
-                    val result = SingletonImageLoader.get(this@PlaybackService).execute(
-                        ImageRequest.Builder(this@PlaybackService)
-                            .data(song)
-                            .size(500)
-                            .scale(Scale.FILL)
-                            .build()
-                    )
-                    val bitmap = result.image?.toBitmap(500, 500)
-                    if (bitmap != null) {
-                        val stream = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
-                        val artworkBytes = stream.toByteArray()
 
-                        metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            withContext(IO) {
+                if (songId != null && forceImageLoad) {
+                    val song = repository.songById(songId)
+                    try {
+                        // Coil 会完美配合协程挂起，在加载期间如果发生切歌，会自动引发 CancellationException 中止加载
+                        val result = SingletonImageLoader.get(this@PlaybackService).execute(
+                            ImageRequest.Builder(this@PlaybackService)
+                                .data(song)
+                                .size(500)
+                                .scale(Scale.FILL)
+                                .build()
+                        )
+                        val bitmap = result.image?.toBitmap(500, 500)
+                        if (bitmap != null) {
+                            val stream = ByteArrayOutputStream()
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
+                            val artworkBytes = stream.toByteArray()
 
-                        newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
-                        newExtras.putParcelable("android.media.metadata.ART", bitmap)
-                        newExtras.putParcelable("android.media.metadata.DISPLAY_ICON", bitmap)
+                            metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
+                            newExtras.putParcelable("android.media.metadata.ART", bitmap)
+                            newExtras.putParcelable("android.media.metadata.DISPLAY_ICON", bitmap)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CarWithFix", "Failed to load artwork Bitmap to byte array", e)
                     }
-                } catch (e: Exception) {
-                    Log.e("CarWithFix", "Failed to load artwork Bitmap to byte array", e)
                 }
-            }
 
-            metadataBuilder.setExtras(newExtras)
-            val newMetadata = metadataBuilder.build()
-            val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
+                metadataBuilder.setExtras(newExtras)
+                val newMetadata = metadataBuilder.build()
+                val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
 
-            withContext(Main) {
-                if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                    player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+                withContext(Main) {
+                    if (player.currentMediaItem?.mediaId == newItem.mediaId) {
+                        player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+                    }
                 }
             }
         }
