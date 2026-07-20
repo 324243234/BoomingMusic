@@ -45,19 +45,39 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         _binding = FragmentGradientPlayerBinding.bind(view)
         
         if (isLandscape()) {
-            // 点击左侧封面玻璃层，切换右侧显示状态
-            binding.coverClickOverlay?.setOnClickListener {
-                val isLyricsVisible = binding.rightLyricsFragment?.isVisible == true
+            // 【新增】：创建手势识别器，完美实现单击、双击、长按
+            val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
                 
-                // 取反切换
-                binding.rightLyricsFragment?.isVisible = !isLyricsVisible
-                binding.lyricsFavoriteButton?.isVisible = !isLyricsVisible
-                
-                // 原有控件隐藏
-                binding.rightControlsGroup?.isVisible = isLyricsVisible
+                // 1. 单击确认 (规避双击时的第一次点击) -> 切换歌词界面
+                override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
+                    val isLyricsVisible = binding.rightLyricsFragment?.isVisible == true
+                    // 取反切换
+                    binding.rightLyricsFragment?.isVisible = !isLyricsVisible
+                    binding.lyricsFavoriteButton?.isVisible = !isLyricsVisible
+                    // 原有控件隐藏
+                    binding.rightControlsGroup?.isVisible = isLyricsVisible
+                    return true
+                }
+
+                // 2. 双击 -> 触发收藏/取消收藏
+                //override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                //    onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
+                //    return true
+                //}
+
+                // 3. 长按 -> 触发收藏/取消收藏
+                override fun onLongPress(e: android.view.MotionEvent) {
+                    onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
+                }
+            })
+
+            // 把手势识别器绑定到左侧的玻璃层(coverClickOverlay)上
+            binding.coverClickOverlay?.setOnTouchListener { _, event ->
+                gestureDetector.onTouchEvent(event)
+                true // 返回 true 表示我们消费了所有的触摸事件
             }
 
-            // 让新的悬浮收藏按钮具备收藏功能
+            // 让新的悬浮收藏按钮也具备点击收藏功能
             binding.lyricsFavoriteButton?.let { 
                 setViewAction(it, NowPlayingAction.ToggleFavoriteState) 
             }

@@ -119,21 +119,21 @@
 
         <!-- ================= 右侧歌词及悬浮层 ================= -->
         <!-- 歌词容器：自带全屏按钮 -->
+        <!-- 歌词容器：自带全屏按钮 -->
+        <!-- 【修复】：删除了 android:elevation="4dp"，防止它遮挡按钮 -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/rightLyricsFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:visibility="gone"
-            android:elevation="4dp"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- 单独 悬浮的收藏按钮，通过 Margin 精准盖在全屏按钮正上方 -->
-        <!-- 【修改】：去掉了原本给放大按钮留的空间 (marginBottom 从 80dp 改为 16dp)，让它优雅地待在右下角 -->
-       <!-- 改为透明样式 ?materialIconButtonStyle，并删除 elevation -->
+        <!-- 单独悬浮的收藏按钮 -->
+        <!-- 【修复】：加上了 translationZ 强制悬浮，并用 stateListAnimator="@null" 屏蔽丑陋阴影 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
             style="?materialIconButtonStyle"
@@ -142,6 +142,8 @@
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="16dp"
             android:visibility="gone"
+            android:translationZ="10dp"
+            android:stateListAnimator="@null"
             app:icon="@drawable/ic_favorite_outline_24dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
