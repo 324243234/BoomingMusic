@@ -59,11 +59,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     return true
                 }
 
-                // 2. 双击 -> 触发收藏/取消收藏
-                //override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                //    onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
-                //    return true
-                //}
+                // 2. 双击 ->播放下一首！
+                override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                    onQuickActionEvent(NowPlayingAction.SkipNext)
+                    return true
+                }
 
                 // 3. 长按 -> 触发收藏/取消收藏
                 override fun onLongPress(e: android.view.MotionEvent) {

@@ -279,7 +279,6 @@ fun CoverLyricsScreen(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
 
-    // 【关键修复】：必须在这里定义这两个变量，且使用全称路径防止没导包报错！
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isGradientTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Gradient
@@ -305,23 +304,58 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             
-            // 【精准修复】：只在 非(横屏且Gradient主题) 时，才显示这个原始的右下角放大按钮
-            if (!(isLandscape && isGradientTheme)) {
-                FilledIconButton(
-                    modifier = Modifier
-                        .wrapContentSize()
-                        .align(Alignment.BottomEnd)
-                        .padding(16.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.onSurface,
-                        contentColor = MaterialTheme.colorScheme.surface
+            // 【全局悬浮功能区】：将翻译按钮和全屏按钮纵向打包在一起
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier
+                    .wrapContentSize()
+                    .align(Alignment.BottomEnd)
+                    // 智能边距：如果是 Gradient 平板，底部留出 80dp 给 XML 的收藏按钮让位，否则正常 16dp
+                    .padding(
+                        end = 16.dp, 
+                        bottom = if (isLandscape && isGradientTheme) 80.dp else 16.dp
                     ),
-                    onClick = onExpandClick
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                
+                // 1. 全局物理翻译开关
+                androidx.compose.material3.IconButton(
+                    onClick = {
+                        try {
+                            val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+                            val key = "enable_lyrics_translation" // 盲猜键名，如果有偏差请改成你项目里控制翻译的真实 key
+                            val isEnabled = prefs.getBoolean(key, false)
+                            prefs.edit().putBoolean(key, !isEnabled).apply()
+                            android.widget.Toast.makeText(context, if (!isEnabled) "歌词翻译已开启" else "歌词翻译已关闭", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
                 ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_open_in_full_24dp),
-                        contentDescription = stringResource(R.string.action_lyrics_editor)
+                    Text(
+                        text = "译",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        ),
+                        // 动态提取主题色，与下面的按钮完美同色
+                        color = MaterialTheme.colorScheme.onSurface 
                     )
+                }
+
+                // 2. 原始的右下角放大按钮（非 Gradient 横屏时显示）
+                if (!(isLandscape && isGradientTheme)) {
+                    FilledIconButton(
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        ),
+                        onClick = onExpandClick
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
+                            contentDescription = stringResource(R.string.action_lyrics_editor)
+                        )
+                    }
                 }
             }
         }
