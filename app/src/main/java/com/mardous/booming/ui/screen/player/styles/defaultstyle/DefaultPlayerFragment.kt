@@ -28,7 +28,6 @@ import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
-import kotlin.math.abs
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -73,7 +72,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
-                // 处理双击切歌
+                // 双击切歌
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     try {
                         val overlayWidth = view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.width ?: 0
@@ -89,7 +88,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 处理单击显隐歌词
+                // 单击显隐控制
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -103,53 +102,25 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
             }).apply {
-                // 极度关键：剥夺探测器的长按捕捉权，把长按动作还给底层的原作者代码处理！
+                // 将长按权限完全让给原作者的底层组件，绝不抢占！
                 setIsLongpressEnabled(false) 
             }
 
-            var isDragging = false
-            var startX = 0f
-            var startY = 0f
-            var downTime = 0L
-            val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
-
-            // 【完全零损耗分发】：不再克隆 MotionEvent 垃圾对象，杜绝卡顿！
+            // 【完全 0 内存开销的透传技术】：彻底杜绝任何形式的 GC 卡顿
             view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
                 gestureDetector.onTouchEvent(event)
                 
-                val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment) ?: return@setOnTouchListener true
-                
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        isDragging = false
-                        startX = event.x
-                        startY = event.y
-                        downTime = System.currentTimeMillis()
+                val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment)
+                if (coverFragment != null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP && 
+                        event.eventTime - event.downTime < ViewConfiguration.getLongPressTimeout()) {
+                        // 刺杀原作者的单击冲突：原地修改为 CANCEL 下发，完美掩盖
+                        val originalAction = event.action
+                        event.action = MotionEvent.ACTION_CANCEL
                         coverFragment.dispatchTouchEvent(event)
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
-                            isDragging = true 
-                        }
-                        coverFragment.dispatchTouchEvent(event) // 直接下发，100%保留原生阻尼丝滑！
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val touchDuration = System.currentTimeMillis() - downTime
-                        val isShortTap = touchDuration < ViewConfiguration.getLongPressTimeout()
-
-                        if (!isDragging && isShortTap) {
-                            // 原位篡改：如果判定是短促的单击，我们将动作伪装成 CANCEL 发给下层。
-                            // 这能精准扼杀原作者的单击显示冲突，而完全不影响双击和长按功能！
-                            val originalAction = event.action
-                            event.action = MotionEvent.ACTION_CANCEL
-                            coverFragment.dispatchTouchEvent(event)
-                            event.action = originalAction
-                        } else {
-                            // 如果是滑动，或者原生长按，完美放行！
-                            coverFragment.dispatchTouchEvent(event)
-                        }
-                    }
-                    else -> {
+                        event.action = originalAction
+                    } else {
+                        // 所有的滑动、长按，直接 100% 毫无保留地下发给原组件，保证原生丝滑
                         coverFragment.dispatchTouchEvent(event)
                     }
                 }

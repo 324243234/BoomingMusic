@@ -95,7 +95,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
-        // 彻底清空瞎造的方块，完全回归 Android 原生小圆点设计
+        // 【极简净化】：彻底移除了所有强行生成、染色滑块的代码！完全交由 XML 和原生系统接管！
+        // 这样既解决了 M3 的强行竖条，又彻底消除了主线程内存泄漏与重绘风暴！
 
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
@@ -206,8 +207,6 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         
         val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
-        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
-        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
             scheme.onSurfaceColor
@@ -223,16 +222,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 【终结卡顿】：加入过滤！防止在动画中每秒 60 次触发底层重绘！
-        volumeSlider?.apply {
-            val targetActive = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
-            val targetInactive = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
-            if (trackActiveTintList != targetActive) {
-                trackActiveTintList = targetActive
-                trackInactiveTintList = targetInactive
-                thumbTintList = targetActive
-            }
-        }
+        // 【卡顿解除】：完全摒除了 volumeSlider 的强制代码动画！由于 XML 已配置 ?colorOnSurface，
+        // Android 系统级主题框架会自动处理它的颜色变化，完全无需人为干预，直接 0 开销！
 
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),

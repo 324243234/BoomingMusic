@@ -134,7 +134,6 @@
         app:layout_constraintEnd_toStartOf="@+id/nextButton"
         app:layout_constraintStart_toEndOf="@+id/previousButton" />
 
-    <!-- 【已修复】：补全了丢失的 android: 前缀 -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/nextButton"
         style="@style/PlayerIconButton.Medium"
@@ -157,6 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
+    <!-- 【完美对齐的原生音量条】：彻底注入 customThumbDrawable 小圆点 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
@@ -185,7 +185,7 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:thumbRadius="6dp"
+            app:customThumbDrawable="@drawable/custom_volume_thumb"
             app:trackHeight="3dp"
             app:trackColorActive="?colorOnSurface"
             app:trackColorInactive="?colorSurfaceVariant" />
@@ -198,6 +198,7 @@
             app:tint="?android:attr/textColorSecondary" />
     </LinearLayout>
 
+    <!-- 歌曲格式信息，下放至音量条下方 -->
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/songInfo"
         android:layout_width="match_parent"
