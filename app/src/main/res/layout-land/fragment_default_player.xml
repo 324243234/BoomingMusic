@@ -73,7 +73,7 @@
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:menu="@menu/menu_now_playing"/>
 
-    <!-- ================= 右侧全屏歌词区 ================= -->
+    <!-- ================= 右侧全屏歌词区 (包含全局按钮) ================= -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"

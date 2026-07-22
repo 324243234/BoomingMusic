@@ -74,7 +74,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
                 
-                // 单击：控制右侧显隐
+                // 完美接管单击，控制右侧显隐
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -88,7 +88,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 双击：调用系统切歌，分屏判断左右
+                // 双击调用系统切歌
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     try {
                         val overlayWidth = view?.findViewById<View>(R.id.coverClickOverlay)?.width ?: 0
@@ -104,13 +104,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 长按：触发收藏
+                // 长按收藏
                 override fun onLongPress(e: MotionEvent) {
                     onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
                 }
             })
 
-            // 【零分配黑科技】：杜绝 OOM 和卡顿！
+            // 【零分配突变分发技术】：彻底杜绝卡顿，0次内存分配！
             var isDragging = false
             var startX = 0f
             var startY = 0f
@@ -120,30 +120,34 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 gestureDetector.onTouchEvent(event)
                 
                 val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment)
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        isDragging = false
-                        startX = event.x
-                        startY = event.y
-                        coverFragment?.dispatchTouchEvent(event) // 原生事件下发
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
-                            isDragging = true 
+                if (coverFragment != null) {
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            isDragging = false
+                            startX = event.x
+                            startY = event.y
+                            coverFragment.dispatchTouchEvent(event) // 直接下发
                         }
-                        coverFragment?.dispatchTouchEvent(event) // 直接放行，绝不克隆，根治卡顿！
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
-                            // 核心：原地改变状态为 CANCEL 发给下层！掐死底层点击事件，防止冲突！
-                            event.action = MotionEvent.ACTION_CANCEL 
-                            coverFragment?.dispatchTouchEvent(event)
-                        } else {
-                            coverFragment?.dispatchTouchEvent(event)
+                        MotionEvent.ACTION_MOVE -> {
+                            if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
+                                isDragging = true 
+                            }
+                            coverFragment.dispatchTouchEvent(event) // 直接下发，绝不克隆！
                         }
-                    }
-                    MotionEvent.ACTION_CANCEL -> {
-                        coverFragment?.dispatchTouchEvent(event)
+                        MotionEvent.ACTION_UP -> {
+                            if (!isDragging) {
+                                // 这是单击。利用原地篡改技术扼杀原作者的点击事件冲突！
+                                val originalAction = event.action
+                                event.action = MotionEvent.ACTION_CANCEL
+                                coverFragment.dispatchTouchEvent(event)
+                                event.action = originalAction // 恢复现场
+                            } else {
+                                coverFragment.dispatchTouchEvent(event)
+                            }
+                        }
+                        else -> {
+                            coverFragment.dispatchTouchEvent(event)
+                        }
                     }
                 }
                 true

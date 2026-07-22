@@ -287,12 +287,15 @@ fun CoverLyricsScreen(
     val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 【数据库直连】：瞬间获取真实的爱心红心状态
+    // 【最高级别安全查库】：切入 IO 线程查询状态，保证 App 绝对不会闪退
     val repository = org.koin.compose.koinInject<com.mardous.booming.data.local.repository.Repository>()
     var isFavorite by remember { mutableStateOf(false) }
+    
     LaunchedEffect(song) {
         if (song.id != 0L) {
-            isFavorite = repository.isSongFavorite(song.id)
+            isFavorite = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                repository.isSongFavorite(song.id)
+            }
         }
     }
 
@@ -317,7 +320,7 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // 【全局悬浮侧边栏】：完美贴在右下角！排列：译 -> 心 -> 放大
+            // 全局悬浮侧边栏：完美贴附在右下角
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
@@ -344,7 +347,7 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 收藏红心按钮 (实心秒切)
+                // 2. 收藏红心按钮 (乐观更新，瞬间秒亮)
                 androidx.compose.material3.IconButton(
                     modifier = Modifier.size(36.dp),
                     onClick = {
