@@ -1,36 +1,27 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
 import android.animation.Animator
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.TimeInterpolator
+import android.content.Context
 import android.content.SharedPreferences
+import android.database.ContentObserver
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.slider.Slider
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
@@ -51,13 +42,14 @@ import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import java.util.LinkedList
 
-/**
- * @author Christians M. A. (mardous)
- */
 class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_default_player_playback_controls) {
 
     private var _binding: FragmentDefaultPlayerPlaybackControlsBinding? = null
     private val binding get() = _binding!!
+
+    // 音量联动组件
+    private lateinit var audioManager: AudioManager
+    private var volumeObserver: ContentObserver? = null
 
     override val playPauseFab: FloatingActionButton
         get() = binding.playPauseButton
@@ -97,6 +89,40 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         binding.previousButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_PREVIOUS))
 
         setupQueueInfoView()
+        setupVolumeSlider()
+    }
+
+    private fun setupVolumeSlider() {
+        audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
+
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
+        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+
+        volumeSlider.valueFrom = 0f
+        volumeSlider.valueTo = maxVolume
+        volumeSlider.value = currentVolume
+
+        // 监听滑块拖动
+        volumeSlider.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value.toInt(), 0)
+            }
+        }
+
+        // 监听物理按键双向同步
+        volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                super.onChange(selfChange)
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+                if (volumeSlider.value != newVolume) {
+                    volumeSlider.value = newVolume
+                }
+            }
+        }
+        requireContext().contentResolver.registerContentObserver(
+            Settings.System.CONTENT_URI, true, volumeObserver!!
+        )
     }
 
     override fun onCreatePlayerAnimator(): PlayerAnimator {
@@ -165,6 +191,9 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     }
 
     override fun onDestroyView() {
+        volumeObserver?.let {
+            requireContext().contentResolver.unregisterContentObserver(it)
+        }
         super.onDestroyView()
         _binding = null
     }
@@ -177,6 +206,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         val oldSliderColor = binding.progressSlider.currentColor
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
+        
+        // 音量图标染色
+        val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
+        val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
+        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
+        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
             scheme.onSurfaceColor
@@ -195,6 +230,14 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             scheme.onSurfaceColor,
             scheme.onSurfaceVariantColor
         )
+        
+        // 动态跟随系统主题染音量条的颜色
+        volumeSlider?.apply {
+            thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
+            trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
+            trackInactiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+        }
+
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
@@ -207,7 +250,9 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             binding.songInfo?.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.queueInfo.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
+            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
+            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
         )
     }
 

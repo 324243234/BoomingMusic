@@ -1,20 +1,3 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
 import android.content.SharedPreferences
@@ -27,6 +10,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -43,9 +27,6 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 
-/**
- * @author Christians M. A. (mardous)
- */
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
 
@@ -81,6 +62,44 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             WindowInsetsCompat.CONSUMED
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
+        
+        // 【新增】：初始化平板横屏全屏歌词及手势穿透
+        setupGestureOverlay()
+    }
+
+    private fun setupGestureOverlay() {
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (isLandscape) {
+            val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
+                // 单击：仅控制右侧 UI，左侧封面原地不动
+                override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
+                    val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
+                    val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
+                    val toolbar = view?.findViewById<View>(R.id.toolbar)
+                    
+                    val isLyricsVisible = rightLyrics?.isVisible == true
+                    
+                    // 完全隐藏/显示右侧控件，给歌词腾出完整空间
+                    rightLyrics?.isVisible = !isLyricsVisible
+                    rightControls?.isVisible = isLyricsVisible
+                    toolbar?.isVisible = isLyricsVisible
+                    return true
+                }
+            })
+
+            // 【核心黑科技】：穿透机制
+            view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
+                // 1. 让探测器截获单击事件
+                gestureDetector.onTouchEvent(event)
+                
+                // 2. 将所有真实的拖拽、滑动动作，【原封不动地转发】给底层的 CoverPagerFragment！
+                // 这完美保留了原作者 ViewPager 的丝滑翻页动画！
+                view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.dispatchTouchEvent(event)
+                
+                // 3. 消费掉此事件，确保持续接收
+                true
+            }
+        }
     }
 
     private fun setupToolbar() {
