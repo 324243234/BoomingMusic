@@ -156,19 +156,17 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【修轨】：按 0.65 百分比居中，保留原生的圆形小滑块，去掉光晕 -->
+    <!-- 原生音量条，等待代码注入Apple细线滑块 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginBottom="12dp"
-        app:layout_constraintWidth_percent="0.65"
-        app:layout_constraintHorizontal_bias="0.5"
+        android:layout_marginBottom="4dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/queueInfo">
+        app:layout_constraintBottom_toTopOf="@+id/songInfo">
 
         <ImageView
             android:id="@+id/volumeDownIcon"
@@ -187,9 +185,7 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:thumbRadius="6dp"
-            app:trackHeight="2dp"
-            app:thumbColor="?colorOnSurface"
+            app:trackHeight="3dp"
             app:trackColorActive="?colorOnSurface"
             app:trackColorInactive="?colorSurfaceVariant" />
 
@@ -200,6 +196,26 @@
             android:src="@drawable/ic_volume_up_24dp"
             app:tint="?android:attr/textColorSecondary" />
     </LinearLayout>
+
+    <!-- 歌曲格式信息，下放至音量条下方 -->
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/songInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginBottom="8dp"
+        android:gravity="center"
+        android:freezesText="true"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:textAppearance="?textAppearanceLabelMedium"
+        android:textColor="?android:attr/textColorSecondary"
+        app:layout_constraintBottom_toTopOf="@+id/queueInfo"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:text="@tools:sample/lorem/random"/>
 
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/queueInfo"

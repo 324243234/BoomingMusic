@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -94,6 +95,16 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     private fun setupVolumeSlider() {
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
+
+        // 【Apple Music 细长音量块】：极细，极扁，圆润
+        val density = requireContext().resources.displayMetrics.density
+        val customThumb = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 1f * density
+            setSize((2 * density).toInt(), (12 * density).toInt()) 
+            setColor(Color.WHITE) // 将会在下方 getTintTargets 中被染成主题色，不再纯白刺眼
+        }
+        volumeSlider.setCustomThumbDrawable(customThumb)
 
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
@@ -221,11 +232,11 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 彻底复用原生系统，自动将小圆点和轨道染上主题色
         volumeSlider?.apply {
-            thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackInactiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            // 完美为主线拉块上色，拒绝死白
+            (customThumbDrawable as? GradientDrawable)?.setColor(scheme.onSurfaceColor)
         }
 
         return listOfNotNull(

@@ -275,16 +275,27 @@ fun CoverLyricsScreen(
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
+    val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
 
-    // 【核心判断】：只在 Default 主题 + 平板横屏 时隐藏放大按钮
+    // 智能判定：仅在 Default 主题 + 平板横屏 时隐藏放大按钮
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isDefaultTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Default
     val hideExpandButton = isLandscape && isDefaultTheme
 
+    // 翻译开关状态
     val translationKey = "lyrics_show_translation"
     val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+
+    // 【解决点击不亮的核心】：从底层直接订阅收藏状态流，点击瞬间实心！
+    val repository = org.koin.compose.koinInject<com.mardous.booming.data.local.repository.Repository>()
+    var isFavorite by remember { mutableStateOf(false) }
+    LaunchedEffect(song) {
+        if (song.id != 0L) {
+            isFavorite = repository.isSongFavorite(song.id)
+        }
+    }
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -306,8 +317,8 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            
-            // 【全局悬浮按钮组】：在整个歌词界面的右下角固定显示
+
+            // 【全局悬浮侧边栏】：叠加在歌词界面的最右下角。顺序：译 -> 心 -> 放大
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
@@ -316,7 +327,7 @@ fun CoverLyricsScreen(
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 1. 翻译按钮 (最上方)
+                // 1. 翻译按钮
                 androidx.compose.material3.IconButton(
                     modifier = Modifier.size(36.dp),
                     onClick = {
@@ -334,11 +345,12 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 收藏按钮 (中间)
+                // 2. 收藏红心按钮 (点击后瞬间响应为实心)
                 androidx.compose.material3.IconButton(
                     modifier = Modifier.size(36.dp),
                     onClick = {
                         try {
+                            isFavorite = !isFavorite
                             val intent = android.content.Intent(context, Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
                                 action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
                             }
@@ -347,14 +359,14 @@ fun CoverLyricsScreen(
                     }
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_favorite_outline_24dp),
+                        painter = painterResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp),
                         contentDescription = null,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(24.dp),
                         tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
-                // 3. 放大按钮 (下方，符合条件时隐藏)
+                // 3. 放大按钮
                 if (!hideExpandButton) {
                     FilledIconButton(
                         modifier = Modifier.size(36.dp), 
