@@ -283,12 +283,11 @@ fun CoverLyricsScreen(
     val isDefaultTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Default
     val hideExpandButton = isLandscape && isDefaultTheme
 
-    // 翻译开关状态
     val translationKey = "lyrics_show_translation"
     val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 【解决点击不亮的核心】：从底层直接订阅收藏状态流，点击瞬间实心！
+    // 【数据库直连】：瞬间获取真实的爱心红心状态
     val repository = org.koin.compose.koinInject<com.mardous.booming.data.local.repository.Repository>()
     var isFavorite by remember { mutableStateOf(false) }
     LaunchedEffect(song) {
@@ -318,7 +317,7 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // 【全局悬浮侧边栏】：叠加在歌词界面的最右下角。顺序：译 -> 心 -> 放大
+            // 【全局悬浮侧边栏】：完美贴在右下角！排列：译 -> 心 -> 放大
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
@@ -345,7 +344,7 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 收藏红心按钮 (点击后瞬间响应为实心)
+                // 2. 收藏红心按钮 (实心秒切)
                 androidx.compose.material3.IconButton(
                     modifier = Modifier.size(36.dp),
                     onClick = {

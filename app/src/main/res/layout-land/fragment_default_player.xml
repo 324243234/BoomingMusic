@@ -34,7 +34,7 @@
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
 
-    <!-- 【核心】：透明玻璃层，用来智能拦截单击/双击，并放行滑动事件 -->
+    <!-- 【核心屏障】：玻璃层。用来拦截单击/双击，并让滑动0损耗穿透 -->
     <View
         android:id="@+id/coverClickOverlay"
         android:layout_width="0dp"

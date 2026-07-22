@@ -156,7 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 原生音量条，等待代码注入Apple细线滑块 -->
+    <!-- 【修轨】：左右完美对齐进度条，协调不浮夸 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
@@ -164,8 +164,8 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:layout_marginBottom="4dp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/progressGuideline"
+        app:layout_constraintEnd_toStartOf="@id/durationGuideline"
         app:layout_constraintBottom_toTopOf="@+id/songInfo">
 
         <ImageView
@@ -175,6 +175,7 @@
             android:src="@drawable/ic_volume_down_24dp"
             app:tint="?android:attr/textColorSecondary" />
 
+        <!-- 轨道高度 4dp，光晕去除，等待代码注入细条 -->
         <com.google.android.material.slider.Slider
             android:id="@+id/volumeSlider"
             android:layout_width="0dp"
@@ -185,7 +186,7 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:trackHeight="3dp"
+            app:trackHeight="4dp"
             app:trackColorActive="?colorOnSurface"
             app:trackColorInactive="?colorSurfaceVariant" />
 
@@ -197,7 +198,7 @@
             app:tint="?android:attr/textColorSecondary" />
     </LinearLayout>
 
-    <!-- 歌曲格式信息，下放至音量条下方 -->
+    <!-- 歌曲格式额外信息：放置在音量条正下方 -->
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/songInfo"
         android:layout_width="match_parent"

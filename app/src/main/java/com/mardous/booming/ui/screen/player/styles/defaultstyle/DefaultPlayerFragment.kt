@@ -74,6 +74,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
                 
+                // 单击：控制右侧显隐
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -87,6 +88,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
+                // 双击：调用系统切歌，分屏判断左右
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     try {
                         val overlayWidth = view?.findViewById<View>(R.id.coverClickOverlay)?.width ?: 0
@@ -102,11 +104,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
+                // 长按：触发收藏
                 override fun onLongPress(e: MotionEvent) {
                     onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
                 }
             })
 
+            // 【零分配黑科技】：杜绝 OOM 和卡顿！
             var isDragging = false
             var startX = 0f
             var startY = 0f
@@ -121,20 +125,19 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         isDragging = false
                         startX = event.x
                         startY = event.y
-                        coverFragment?.dispatchTouchEvent(event) // 直接传入原事件，零内存分配！
+                        coverFragment?.dispatchTouchEvent(event) // 原生事件下发
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop) {
+                        if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
                             isDragging = true 
                         }
-                        coverFragment?.dispatchTouchEvent(event) // 滑动时一秒千次，直接传！解决OOM
+                        coverFragment?.dispatchTouchEvent(event) // 直接放行，绝不克隆，根治卡顿！
                     }
                     MotionEvent.ACTION_UP -> {
                         if (!isDragging) {
-                            // 唯一一次内存分配：扼杀点击冲突
-                            val cancelEvent = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
-                            coverFragment?.dispatchTouchEvent(cancelEvent)
-                            cancelEvent.recycle()
+                            // 核心：原地改变状态为 CANCEL 发给下层！掐死底层点击事件，防止冲突！
+                            event.action = MotionEvent.ACTION_CANCEL 
+                            coverFragment?.dispatchTouchEvent(event)
                         } else {
                             coverFragment?.dispatchTouchEvent(event)
                         }
