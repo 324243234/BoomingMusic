@@ -27,7 +27,6 @@ import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.screen.MainActivity
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 
@@ -74,8 +73,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private fun setupLyricsActions() {
         val favBtn = view?.findViewById<MaterialButton>(R.id.lyricsFavoriteButton)
         val transBtn = view?.findViewById<TextView>(R.id.lyricsTranslationButton)
-        val expandBtn = view?.findViewById<MaterialButton>(R.id.lyricsExpandButton)
 
+        // 翻译开关逻辑
         val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
         val isTransOn = prefs.getBoolean("lyrics_show_translation", true)
         transBtn?.alpha = if (isTransOn) 0.4f else 1.0f
@@ -85,19 +84,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             it.alpha = if (!current) 0.4f else 1.0f
         }
 
-        // 平板模式下，歌词已经是全右侧显示，隐藏放大按钮以防视觉重复
-        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        expandBtn?.isVisible = !isLandscape
-        expandBtn?.setOnClickListener {
-            try {
-                (activity as? MainActivity)?.collapsePanel()
-                val navId = resources.getIdentifier("nav_lyrics", "id", requireContext().packageName)
-                if (navId != 0) {
-                    com.mardous.booming.extensions.navigation.findActivityNavController(R.id.fragment_container).navigate(navId)
-                }
-            } catch (e: Exception) { e.printStackTrace() }
-        }
-
+        // 收藏按钮逻辑
         favBtn?.let { setViewAction(it, NowPlayingAction.ToggleFavoriteState) }
     }
 
@@ -105,7 +92,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
-                // 单击：呼出或收起右侧全屏歌词，左边封面原地保持
+                // 单击：控制右侧 控件/歌词 切换，左侧原生封面丝毫不动
                 override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -139,7 +126,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 长按：收藏
+                // 长按：触发收藏
                 override fun onLongPress(e: android.view.MotionEvent) {
                     onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
                 }
@@ -172,7 +159,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     android.view.MotionEvent.ACTION_UP -> {
                         if (!isDragging) {
                             // 没有发生拖拽，说明是个点击事件！
-                            // 为了防止穿透到底层触发原作者的点击事件（导致冲突），我们把抬手变成撤销（CANCEL）
+                            // 把抬手变成撤销（CANCEL），防止穿透到底层触发原作者的点击事件产生冲突
                             clonedEvent.action = android.view.MotionEvent.ACTION_CANCEL
                         }
                     }
@@ -206,14 +193,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         
         val favBtn = view?.findViewById<MaterialButton>(R.id.lyricsFavoriteButton)
         val transBtn = view?.findViewById<TextView>(R.id.lyricsTranslationButton)
-        val expandBtn = view?.findViewById<MaterialButton>(R.id.lyricsExpandButton)
 
         return listOfNotNull(
             binding.root.surfaceTintTarget(scheme.surfaceColor),
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor),
+            // 给统一按钮组染上跟随主题的纯净颜色
             favBtn?.iconButtonTintTarget(oldPrimaryControlColor, scheme.onSurfaceColor),
-            transBtn?.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor),
-            expandBtn?.iconButtonTintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
+            transBtn?.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         ).toMutableList().also {
             it.addAll(playerControlsFragment.getTintTargets(scheme))
         }
