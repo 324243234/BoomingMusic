@@ -96,13 +96,13 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
-        // 【黑科技】：纯代码生成 Apple Music 风格的小竖条，免建 XML
+        // 纯代码生成 Apple Music 风格的小竖条
         val density = requireContext().resources.displayMetrics.density
         val customThumb = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 2f * density
             setSize((4 * density).toInt(), (16 * density).toInt())
-            setColor(Color.WHITE) // 后面会被 getTintTargets 染上主题色
+            setColor(Color.WHITE) // 底色设为白，完美接收着色器（Tint）渲染
         }
         volumeSlider.setCustomThumbDrawable(customThumb)
 
@@ -235,8 +235,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         volumeSlider?.apply {
             trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackInactiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
-            // 给竖条也染上主题色
-            (customThumbDrawable as? GradientDrawable)?.setColor(scheme.onSurfaceColor)
+            // 【修正】：利用原生的 thumbTintList 直接给小竖条上色
+            thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
         }
 
         return listOfNotNull(
