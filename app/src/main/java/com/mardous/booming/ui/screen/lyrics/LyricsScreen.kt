@@ -277,7 +277,7 @@ fun CoverLyricsScreen(
     )
     val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
 
-    // 智能判定：仅在 Default 主题 + 平板横屏 时隐藏放大按钮
+    // 仅在 Default 主题 + 平板横屏 时隐藏放大按钮
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isDefaultTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Default
@@ -287,7 +287,7 @@ fun CoverLyricsScreen(
     val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 【最高级别安全查库】：切入 IO 线程查询状态，保证 App 绝对不会闪退
+    // 【最安全的数据库查询】：完全在 IO 线程查库，绝不阻塞主 UI 线程
     val repository = org.koin.compose.koinInject<com.mardous.booming.data.local.repository.Repository>()
     var isFavorite by remember { mutableStateOf(false) }
     
@@ -320,7 +320,7 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // 全局悬浮侧边栏：完美贴附在右下角
+            // 全局悬浮侧边栏：存在于所有主题，排布顺序：译 -> 心 -> 放大
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
@@ -347,7 +347,7 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 收藏红心按钮 (乐观更新，瞬间秒亮)
+                // 2. 收藏红心按钮 (乐观更新，瞬间实心反馈)
                 androidx.compose.material3.IconButton(
                     modifier = Modifier.size(36.dp),
                     onClick = {

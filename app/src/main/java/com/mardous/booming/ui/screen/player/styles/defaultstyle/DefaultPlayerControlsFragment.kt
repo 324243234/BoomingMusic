@@ -95,6 +95,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
+        // 彻底清空瞎造的方块，完全回归 Android 原生小圆点设计
+
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
 
@@ -221,11 +223,15 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 彻底复用原生系统，安全染色
+        // 【终结卡顿】：加入过滤！防止在动画中每秒 60 次触发底层重绘！
         volumeSlider?.apply {
-            trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
-            trackInactiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
-            thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
+            val targetActive = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
+            val targetInactive = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            if (trackActiveTintList != targetActive) {
+                trackActiveTintList = targetActive
+                trackInactiveTintList = targetInactive
+                thumbTintList = targetActive
+            }
         }
 
         return listOfNotNull(

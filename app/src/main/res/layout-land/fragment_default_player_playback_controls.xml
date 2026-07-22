@@ -137,7 +137,7 @@
     <com.google.android.material.button.MaterialButton
         android:id="@+id/nextButton"
         style="@style/PlayerIconButton.Medium"
-        android:layout_width="wrap_content"
+        layout_width="wrap_content"
         android:layout_height="wrap_content"
         app:icon="@drawable/ic_next_24dp"
         app:layout_constraintBottom_toBottomOf="@+id/playPauseButton"
@@ -156,7 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 完美对齐上方进度条，干掉光晕，原生精致小圆点 -->
+    <!-- 原生 Apple 风小圆点滑块 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"

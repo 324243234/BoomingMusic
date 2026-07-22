@@ -20,7 +20,7 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <!-- ================= 左侧原生封面区域 ================= -->
+    <!-- 左侧原生封面 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerAlbumCoverFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -34,7 +34,7 @@
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
 
-    <!-- 【核心屏障】：玻璃层。用来拦截单击/双击，并让滑动0损耗穿透 -->
+    <!-- 【降维玻璃层】：拦截手势，同时零损耗穿透滑动 -->
     <View
         android:id="@+id/coverClickOverlay"
         android:layout_width="0dp"
@@ -48,7 +48,7 @@
         app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
-    <!-- ================= 右侧播放控制区 ================= -->
+    <!-- 右侧播放控制区 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.defaultstyle.DefaultPlayerControlsFragment"
@@ -73,7 +73,7 @@
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:menu="@menu/menu_now_playing"/>
 
-    <!-- ================= 右侧全屏歌词区 (包含全局按钮) ================= -->
+    <!-- 右侧全屏歌词区 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
