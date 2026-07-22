@@ -4,7 +4,9 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -31,6 +33,7 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.screen.MainActivity
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
+import kotlin.math.abs
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -77,6 +80,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val transBtn = view?.findViewById<TextView>(R.id.lyricsTranslationButton)
         val expandBtn = view?.findViewById<MaterialButton>(R.id.lyricsExpandButton)
 
+        // 翻译开关
         val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
         val isTransOn = prefs.getBoolean("lyrics_show_translation", true)
         transBtn?.alpha = if (isTransOn) 0.4f else 1.0f
@@ -86,7 +90,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             it.alpha = if (!current) 0.4f else 1.0f
         }
 
-        // 平板模式下隐藏放大按钮
+        // 平板 Default 模式下隐藏放大按钮
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         expandBtn?.isVisible = !isLandscape
         expandBtn?.setOnClickListener {
@@ -107,7 +111,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
                 
-                override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
+                // 单击：控制歌词/控件显示，左边封面原地不动
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
                     val toolbar = view?.findViewById<View>(R.id.toolbar)
@@ -122,9 +127,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                // 双击：切歌
+                override fun onDoubleTap(e: MotionEvent): Boolean {
                     try {
-                        val overlayWidth = view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.width ?: 0
+                        val overlayWidth = view?.findViewById<View>(R.id.coverClickOverlay)?.width ?: 0
                         val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
                         val keyCode = if (overlayWidth > 0 && e.x > overlayWidth / 2) {
                             android.view.KeyEvent.KEYCODE_MEDIA_NEXT
@@ -133,20 +139,51 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         }
                         audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
                         audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
-                    } catch (ex: Exception) { }
+                    } catch (ex: Exception) { ex.printStackTrace() }
                     return true
                 }
 
-                override fun onLongPress(e: android.view.MotionEvent) {
+                // 长按：收藏
+                override fun onLongPress(e: MotionEvent) {
                     onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
                 }
             })
 
-            // 【完全放行】：直接把探测器绑在原生的封面容器上。
-            // 返回 false 表示我们不拦截事件序列，让它 100% 透传给原作者的 ViewPager！
-            view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.setOnTouchListener { _, event ->
+            var isDragging = false
+            var startX = 0f
+            var startY = 0f
+            val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
+
+            view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
+                // 先给探测器判定点击/双击
                 gestureDetector.onTouchEvent(event)
-                false // <-- 关键！恢复了源作者代码最顺滑的拖拽滚动！
+                
+                // 【核心逻辑】：透传给原作者的 ViewPager
+                val clonedEvent = MotionEvent.obtain(event)
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isDragging = false
+                        startX = event.x
+                        startY = event.y
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop) {
+                            isDragging = true // 用户确实在滑动
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!isDragging) {
+                            // 如果只是原地点击，没有滑动，把传给下层的事件改为 CANCEL。
+                            // 这样就能扼杀底层原有的点击事件，防止与我们的单击功能冲突！
+                            clonedEvent.action = MotionEvent.ACTION_CANCEL
+                        }
+                    }
+                }
+                
+                // 放行！
+                view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.dispatchTouchEvent(clonedEvent)
+                clonedEvent.recycle()
+                true
             }
         }
     }

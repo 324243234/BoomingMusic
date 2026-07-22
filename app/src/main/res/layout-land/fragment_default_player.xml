@@ -20,19 +20,33 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <!-- ================= 左侧原生封面区域 (已放大上下边距) ================= -->
+    <!-- ================= 左侧原生封面区域 ================= -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerAlbumCoverFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="4dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
         app:layout_constraintDimensionRatio="1:1"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
+
+    <!-- 【核心】：透明玻璃层，用来智能拦截单击/双击，并放行滑动事件 -->
+    <View
+        android:id="@+id/coverClickOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:elevation="2dp"
+        android:background="?selectableItemBackground"
+        app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
     <!-- ================= 右侧播放控制区 ================= -->
     <androidx.fragment.app.FragmentContainerView
@@ -72,7 +86,7 @@
         app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- 【完美叠加】：全局悬浮侧边栏，顺序为：译 -> 心 -> 放大 -->
+    <!-- 全局悬浮侧边栏，完美对齐歌词右下角 -->
     <LinearLayout
         android:id="@+id/lyricsActionContainer"
         android:layout_width="wrap_content"
@@ -83,14 +97,15 @@
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="24dp"
         android:elevation="10dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintBottom_toBottomOf="@+id/rightLyricsFragment"
+        app:layout_constraintEnd_toEndOf="@+id/rightLyricsFragment">
 
+        <!-- 1. 翻译 -->
         <TextView
             android:id="@+id/lyricsTranslationButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:layout_marginBottom="4dp"
+            android:layout_marginBottom="8dp"
             android:text="译"
             android:gravity="center"
             android:textSize="18sp"
@@ -99,12 +114,13 @@
             android:clickable="true"
             android:focusable="true"/>
 
+        <!-- 2. 收藏 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
             style="@style/Widget.Material3.Button.IconButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:layout_marginBottom="4dp"
+            android:layout_marginBottom="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
             android:insetLeft="0dp"
@@ -117,6 +133,7 @@
             app:icon="@drawable/ic_favorite_outline_24dp"
             app:iconSize="22dp" />
 
+        <!-- 3. 放大 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsExpandButton"
             style="@style/Widget.Material3.Button.IconButton"
