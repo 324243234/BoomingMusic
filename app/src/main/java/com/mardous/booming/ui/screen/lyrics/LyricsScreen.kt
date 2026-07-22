@@ -264,20 +264,27 @@ fun LyricsScreen(
 fun CoverLyricsScreen(
     lyricsViewModel: LyricsViewModel,
     playerViewModel: PlayerViewModel,
-    onExpandClick: () -> Unit, // 保留此参数仅为防止上一级调用报错
+    onExpandClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val isPowerSaveMode = context.isPowerSaveMode()
-
     val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-
     val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
     val uiState by lyricsViewModel.lyricsUiState.collectAsState()
-
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
+
+    // 【核心判断】：只在 Default 主题 + 平板横屏 时隐藏放大按钮
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isDefaultTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Default
+    val hideExpandButton = isLandscape && isDefaultTheme
+
+    val translationKey = "lyrics_show_translation"
+    val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -299,7 +306,72 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            // 所有功能按钮已在 XML 层完美叠底，此 Compose 仅专注零负担极速渲染歌词！
+            
+            // 【全局悬浮按钮组】：在整个歌词界面的右下角固定显示
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier
+                    .wrapContentSize()
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 24.dp, bottom = 32.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // 1. 翻译按钮 (最上方)
+                androidx.compose.material3.IconButton(
+                    modifier = Modifier.size(36.dp),
+                    onClick = {
+                        try {
+                            val newState = !isTranslationEnabled
+                            isTranslationEnabled = newState
+                            prefs.edit().putBoolean(translationKey, newState).apply()
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                ) {
+                    Text(
+                        text = "译",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
+                    )
+                }
+
+                // 2. 收藏按钮 (中间)
+                androidx.compose.material3.IconButton(
+                    modifier = Modifier.size(36.dp),
+                    onClick = {
+                        try {
+                            val intent = android.content.Intent(context, Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
+                                action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
+                            }
+                            context.startService(intent)
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_favorite_outline_24dp),
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                // 3. 放大按钮 (下方，符合条件时隐藏)
+                if (!hideExpandButton) {
+                    FilledIconButton(
+                        modifier = Modifier.size(36.dp), 
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        ),
+                        onClick = onExpandClick
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
+                            contentDescription = stringResource(R.string.action_lyrics_editor),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -77,7 +77,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val transBtn = view?.findViewById<TextView>(R.id.lyricsTranslationButton)
         val expandBtn = view?.findViewById<MaterialButton>(R.id.lyricsExpandButton)
 
-        // 1. 翻译开关控制
         val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
         val isTransOn = prefs.getBoolean("lyrics_show_translation", true)
         transBtn?.alpha = if (isTransOn) 0.4f else 1.0f
@@ -87,7 +86,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             it.alpha = if (!current) 0.4f else 1.0f
         }
 
-        // 2. Default 平板模式下严格隐藏放大按钮
+        // 平板模式下隐藏放大按钮
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         expandBtn?.isVisible = !isLandscape
         expandBtn?.setOnClickListener {
@@ -100,7 +99,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             } catch (e: Exception) { e.printStackTrace() }
         }
 
-        // 3. 收藏红心
         favBtn?.let { setViewAction(it, NowPlayingAction.ToggleFavoriteState) }
     }
 
@@ -109,7 +107,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscape) {
             val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
                 
-                // 击中拦截：控制歌词/控件显示，不干扰封面
                 override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -125,10 +122,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 双击左右侧切歌
                 override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
                     try {
-                        val overlayWidth = view?.findViewById<View>(R.id.coverClickOverlay)?.width ?: 0
+                        val overlayWidth = view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.width ?: 0
                         val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
                         val keyCode = if (overlayWidth > 0 && e.x > overlayWidth / 2) {
                             android.view.KeyEvent.KEYCODE_MEDIA_NEXT
@@ -137,50 +133,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         }
                         audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
                         audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
-                    } catch (ex: Exception) {
-                        ex.printStackTrace()
-                    }
+                    } catch (ex: Exception) { }
                     return true
                 }
 
-                // 长按：收藏
                 override fun onLongPress(e: android.view.MotionEvent) {
                     onQuickActionEvent(NowPlayingAction.ToggleFavoriteState)
                 }
             })
 
-            // 【事件智能穿透】：只抓点击，把“滑动”还给 ViewPager，恢复丝滑滑动！
-            var isDragging = false
-            var startX = 0f
-            var startY = 0f
-            val touchSlop = android.view.ViewConfiguration.get(requireContext()).scaledTouchSlop
-
-            view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
+            // 【完全放行】：直接把探测器绑在原生的封面容器上。
+            // 返回 false 表示我们不拦截事件序列，让它 100% 透传给原作者的 ViewPager！
+            view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.setOnTouchListener { _, event ->
                 gestureDetector.onTouchEvent(event)
-                
-                val clonedEvent = android.view.MotionEvent.obtain(event)
-                when (event.actionMasked) {
-                    android.view.MotionEvent.ACTION_DOWN -> {
-                        isDragging = false
-                        startX = event.x
-                        startY = event.y
-                    }
-                    android.view.MotionEvent.ACTION_MOVE -> {
-                        if (Math.abs(event.x - startX) > touchSlop || Math.abs(event.y - startY) > touchSlop) {
-                            isDragging = true // 已形成拖拽
-                        }
-                    }
-                    android.view.MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
-                            // 原地点击！用 CANCEL 指令中断 ViewPager，防止触发原作者的冲突点击
-                            clonedEvent.action = android.view.MotionEvent.ACTION_CANCEL
-                        }
-                    }
-                }
-                
-                view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.dispatchTouchEvent(clonedEvent)
-                clonedEvent.recycle()
-                true
+                false // <-- 关键！恢复了源作者代码最顺滑的拖拽滚动！
             }
         }
     }
@@ -198,7 +164,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // 统一下放取色
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldPrimaryControlColor = primaryControlColor
         primaryControlColor = scheme.onSurfaceColor

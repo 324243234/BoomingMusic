@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -94,6 +95,16 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     private fun setupVolumeSlider() {
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
+
+        // 【黑科技】：纯代码生成 Apple Music 风格的小竖条，免建 XML
+        val density = requireContext().resources.displayMetrics.density
+        val customThumb = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 2f * density
+            setSize((4 * density).toInt(), (16 * density).toInt())
+            setColor(Color.WHITE) // 后面会被 getTintTargets 染上主题色
+        }
+        volumeSlider.setCustomThumbDrawable(customThumb)
 
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
@@ -222,9 +233,10 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         )
         
         volumeSlider?.apply {
-            thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackInactiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            // 给竖条也染上主题色
+            (customThumbDrawable as? GradientDrawable)?.setColor(scheme.onSurfaceColor)
         }
 
         return listOfNotNull(

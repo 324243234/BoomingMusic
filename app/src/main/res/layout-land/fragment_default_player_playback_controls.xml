@@ -156,14 +156,16 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【修复】：更短的宽度、更小的滑块拉块、去除光晕 -->
+    <!-- 【修轨】：按百分比占用宽度，取消自带圆点，等待代码动态注入小竖条 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
-        android:layout_width="180dp"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginBottom="8dp"
+        android:layout_marginBottom="12dp"
+        app:layout_constraintWidth_percent="0.75"
+        app:layout_constraintHorizontal_bias="0.5"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/queueInfo">
@@ -184,12 +186,10 @@
             android:layout_marginEnd="8dp"
             app:tickVisible="false"
             app:labelBehavior="gone"
-            app:thumbColor="?colorOnSurface"
-            app:trackColorActive="?colorOnSurface"
-            app:trackColorInactive="?colorSurfaceVariant"
-            app:thumbRadius="5dp"
             app:haloRadius="0dp"
-            app:trackHeight="2dp" />
+            app:trackHeight="4dp"
+            app:trackColorActive="?colorOnSurface"
+            app:trackColorInactive="?colorSurfaceVariant" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"
