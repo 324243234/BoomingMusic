@@ -156,7 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【完美对齐的原生音量条】：彻底注入 customThumbDrawable 小圆点 -->
+    <!-- 完美音量条：彻底消除报错，原生小圆点 6dp，高度匹配 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
@@ -185,10 +185,8 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:customThumbDrawable="@drawable/custom_volume_thumb"
-            app:trackHeight="3dp"
-            app:trackColorActive="?colorOnSurface"
-            app:trackColorInactive="?colorSurfaceVariant" />
+            app:thumbRadius="6dp"
+            app:trackHeight="3dp" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"
@@ -198,7 +196,7 @@
             app:tint="?android:attr/textColorSecondary" />
     </LinearLayout>
 
-    <!-- 歌曲格式信息，下放至音量条下方 -->
+    <!-- 歌曲格式信息：完美下放 -->
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/songInfo"
         android:layout_width="match_parent"

@@ -95,9 +95,6 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
-        // 【极简净化】：彻底移除了所有强行生成、染色滑块的代码！完全交由 XML 和原生系统接管！
-        // 这样既解决了 M3 的强行竖条，又彻底消除了主线程内存泄漏与重绘风暴！
-
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
 
@@ -207,6 +204,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         
         val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
+        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
+        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
             scheme.onSurfaceColor
@@ -221,10 +220,9 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         val newRepeatColor = getPlaybackControlsColor(
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
-        
-        // 【卡顿解除】：完全摒除了 volumeSlider 的强制代码动画！由于 XML 已配置 ?colorOnSurface，
-        // Android 系统级主题框架会自动处理它的颜色变化，完全无需人为干预，直接 0 开销！
 
+        // 【黄金解法】：彻底废弃手动 setTintList，完全参考原作者对 progressSlider 的处理！
+        // 将音量条也加入底层统一的 PlayerTintTarget 平滑动画引擎中，让框架自己去算！卡顿彻底被秒杀！
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
@@ -239,7 +237,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
-            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
+            volumeSlider?.tintTarget(oldSliderColor, newEmphasisColor) // <=== 这里是解决卡顿的最核心代码！
         )
     }
 

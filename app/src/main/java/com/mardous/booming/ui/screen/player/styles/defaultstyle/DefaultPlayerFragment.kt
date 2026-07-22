@@ -28,6 +28,7 @@ import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
+import kotlin.math.abs
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -88,7 +89,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
 
-                // 单击显隐控制
+                // 单击显隐控制，覆盖原生逻辑
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                     val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
                     val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -102,25 +103,52 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     return true
                 }
             }).apply {
-                // 将长按权限完全让给原作者的底层组件，绝不抢占！
+                // 将长按权限完全让给底层的封面组件，不主动截胡
                 setIsLongpressEnabled(false) 
             }
 
-            // 【完全 0 内存开销的透传技术】：彻底杜绝任何形式的 GC 卡顿
+            // 【完全零损耗滑动透传】：拒绝任何不必要的内存 GC 分配
+            var isDragging = false
+            var startX = 0f
+            var startY = 0f
+            var downTime = 0L
+            val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
+
             view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
                 gestureDetector.onTouchEvent(event)
                 
-                val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment)
-                if (coverFragment != null) {
-                    if (event.actionMasked == MotionEvent.ACTION_UP && 
-                        event.eventTime - event.downTime < ViewConfiguration.getLongPressTimeout()) {
-                        // 刺杀原作者的单击冲突：原地修改为 CANCEL 下发，完美掩盖
-                        val originalAction = event.action
-                        event.action = MotionEvent.ACTION_CANCEL
-                        coverFragment.dispatchTouchEvent(event)
-                        event.action = originalAction
-                    } else {
-                        // 所有的滑动、长按，直接 100% 毫无保留地下发给原组件，保证原生丝滑
+                val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment) ?: return@setOnTouchListener true
+                
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isDragging = false
+                        startX = event.x
+                        startY = event.y
+                        downTime = System.currentTimeMillis()
+                        coverFragment.dispatchTouchEvent(event) // 直接透传
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
+                            isDragging = true 
+                        }
+                        coverFragment.dispatchTouchEvent(event) // 100%保留原生阻尼滑动！
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val touchDuration = System.currentTimeMillis() - downTime
+                        val isShortTap = touchDuration < ViewConfiguration.getLongPressTimeout()
+
+                        if (!isDragging && isShortTap) {
+                            // 【精确狙击】：只有确实是短促的纯点击时，才发放 CANCEL 刺杀下层的响应！
+                            val cancelEvent = MotionEvent.obtain(event)
+                            cancelEvent.action = MotionEvent.ACTION_CANCEL
+                            coverFragment.dispatchTouchEvent(cancelEvent)
+                            cancelEvent.recycle()
+                        } else {
+                            // 滑动放手，或者长按放手，完美放行！
+                            coverFragment.dispatchTouchEvent(event)
+                        }
+                    }
+                    else -> {
                         coverFragment.dispatchTouchEvent(event)
                     }
                 }
