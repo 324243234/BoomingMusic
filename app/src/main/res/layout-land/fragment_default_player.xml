@@ -86,7 +86,7 @@
         app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- 【修正】：全局悬浮在歌词最右下角的紧凑按钮组 (不再画蛇添足加放大按钮) -->
+    <!-- 【新增】：全局悬浮侧边栏，完美对齐，节省空间 -->
     <LinearLayout
         android:id="@+id/lyricsActionContainer"
         android:layout_width="wrap_content"
@@ -94,17 +94,17 @@
         android:orientation="vertical"
         android:gravity="center_horizontal"
         android:visibility="gone"
-        android:layout_marginEnd="24dp"
-        android:layout_marginBottom="32dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="24dp"
         android:elevation="10dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintBottom_toBottomOf="@+id/rightLyricsFragment"
+        app:layout_constraintEnd_toEndOf="@+id/rightLyricsFragment">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/lyricsFavoriteButton"
             style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_marginBottom="4dp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
@@ -112,7 +112,7 @@
             android:insetRight="0dp"
             android:padding="0dp"
             app:elevation="0dp"
-            app:cornerRadius="20dp"
+            app:cornerRadius="18dp"
             app:backgroundTint="@android:color/transparent"
             app:rippleColor="?attr/colorControlHighlight"
             app:icon="@drawable/ic_favorite_outline_24dp"
@@ -120,8 +120,8 @@
 
         <TextView
             android:id="@+id/lyricsTranslationButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_marginBottom="4dp"
             android:text="译"
             android:gravity="center"
@@ -131,6 +131,22 @@
             android:clickable="true"
             android:focusable="true"/>
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/lyricsExpandButton"
+            style="@style/Widget.Material3.Button.IconButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:padding="0dp"
+            app:elevation="0dp"
+            app:cornerRadius="18dp"
+            app:backgroundTint="@android:color/transparent"
+            app:rippleColor="?attr/colorControlHighlight"
+            app:icon="@drawable/ic_open_in_full_24dp"
+            app:iconSize="22dp" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

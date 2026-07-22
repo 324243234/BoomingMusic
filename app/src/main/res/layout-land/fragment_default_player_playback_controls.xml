@@ -156,10 +156,10 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【新增】：修改了尺寸，变成了精简短小的中间音量条 -->
+    <!-- 【修复】：更短的宽度、更小的滑块拉块、去除光晕 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
-        android:layout_width="240dp"
+        android:layout_width="180dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -187,7 +187,8 @@
             app:thumbColor="?colorOnSurface"
             app:trackColorActive="?colorOnSurface"
             app:trackColorInactive="?colorSurfaceVariant"
-            app:thumbRadius="4dp"
+            app:thumbRadius="5dp"
+            app:haloRadius="0dp"
             app:trackHeight="2dp" />
 
         <ImageView

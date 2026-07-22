@@ -264,7 +264,7 @@ fun LyricsScreen(
 fun CoverLyricsScreen(
     lyricsViewModel: LyricsViewModel,
     playerViewModel: PlayerViewModel,
-    onExpandClick: () -> Unit, // 接口保留避免报错，内部已不再调用
+    onExpandClick: () -> Unit, // 保留此参数仅为防止上一级调用报错
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -299,7 +299,7 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            // 完美！所有的按钮组件都已交由 XML 的 lyricsActionContainer 全局接管，这里只需专注歌词本体渲染！
+            // 所有功能按钮已在 XML 层完美叠底，此 Compose 仅专注零负担极速渲染歌词！
         }
     }
 }
