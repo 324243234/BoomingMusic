@@ -47,7 +47,6 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     private var _binding: FragmentDefaultPlayerPlaybackControlsBinding? = null
     private val binding get() = _binding!!
 
-    // 音量联动组件
     private lateinit var audioManager: AudioManager
     private var volumeObserver: ContentObserver? = null
 
@@ -103,14 +102,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         volumeSlider.valueTo = maxVolume
         volumeSlider.value = currentVolume
 
-        // 监听滑块拖动
         volumeSlider.addOnChangeListener { _, value, fromUser ->
             if (fromUser) {
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value.toInt(), 0)
             }
         }
 
-        // 监听物理按键双向同步
         volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
                 super.onChange(selfChange)
@@ -199,15 +196,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor
-            ?: Color.TRANSPARENT
-
+        val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldControlColor = binding.nextButton.iconTint.defaultColor
         val oldSliderColor = binding.progressSlider.currentColor
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
         
-        // 音量图标染色
         val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
@@ -220,18 +214,13 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         }
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
         val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
+            isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
         val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
+            isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 动态跟随系统主题染音量条的颜色
         volumeSlider?.apply {
             thumbTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
             trackActiveTintList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)

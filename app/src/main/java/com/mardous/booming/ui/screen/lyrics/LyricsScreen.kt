@@ -187,7 +187,7 @@ fun LyricsScreen(
             AnimatedContent(
                 targetState = Pair(lyricsViewSettings.backgroundEffect, gradientColors),
                 transitionSpec = {
-                    fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000)))
+                    fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
                 }
             ) { (effect, gradientColors) ->
                 when {
@@ -264,7 +264,7 @@ fun LyricsScreen(
 fun CoverLyricsScreen(
     lyricsViewModel: LyricsViewModel,
     playerViewModel: PlayerViewModel,
-    onExpandClick: () -> Unit,
+    onExpandClick: () -> Unit, // 接口保留避免报错，内部已不再调用
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -278,14 +278,6 @@ fun CoverLyricsScreen(
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
-
-    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isGradientTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Gradient
-
-    val translationKey = "lyrics_show_translation" 
-    val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
-    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -307,62 +299,7 @@ fun CoverLyricsScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            
-            androidx.compose.foundation.layout.Column(
-                modifier = Modifier
-                    .wrapContentSize()
-                    .align(Alignment.BottomEnd)
-                    .padding(
-                        // 【精准对齐】：XML爱心宽48+边距16(中心点距右侧40dp)。Compose译字宽36，要中心对齐，边距必须是 40 - 18 = 22dp！
-                        end = if (isLandscape && isGradientTheme) 22.dp else 16.dp, 
-                        // 【下移位置】：原68dp偏高，改低到 64.dp 紧贴着爱心的头顶
-                        bottom = if (isLandscape && isGradientTheme) 64.dp else 16.dp
-                    ),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                
-                // 1. 物理翻译开关
-                androidx.compose.material3.IconButton(
-                    // 【再缩小一丢丢】：改为 36.dp，小巧精致
-                    modifier = Modifier.size(36.dp),
-                    onClick = {
-                        try {
-                            val newState = !isTranslationEnabled
-                            isTranslationEnabled = newState
-                            prefs.edit().putBoolean(translationKey, newState).apply()
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
-                ) {
-                    Text(
-                        text = "译",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
-                    )
-                }
-
-                // 2. 原始放大按钮
-                if (!(isLandscape && isGradientTheme)) {
-                    FilledIconButton(
-                        modifier = Modifier.size(36.dp), // 尺寸同步改小
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.onSurface,
-                            contentColor = MaterialTheme.colorScheme.surface
-                        ),
-                        onClick = onExpandClick
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
-                            contentDescription = stringResource(R.string.action_lyrics_editor),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
+            // 完美！所有的按钮组件都已交由 XML 的 lyricsActionContainer 全局接管，这里只需专注歌词本体渲染！
         }
     }
 }

@@ -126,7 +126,7 @@
         android:id="@+id/playPauseButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         android:importantForAccessibility="no"
         app:srcCompat="@drawable/ic_pause_24dp"
         app:layout_constraintHorizontal_bias="0.5"
@@ -156,22 +156,22 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【新增】：Apple Music 风格横向音量调节控件 -->
+    <!-- 【新增】：修改了尺寸，变成了精简短小的中间音量条 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
-        android:layout_width="0dp"
+        android:layout_width="240dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginBottom="16dp"
-        app:layout_constraintStart_toEndOf="@id/progressGuideline"
-        app:layout_constraintEnd_toStartOf="@id/durationGuideline"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/queueInfo">
 
         <ImageView
             android:id="@+id/volumeDownIcon"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
             android:src="@drawable/ic_volume_down_24dp"
             app:tint="?android:attr/textColorSecondary" />
 
@@ -182,16 +182,18 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
+            app:tickVisible="false"
+            app:labelBehavior="gone"
             app:thumbColor="?colorOnSurface"
             app:trackColorActive="?colorOnSurface"
             app:trackColorInactive="?colorSurfaceVariant"
-            app:thumbRadius="6dp"
-            app:trackHeight="4dp" />
+            app:thumbRadius="4dp"
+            app:trackHeight="2dp" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
             android:src="@drawable/ic_volume_up_24dp"
             app:tint="?android:attr/textColorSecondary" />
     </LinearLayout>
