@@ -83,13 +83,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     leftInfoText.text = "${song.title} - $artist"
                     setMarquee(leftInfoText, marquee = true)
 					// 2. 【核心优化拦截】：如果是同一首歌（仅车机后台替换了 MediaItem），严禁重复触发 Palette 取色与变色动画！
-            if (song.id != lastProcessedSongId) {
-                lastProcessedSongId = song.id
-                // 在这里才触发 Palette 取色和背景/文字颜色渐变动画
+                   if (song.id != lastProcessedSongId) {
+                   lastProcessedSongId = song.id
+                   // 在这里才触发 Palette 取色和背景/文字颜色渐变动画
+                   }
                 }
             }
         }
-    }
+	}
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
