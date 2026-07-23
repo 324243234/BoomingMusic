@@ -903,7 +903,7 @@ class PlaybackService :
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(350) // 给予充足防抖缓冲
+            delay(450) // 给予充足防抖缓冲
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
 

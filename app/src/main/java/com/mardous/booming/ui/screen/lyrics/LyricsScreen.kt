@@ -326,7 +326,7 @@ fun CoverLyricsScreen(
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
                     .padding(end = 24.dp, bottom = 32.dp),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // 1. 翻译按钮
