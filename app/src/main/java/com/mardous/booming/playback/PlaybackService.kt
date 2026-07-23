@@ -903,7 +903,7 @@ class PlaybackService :
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(450) // 给予充足防抖缓冲
+            delay(550) // 给予充足防抖缓冲
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
 
@@ -1043,7 +1043,7 @@ class PlaybackService :
                             metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                             
                             // 满足 CarWith 源码中 s.f() 高斯模糊与取色需求（150x150 不会阻塞 IPC）
-                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", microBitmap)
+                            //newExtras.putParcelable("android.media.metadata.ALBUM_ART", microBitmap)
                         }
                     } catch (e: Exception) {
                         Log.e("CarWithFix", "Bitmap processing error", e)
