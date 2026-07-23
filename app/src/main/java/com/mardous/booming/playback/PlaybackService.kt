@@ -1039,12 +1039,12 @@ class PlaybackService :
 
                         if (microBitmap != null) {
                             // 字节流与 Parcelable 图片注入
-                            val stream = ByteArrayOutputStream()
-                            microBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
-                            metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                            //val stream = ByteArrayOutputStream()
+                           // microBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
+                           // metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                             
                             // 满足 CarWith 源码中 s.f() 高斯模糊与取色需求（150x150 不会阻塞 IPC）
-                            //newExtras.putParcelable("android.media.metadata.ALBUM_ART", microBitmap)
+                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", microBitmap)
                         }
                     } catch (e: Exception) {
                         Log.e("CarWithFix", "Bitmap processing error", e)
