@@ -1023,14 +1023,14 @@ class PlaybackService :
                             val result = SingletonImageLoader.get(this@PlaybackService).execute(
                                 ImageRequest.Builder(this@PlaybackService)
                                     .data(song)
-                                    .size(250) 
+                                    .size(150) 
                                     .scale(Scale.FILL)
                                     .build()
                             )
                             
                             if (!isActive) return@withContext
                             
-                            microBitmap = result.image?.toBitmap(250, 250)
+                            microBitmap = result.image?.toBitmap(150, 150)
                             if (microBitmap != null) {
                                 carWithBitmapCache.put(songId, microBitmap)
                             }
