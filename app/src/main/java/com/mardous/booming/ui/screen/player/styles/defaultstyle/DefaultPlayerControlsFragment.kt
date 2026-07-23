@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -49,6 +50,9 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
 
     private lateinit var audioManager: AudioManager
     private var volumeObserver: ContentObserver? = null
+
+    // 缓存手势滑块对象，实现零开销极速染色
+    private var customVolumeThumb: GradientDrawable? = null
 
     override val playPauseFab: FloatingActionButton
         get() = binding.playPauseButton
@@ -94,6 +98,17 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     private fun setupVolumeSlider() {
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
+
+        // 【核心审美优化】：绘制一个被“上下切扁”的长条形滑块
+        val density = requireContext().resources.displayMetrics.density
+        customVolumeThumb = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 3f * density // 两侧微圆角
+            // 宽 14dp，高 6dp。高度远远小于宽度，呈现出极致扁平的视觉效果
+            setSize((14 * density).toInt(), (6 * density).toInt())
+            setColor(Color.WHITE)
+        }
+        volumeSlider.setCustomThumbDrawable(customVolumeThumb!!)
 
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
@@ -220,9 +235,22 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         val newRepeatColor = getPlaybackControlsColor(
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
+        
+        // 【终极防卡顿拦截机制】：直接提取底层的 defaultColor 做等值判断！
+        volumeSlider?.let { slider ->
+            val targetColor = scheme.onSurfaceColor
+            val inactiveColor = scheme.onSurfaceVariantColor
 
-        // 【黄金解法】：彻底废弃手动 setTintList，完全参考原作者对 progressSlider 的处理！
-        // 将音量条也加入底层统一的 PlayerTintTarget 平滑动画引擎中，让框架自己去算！卡顿彻底被秒杀！
+            // 为自定义的“扁平滑块”安全换色，0 性能开销
+            customVolumeThumb?.setColor(targetColor)
+            
+            // 只有当颜色真的变化时，才进行替换操作！彻底断绝重绘风暴！
+            if (slider.trackActiveTintList?.defaultColor != targetColor) {
+                slider.trackActiveTintList = android.content.res.ColorStateList.valueOf(targetColor)
+                slider.trackInactiveTintList = android.content.res.ColorStateList.valueOf(inactiveColor)
+            }
+        }
+
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
@@ -237,8 +265,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
-            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
-            volumeSlider?.tintTarget(oldSliderColor, newEmphasisColor) // <=== 这里是解决卡顿的最核心代码！
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
         )
     }
 

@@ -122,6 +122,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
@@ -152,7 +153,6 @@ class PlaybackService :
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
-    
     private var currentRawLyricsData: String? = null
 
     private fun processLrcAndInterlude(lrc: String?): String {
@@ -554,7 +554,7 @@ class PlaybackService :
                     .setMediaId(MediaIDs.ROOT)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                            .setMediaType(MediaMetadata.MEDIAMetadata.MEDIA_TYPE_FOLDER_MIXED)
                             .setIsBrowsable(true)
                             .setIsPlayable(false)
                             .build()
@@ -708,7 +708,6 @@ class PlaybackService :
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
-            // 【彻底解药】：直接在播放器内部闭环模式循环，无视传入的脏参数，绝不再罢工！
             CARWITH_ACTION_PLAY_MODE -> {
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
@@ -720,6 +719,8 @@ class PlaybackService :
                     player.shuffleModeEnabled = true
                     player.repeatMode = Player.REPEAT_MODE_ALL
                 }
+                
+                // 极速更新状态，完全不重新加载图片
                 requestCarWithUpdate(forceImageLoad = false, bustCache = false)
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
@@ -860,6 +861,9 @@ class PlaybackService :
         persistentStorage.saveState()
     }
 
+    // =========================================================================================
+    // 【终极重构】：彻底消灭无限制“幽灵协程”导致的 GC 内存雪崩！
+    // =========================================================================================
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
@@ -868,12 +872,47 @@ class PlaybackService :
 
         val isPlaying = player.isPlaying
 
-        serviceScope.launch(IO) {
-            val newSongDeferred = async { repository.songByMediaItem(mediaItem) }
-            val newSong = newSongDeferred.await()
+        // 【最强拦截网】：每次切歌瞬间腰斩之前的 IO 协程！
+        // 如果 1 秒滑了 5 次，只执行最后一次处理，彻底拯救 CPU 占用和卡顿！
+        carWithUpdateJob?.cancel()
 
-            val isFavoriteDeferred = async { if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false }
-            val lyricsDeferred = async {
+        carWithUpdateJob = serviceScope.launch(Main) {
+            // 延时防抖 300 毫秒，滑动手势还没停下时绝不执行底层重型查询！
+            delay(300)
+
+            val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
+
+            // 1. 历史播放记录处理
+            withContext(IO) {
+                val previousSong = songPlayCountHelper.song
+                val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
+                songPlayCountHelper.notifySongChanged(newSong, isPlaying)
+
+                if (newSong != Song.emptySong) {
+                    replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
+                    if (preferences.getBoolean(ENABLE_HISTORY, true)) repository.upsertSongInHistory(newSong)
+                    if (NetworkFeature.Lastfm.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.Lastfm, newSong)
+                    if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong)
+                }
+                if (previousSong != Song.emptySong) {
+                    val timestampMillis = System.currentTimeMillis()
+                    val timestampSeconds = (timestampMillis / 1000)
+                    if (shouldBumpPlayCount) {
+                        repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
+                        if (NetworkFeature.Lastfm.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds)
+                        if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds)
+                    } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
+                        repository.insertOrIncrementSkipCount(previousSong)
+                    }
+                }
+            }
+
+            // 2. 获取状态与歌词数据
+            isCurrentSongFavorite = withContext(IO) {
+                if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
+            }
+
+            val rawLyricsText = withContext(IO) {
                 if (newSong != Song.emptySong) {
                     val rawLyrics = lyricsRepository.fileLyrics(newSong)
                         ?: lyricsRepository.embeddedLyrics(newSong)
@@ -881,64 +920,148 @@ class PlaybackService :
                     rawLyrics?.lyrics
                 } else null
             }
+            currentRawLyricsData = rawLyricsText
 
-            isCurrentSongFavorite = isFavoriteDeferred.await()
-            val rawLyricsText = lyricsDeferred.await()
-            currentRawLyricsData = rawLyricsText 
-
+            // 3. 车机注入分发
             if (newSong != Song.emptySong) {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-
                 if (isBtLyricsEnabled) {
                     currentCarWithLrc = null
-                    launch { bluetoothLyricManager.loadLyricsForSong(newSong) }
-                    withContext(Main) { refreshMediaButtonCustomLayout() }
+                    bluetoothLyricManager.loadLyricsForSong(newSong)
+                    refreshMediaButtonCustomLayout()
                 } else {
                     bluetoothLyricManager.stopLyrics()
-                    currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) {
-                        processLrcAndInterlude(rawLyricsText)
-                    } else null
-
-                    withContext(Main) {
-                        refreshMediaButtonCustomLayout()
-                        // 【零延迟无缝挂起架构】：极速秒传图片与歌词，解决慢一拍卡顿
-                        requestCarWithUpdate(forceImageLoad = true, bustCache = false)
-                    }
-                }
-            } else {
-                currentCarWithLrc = null
-                withContext(Main) {
+                    currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
                     refreshMediaButtonCustomLayout()
                     requestCarWithUpdate(forceImageLoad = true, bustCache = false)
                 }
-            }
-
-            val previousSong = songPlayCountHelper.song
-            val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
-            songPlayCountHelper.notifySongChanged(newSong, isPlaying)
-
-            if (newSong != Song.emptySong) {
-                replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
-                if (preferences.getBoolean(ENABLE_HISTORY, true)) repository.upsertSongInHistory(newSong)
-                if (NetworkFeature.Lastfm.NowPlaying.isAvailable) launch { repository.updateNowPlaying(ScrobblingService.Lastfm, newSong) }
-                if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) launch { repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong) }
-            }
-            if (previousSong != Song.emptySong) {
-                val timestampMillis = System.currentTimeMillis()
-                val timestampSeconds = (timestampMillis / 1000)
-                if (shouldBumpPlayCount) {
-                    repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
-                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) launch { repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds) }
-                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) launch { repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds) }
-                } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
-                    repository.insertOrIncrementSkipCount(previousSong)
-                }
+            } else {
+                currentCarWithLrc = null
+                refreshMediaButtonCustomLayout()
+                requestCarWithUpdate(forceImageLoad = true, bustCache = false)
             }
         }
 
         if (player.currentMediaItemIndex == stopIndex) player.exoPlayer.pauseAtEndOfMediaItems = true
         persistentStorage.saveState()
         updateWidgets(force = true)
+    }
+
+    // 【一体化聚合推送器】：终结多次重复替换与 Binder IPC 溢出！
+    private fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
+        // 如果是强制刷新，之前已经进行过防抖拦截。这里直接同步处理逻辑
+        serviceScope.launch(Main) {
+            val currentItem = player.currentMediaItem ?: return@launch
+
+            val targetPlayMode = when {
+                player.shuffleModeEnabled -> 0L
+                player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
+                else -> 2L
+            }
+            val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
+            val targetLrc = currentCarWithLrc ?: ""
+
+            val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
+
+            if (!forceImageLoad && !bustCache &&
+                oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
+                oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
+                oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
+                oldExtras.getBoolean("carwith_injected", false)) {
+                return@launch
+            }
+
+            if (bustCache && targetLrc.isNotEmpty()) {
+                val flushExtras = Bundle(oldExtras).apply {
+                    putBoolean("carwith_injected", true)
+                    putString(CARWITH_LYRICS_WHOLE, "")
+                    putLong(CARWITH_LYRICS_STATUS, 3L)
+                    putLong(CARWITH_PLAY_MODE, targetPlayMode)
+                    putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
+                }
+                val flushItem = currentItem.buildUpon().setMediaMetadata(
+                    currentItem.mediaMetadata.buildUpon().setExtras(flushExtras).build()
+                ).build()
+                player.replaceMediaItem(player.currentMediaItemIndex, flushItem)
+                delay(50)
+            }
+
+            val newExtras = Bundle(oldExtras).apply {
+                putBoolean("carwith_injected", true)
+                if (targetLrc.isNotEmpty()) {
+                    putString(CARWITH_LYRICS_WHOLE, targetLrc)
+                    putString(CARWITH_LYRICS_LINE, "")
+                    putLong(CARWITH_LYRICS_STATUS, 0L)
+                } else {
+                    putString(CARWITH_LYRICS_WHOLE, "")
+                    putString(CARWITH_LYRICS_LINE, "")
+                    putLong(CARWITH_LYRICS_STATUS, 3L)
+                }
+                putLong(CARWITH_PLAY_MODE, targetPlayMode)
+                putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
+            }
+
+            val metadataBuilder = currentItem.mediaMetadata.buildUpon()
+                .setUserRating(HeartRating(isCurrentSongFavorite))
+                .setExtras(newExtras)
+
+            val songId = currentItem.mediaId.toLongOrNull()
+
+            // 仅在真实切歌(forceImageLoad=true) 或者 封面丢失时，才执行极其耗时的图像处理
+            if (forceImageLoad || currentItem.mediaMetadata.artworkData == null) {
+                withContext(IO) {
+                    if (songId != null) {
+                        try {
+                            if (!isActive) return@withContext
+                            val song = repository.songById(songId)
+                            
+                            // 【极限内存压缩】：车机不需 500x500，250x250 分辨率既高清又将内存负荷直接缩小 4 倍！
+                            val result = SingletonImageLoader.get(this@PlaybackService).execute(
+                                ImageRequest.Builder(this@PlaybackService)
+                                    .data(song)
+                                    .size(250)
+                                    .scale(Scale.FILL)
+                                    .build()
+                            )
+                            
+                            if (!isActive) return@withContext
+                            
+                            val bitmap = result.image?.toBitmap(250, 250)
+                            if (bitmap != null) {
+                                val stream = ByteArrayOutputStream()
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream) // 80的画质毫无损失，体积锐减
+                                
+                                // 标准 Media3 注入方式。
+                                metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                                
+                                // 【根治 IPC 通信瘫痪】：抛弃之前复制 3 份 500x500 Bitmap 的自杀行为，
+                                // 仅仅保留 1 份最小分辨率的 ALBUM_ART 以防极个别老车机获取不到。体积下降 90%！
+                                newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CarWithFix", "Bitmap processing error", e)
+                        }
+                    }
+
+                    if (!isActive) return@withContext
+
+                    val newMetadata = metadataBuilder.build()
+                    val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
+
+                    withContext(Main) {
+                        if (player.currentMediaItem?.mediaId == newItem.mediaId) {
+                            player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+                        }
+                    }
+                }
+            } else {
+                // 如果仅仅是点赞、换播放模式：完全跳过压缩流程，直接 0 延迟秒替换！
+                val newItem = currentItem.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
+                if (player.currentMediaItem?.mediaId == newItem.mediaId) {
+                    player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+                }
+            }
+        }
     }
 
     override fun onPlayerError(error: PlaybackException) {
@@ -977,11 +1100,10 @@ class PlaybackService :
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
-            // 【洗脑疗法】：翻译被切换时，立刻发空包清空车机缓存，再瞬间推新包，强迫车机同步翻译！
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    requestCarWithUpdate(forceImageLoad = true, bustCache = true)
+                    requestCarWithUpdate(forceImageLoad = false, bustCache = true)
                 }
             }
 
@@ -1021,118 +1143,9 @@ class PlaybackService :
 
         updateWidgets()
         refreshMediaButtonCustomLayout()
+        mediaSession?.broadcastCustomCommand(SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY), Bundle.EMPTY)
 
-        mediaSession?.broadcastCustomCommand(
-            SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
-            Bundle.EMPTY
-        )
-        withContext(Main) {
-            requestCarWithUpdate(forceImageLoad = false, bustCache = false)
-        }
-    }
-
-    // =========================================================================================
-    // 【终极武器：智能无缝加载架构与 50ms 洗脑刷新机制】
-    // =========================================================================================
-    private fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
-        carWithUpdateJob?.cancel() 
-        carWithUpdateJob = serviceScope.launch(Main) {
-            val currentItem = player.currentMediaItem ?: return@launch
-
-            val targetPlayMode = when {
-                player.shuffleModeEnabled -> 0L
-                player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
-                else -> 2L
-            }
-            val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
-            val targetLrc = if (currentCarWithLrc.isNullOrBlank()) "" else currentCarWithLrc!!
-
-            val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
-
-            if (!forceImageLoad && !bustCache &&
-                oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
-                oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
-                oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
-                oldExtras.getBoolean("carwith_injected", false)) {
-                return@launch
-            }
-
-            // 【强制清理车机顽固缓存（洗脑疗法）】：只有在切换翻译开关且歌词非空时触发
-            if (bustCache && targetLrc.isNotEmpty()) {
-                val flushExtras = Bundle(oldExtras).apply {
-                    putBoolean("carwith_injected", true)
-                    putString(CARWITH_LYRICS_WHOLE, "")
-                    putLong(CARWITH_LYRICS_STATUS, 3L) // 用3L（无歌词）瞬间清空车机的UI缓存
-                    putLong(CARWITH_PLAY_MODE, targetPlayMode)
-                    putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
-                }
-                val flushMetadata = currentItem.mediaMetadata.buildUpon().setExtras(flushExtras).build()
-                val flushItem = currentItem.buildUpon().setMediaMetadata(flushMetadata).build()
-                player.replaceMediaItem(player.currentMediaItemIndex, flushItem)
-                
-                delay(50) // 给车机 50ms 清空内存的时间（极快，肉眼无感）
-            }
-
-            val newExtras = Bundle(oldExtras).apply {
-                putBoolean("carwith_injected", true)
-                if (targetLrc.isNotEmpty()) {
-                    putString(CARWITH_LYRICS_WHOLE, targetLrc)
-                    putString(CARWITH_LYRICS_LINE, "")
-                    putLong(CARWITH_LYRICS_STATUS, 0L)
-                } else {
-                    putString(CARWITH_LYRICS_WHOLE, "")
-                    putString(CARWITH_LYRICS_LINE, "")
-                    putLong(CARWITH_LYRICS_STATUS, 3L)
-                }
-                putLong(CARWITH_PLAY_MODE, targetPlayMode)
-                putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
-            }
-
-            val metadataBuilder = currentItem.mediaMetadata.buildUpon()
-                .setUserRating(HeartRating(isCurrentSongFavorite))
-                .setArtworkUri(null) 
-
-            val songId = currentItem.mediaId.toLongOrNull()
-
-            withContext(IO) {
-                // 如果需要刷新封面，或者执行过洗脑疗法（会弄丢封面），都必须重新附上 JPEG
-                if (songId != null && (forceImageLoad || bustCache)) {
-                    val song = repository.songById(songId)
-                    try {
-                        val result = SingletonImageLoader.get(this@PlaybackService).execute(
-                            ImageRequest.Builder(this@PlaybackService)
-                                .data(song)
-                                .size(500)
-                                .scale(Scale.FILL)
-                                .build()
-                        )
-                        val bitmap = result.image?.toBitmap(500, 500)
-                        if (bitmap != null) {
-                            val stream = ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
-                            val artworkBytes = stream.toByteArray()
-
-                            metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
-                            newExtras.putParcelable("android.media.metadata.ART", bitmap)
-                            newExtras.putParcelable("android.media.metadata.DISPLAY_ICON", bitmap)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CarWithFix", "Failed to load artwork Bitmap to byte array", e)
-                    }
-                }
-
-                metadataBuilder.setExtras(newExtras)
-                val newMetadata = metadataBuilder.build()
-                val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
-
-                withContext(Main) {
-                    if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                        player.replaceMediaItem(player.currentMediaItemIndex, newItem)
-                    }
-                }
-            }
-        }
+        requestCarWithUpdate(forceImageLoad = false, bustCache = false)
     }
 
     private suspend fun buildPlaybackState(isForeground: Boolean): PlaybackState {
