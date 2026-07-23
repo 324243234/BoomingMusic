@@ -70,7 +70,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
                 if (song != null && leftInfoText != null) {
-                    leftInfoText.text = "${song.title} - ${getSongArtist(song)}"
+				// 直接获取纯粹的艺术家名字，绝不夹杂专辑名
+                    val artist = if (Preferences.preferAlbumArtistName) {
+                        song.albumArtistName().displayArtistName()
+                    } else {
+                        song.displayArtistName()
+                    }
+                    leftInfoText.text = "${song.title} - $artist"
                     setMarquee(leftInfoText, marquee = true)
                 }
             }
