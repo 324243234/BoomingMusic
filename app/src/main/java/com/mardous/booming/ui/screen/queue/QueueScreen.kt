@@ -207,6 +207,12 @@ fun QueueScreen(
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
 
+    // 获取当前屏幕方向
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    // 只有在非横屏（竖屏）时才显示顶部的当前播放封面和歌曲信息
+    if (!isLandscape) {
         SmallHeader(
             title = currentSong.title,
             subtitle = currentSong.displayArtistName(),
@@ -216,7 +222,8 @@ fun QueueScreen(
                 .padding(horizontal = 16.dp)
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
+    }
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
@@ -282,7 +289,7 @@ fun QueueScreen(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -324,7 +331,7 @@ fun QueueScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Box {
             LazyColumnScrollbar(
@@ -392,7 +399,7 @@ fun QueueScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     Crossfade(
                                         targetState = isPlaying && isCurrentSong,
