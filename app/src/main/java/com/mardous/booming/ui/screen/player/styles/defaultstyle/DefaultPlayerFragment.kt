@@ -24,6 +24,7 @@ import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 
@@ -64,10 +65,35 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         Preferences.registerOnSharedPreferenceChangeListener(this)
     }
 
-    // =========================================================================================
-    // 【干净利落的点击接管】：底层传来时已确保是横屏平板状态，直接执行显隐，0 性能浪费！
-    // =========================================================================================
-    fun handleCoverClick() {
+    override fun gestureDetected(gestureType: GestureType): Boolean {
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        
+        if (isLandscape) {
+            when (gestureType) {
+                is GestureType.Tap -> {
+                    handleCoverClick()
+                    return true
+                }
+                is GestureType.DoubleTap -> {
+                    when (gestureType.type) {
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
+                            playerViewModel.seekToPrevious()
+                            return true
+                        }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
+                            playerViewModel.seekToNext()
+                            return true
+                        }
+                        else -> {}
+                    }
+                }
+                else -> {}
+            }
+        }
+        return super.gestureDetected(gestureType)
+    }
+
+    private fun handleCoverClick() {
         val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
         val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
         val toolbar = view?.findViewById<View>(R.id.toolbar)
