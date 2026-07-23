@@ -1,292 +1,166 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
-import android.animation.Animator
-import android.animation.ObjectAnimator
-import android.animation.PropertyValuesHolder
-import android.animation.TimeInterpolator
-import android.content.Context
 import android.content.SharedPreferences
-import android.database.ContentObserver
-import android.graphics.Color
-import android.media.AudioManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
-import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
-import android.widget.TextView
-import androidx.core.view.doOnLayout
+import androidx.appcompat.widget.Toolbar
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsCompat.Type
+import androidx.core.view.updatePadding
 import androidx.core.view.isVisible
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.android.material.slider.Slider
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
 import com.mardous.booming.core.model.player.PlayerTintTarget
-import com.mardous.booming.core.model.player.iconButtonTintTarget
+import com.mardous.booming.core.model.player.surfaceTintTarget
 import com.mardous.booming.core.model.player.tintTarget
-import com.mardous.booming.data.model.Song
-import com.mardous.booming.databinding.FragmentDefaultPlayerPlaybackControlsBinding
-import com.mardous.booming.extensions.resources.centerPivot
-import com.mardous.booming.extensions.resources.showBounceAnimation
+import com.mardous.booming.core.model.theme.NowPlayingScreen
+import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
+import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
-import com.mardous.booming.ui.component.base.SkipButtonTouchHandler.Companion.DIRECTION_NEXT
-import com.mardous.booming.ui.component.base.SkipButtonTouchHandler.Companion.DIRECTION_PREVIOUS
-import com.mardous.booming.ui.component.views.MusicSlider
-import com.mardous.booming.ui.screen.player.PlayerAnimator
+import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
-import java.util.LinkedList
 
-class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_default_player_playback_controls) {
+class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
+    SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private var _binding: FragmentDefaultPlayerPlaybackControlsBinding? = null
+    private var _binding: FragmentDefaultPlayerBinding? = null
     private val binding get() = _binding!!
 
-    private lateinit var audioManager: AudioManager
-    private var volumeObserver: ContentObserver? = null
+    private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
-    override val playPauseFab: FloatingActionButton
-        get() = binding.playPauseButton
+    override val playerControlsFragment: AbsPlayerControlsFragment
+        get() = controlsFragment
 
-    override val repeatButton: MaterialButton?
-        get() = binding.repeatButton
+    override val colorSchemeMode: PlayerColorSchemeMode
+        get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Default)
 
-    override val shuffleButton: MaterialButton?
-        get() = binding.shuffleButton
+    override val playerToolbar: Toolbar
+        get() = binding.toolbar
 
-    override val musicSlider: MusicSlider?
-        get() = binding.progressSlider
+    override val blurView: ImageView
+        get() = binding.blur
 
-    override val songCurrentProgress: TextView
-        get() = binding.songCurrentProgress
-
-    override val songTotalTime: TextView
-        get() = binding.songTotalTime
-
-    override val songTitleView: TextView?
-        get() = binding.title
-
-    override val songArtistView: TextView?
-        get() = binding.text
-
-    override val songInfoView: TextView?
-        get() = binding.songInfo
+    private var primaryControlColor: Int = 0
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        _binding = FragmentDefaultPlayerPlaybackControlsBinding.bind(view)
-        binding.playPauseButton.doOnLayout { it.centerPivot() }
-        binding.playPauseButton.setOnClickListener(this)
-        binding.shuffleButton.setOnClickListener(this)
-        binding.repeatButton.setOnClickListener(this)
-        binding.nextButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_NEXT))
-        binding.previousButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_PREVIOUS))
-
-        setupQueueInfoView()
-        setupVolumeSlider()
+        _binding = FragmentDefaultPlayerBinding.bind(view)
+        setupToolbar()
+        inflateMenuInView(playerToolbar)
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
+            val systemBars = insets.getInsets(Type.systemBars())
+            v.updatePadding(top = systemBars.top, bottom = systemBars.bottom)
+            val displayCutout = insets.getInsets(Type.displayCutout())
+            v.updatePadding(left = displayCutout.left, right = displayCutout.right)
+            WindowInsetsCompat.CONSUMED
+        }
+        Preferences.registerOnSharedPreferenceChangeListener(this)
     }
 
-    private fun setupVolumeSlider() {
-        audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
-
-        // 彻底清空所有自造滑块代码，保证极速稳定运行
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
-        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-
-        volumeSlider.valueFrom = 0f
-        volumeSlider.valueTo = maxVolume
-        volumeSlider.value = currentVolume
-
-        volumeSlider.addOnChangeListener { _, value, fromUser ->
-            if (fromUser) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value.toInt(), 0)
-            }
-        }
-
-        volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                super.onChange(selfChange)
-                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-                if (volumeSlider.value != newVolume) {
-                    volumeSlider.value = newVolume
+    // =========================================================================================
+    // 【神级重写】：利用父类原生手势系统！0玻璃层，0底层修改，性能零损耗！
+    // =========================================================================================
+    override fun gestureDetected(gestureType: GestureType): Boolean {
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        
+        // 仅在 Default主题 + 平板横屏下，劫持用户的点击和双击
+        if (isLandscape) {
+            when (gestureType) {
+                is GestureType.Tap -> {
+                    // 单击：绝对不碰左侧封面，仅仅切换右侧歌词和控制区的显隐
+                    handleCoverClick()
+                    return true
                 }
-            }
-        }
-        requireContext().contentResolver.registerContentObserver(
-            Settings.System.CONTENT_URI, true, volumeObserver!!
-        )
-    }
-
-    override fun onCreatePlayerAnimator(): PlayerAnimator {
-        return DefaultPlayerAnimator(binding, isControlAnimationEnabled)
-    }
-
-    override fun onSongInfoChanged(currentSong: Song, nextSong: Song) {
-        _binding?.let { nonNullBinding ->
-            nonNullBinding.title.text = currentSong.title
-            nonNullBinding.text.text = getSongArtist(currentSong)
-            nonNullBinding.queueInfo.text = getNextSongInfo(nextSong)
-        }
-    }
-
-    override fun onExtraInfoChanged(extraInfo: String?) {
-        _binding?.let { nonNullBinding ->
-            if (isExtraInfoEnabled()) {
-                nonNullBinding.songInfo?.text = extraInfo
-                nonNullBinding.songInfo?.isVisible = true
-            } else {
-                nonNullBinding.songInfo?.isVisible = false
-            }
-        }
-    }
-
-    override fun onUpdatePlayPause(isPlaying: Boolean) {
-        if (isPlaying) {
-            _binding?.playPauseButton?.setImageResource(R.drawable.ic_pause_24dp)
-        } else {
-            _binding?.playPauseButton?.setImageResource(R.drawable.ic_play_24dp)
-        }
-    }
-
-    override fun onClick(view: View) {
-        super.onClick(view)
-        when (view) {
-            binding.repeatButton -> playerViewModel.cycleRepeatMode()
-            binding.shuffleButton -> playerViewModel.toggleShuffleMode()
-            binding.playPauseButton -> {
-                playerViewModel.togglePlayPause()
-                if (isControlAnimationEnabled) {
-                    view.showBounceAnimation()
+                is GestureType.DoubleTap -> {
+                    when (gestureType.type) {
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
+                            // 双击左侧：强行将原作者的“快退”替换为“切上一首”
+                            playerViewModel.seekToPrevious()
+                            return true
+                        }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
+                            // 双击右侧：强行将原作者的“快进”替换为“切下一首”
+                            playerViewModel.seekToNext()
+                            return true
+                        }
+                        else -> {}
+                    }
                 }
+                else -> {}
             }
+        }
+        
+        // 对于长按、滑动，或者是在竖屏状态下，原封不动地还给原作者处理！
+        return super.gestureDetected(gestureType)
+    }
+
+    private fun handleCoverClick() {
+        val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
+        val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
+        val toolbar = view?.findViewById<View>(R.id.toolbar)
+        
+        val isLyricsVisible = rightLyrics?.isVisible == true
+        
+        rightLyrics?.isVisible = !isLyricsVisible
+        rightControls?.isVisible = isLyricsVisible
+        toolbar?.isVisible = isLyricsVisible
+    }
+
+    private fun setupToolbar() {
+        playerToolbar.setNavigationOnClickListener {
+            onQuickActionEvent(NowPlayingAction.SoundSettings)
         }
     }
 
-    private fun setupQueueInfoView() {
-        _binding?.let { binding ->
-            if (Preferences.isShowNextSong) {
-                binding.queueInfo.visibility = View.VISIBLE
-                setViewAction(binding.queueInfo, NowPlayingAction.OpenPlayQueue)
-            } else {
-                binding.queueInfo.visibility = View.GONE
-            }
+    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
+        val oldPrimaryControlColor = primaryControlColor
+        primaryControlColor = scheme.onSurfaceColor
+
+        return mutableListOf(
+            binding.root.surfaceTintTarget(scheme.surfaceColor),
+            binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
+        ).also {
+            it.addAll(playerControlsFragment.getTintTargets(scheme))
+        }
+    }
+
+    override fun onMenuInflated(menu: Menu) {
+        super.onMenuInflated(menu)
+        menu.removeItem(R.id.action_sound_settings)
+        menu.setShowAsAction(R.id.action_favorite)
+        menu.setShowAsAction(R.id.action_show_lyrics)
+        setupQueueMenuItem(menu)
+    }
+
+    override fun onCreateChildFragments() {
+        super.onCreateChildFragments()
+        controlsFragment = whichFragment(R.id.playbackControlsFragment)
+    }
+
+    private fun setupQueueMenuItem(menu: Menu = playerToolbar.menu) {
+        menu.findItem(R.id.action_playing_queue)?.let {
+            it.isVisible = !Preferences.isShowNextSong
+            it.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
         }
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-        super.onSharedPreferenceChanged(sharedPreferences, key)
-        when(key) {
-            DISPLAY_NEXT_SONG -> {
-                setupQueueInfoView()
-            }
+        if (key == DISPLAY_NEXT_SONG) {
+            setupQueueMenuItem()
         }
     }
 
     override fun onDestroyView() {
-        volumeObserver?.let {
-            requireContext().contentResolver.unregisterContentObserver(it)
-        }
+        Preferences.unregisterOnSharedPreferenceChangeListener(this)
         super.onDestroyView()
         _binding = null
-    }
-
-    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
-        val oldControlColor = binding.nextButton.iconTint.defaultColor
-        val oldSliderColor = binding.progressSlider.currentColor
-        val oldPrimaryTextColor = binding.title.currentTextColor
-        val oldSecondaryTextColor = binding.text.currentTextColor
-        
-        val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
-        val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
-        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
-        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
-
-        val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
-            scheme.onSurfaceColor
-        } else {
-            scheme.primaryColor
-        }
-        val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
-        val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
-        )
-        val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
-        val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
-        )
-        
-        // 【终极瘦身防抖机制】：与进度条统一色彩！
-        volumeSlider?.let { slider ->
-            val targetColor = newEmphasisColor
-            val inactiveColor = scheme.onSurfaceVariantColor
-            
-            if (slider.trackActiveTintList?.defaultColor != targetColor) {
-                slider.trackActiveTintList = android.content.res.ColorStateList.valueOf(targetColor)
-                slider.trackInactiveTintList = android.content.res.ColorStateList.valueOf(inactiveColor)
-                slider.thumbTintList = android.content.res.ColorStateList.valueOf(targetColor)
-            }
-        }
-
-        return listOfNotNull(
-            binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
-            binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
-            binding.nextButton.iconButtonTintTarget(oldControlColor, scheme.onSurfaceColor),
-            binding.previousButton.iconButtonTintTarget(oldControlColor, scheme.onSurfaceColor),
-            binding.shuffleButton.iconButtonTintTarget(oldShuffleColor, newShuffleColor),
-            binding.repeatButton.iconButtonTintTarget(oldRepeatColor, newRepeatColor),
-            binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
-            binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songInfo?.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.queueInfo.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
-            binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
-            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
-        )
-    }
-
-    private class DefaultPlayerAnimator(
-        private val binding: FragmentDefaultPlayerPlaybackControlsBinding,
-        isEnabled: Boolean
-    ) : PlayerAnimator(isEnabled) {
-        override fun onAddAnimation(animators: LinkedList<Animator>, interpolator: TimeInterpolator) {
-            animators.add(
-                ObjectAnimator.ofPropertyValuesHolder(
-                    binding.playPauseButton,
-                    PropertyValuesHolder.ofFloat(View.SCALE_X, 1f),
-                    PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f),
-                    PropertyValuesHolder.ofFloat(View.ROTATION, 360f)
-                ).apply {
-                    setInterpolator(DecelerateInterpolator())
-                }
-            )
-            addScaleAnimation(animators, binding.shuffleButton, interpolator, 100)
-            addScaleAnimation(animators, binding.repeatButton, interpolator, 100)
-            addScaleAnimation(animators, binding.previousButton, interpolator, 200)
-            addScaleAnimation(animators, binding.nextButton, interpolator, 200)
-            addScaleAnimation(animators, binding.songCurrentProgress, interpolator, 200)
-            addScaleAnimation(animators, binding.songTotalTime, interpolator, 200)
-        }
-
-        override fun onPrepareForAnimation() {
-            binding.playPauseButton.apply {
-                scaleX = 0f
-                scaleY = 0f
-                rotation = 0f
-            }
-            prepareForScaleAnimation(binding.previousButton)
-            prepareForScaleAnimation(binding.nextButton)
-            prepareForScaleAnimation(binding.shuffleButton)
-            prepareForScaleAnimation(binding.repeatButton)
-            prepareForScaleAnimation(binding.songCurrentProgress)
-            prepareForScaleAnimation(binding.songTotalTime)
-        }
     }
 }

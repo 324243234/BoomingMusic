@@ -111,6 +111,8 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         arguments: androidx.savedstate.SavedState?
     ) {
         if (isLyricsViewVisible && isShowLyricsOnCover) {
+            // If the user opens any of queue, sound settings or song details dialogs
+            // we must ensure that we don't keep the screen on unnecessarily.
             activity?.keepScreenOn(destination.navigatorName != "dialog" && playerViewModel.isPlaying)
         }
     }
@@ -123,17 +125,17 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
             viewPager.clipToPadding = false
             viewPager.setPadding(padding, 0, padding, 0)
             viewPager.pageMargin = 0
-            viewPager.offscreenPageLimit = 1 
+            viewPager.offscreenPageLimit = 1 // Only adjacent pages are visible in carousel
             viewPager.setPageTransformer(false, CarouselPagerTransformer(requireContext()))
         } else {
             val (transformer, reverse) = Preferences.getNowPlayingTransition(nps)
                 .transformerFactory(R.id.player_image)
-            viewPager.offscreenPageLimit = 2 
+            viewPager.offscreenPageLimit = 2 // Parallax and other transitions need more pages
             viewPager.setPageTransformer(reverse, transformer)
         }
     }
 
-private fun setupPageTransformer() {
+    private fun setupPageTransformer() {
         val gesturesListener = (parentFragment as? AbsPlayerFragment)
         if (gesturesListener != null) {
             gesturesController = PlayerGesturesController(
@@ -147,42 +149,7 @@ private fun setupPageTransformer() {
                 ),
                 listener = gesturesListener
             )
-
-            // 【核心拦截器】：仅针对双击的精确打击，绝不扰乱其他代码
-            val doubleTapInterceptor = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
-                override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
-                    val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                    // 仅在 Default 主题的横屏平板模式下拦截双击
-                    if (nps == NowPlayingScreen.Default && isLandscape) {
-                        val width = viewPager.width
-                        val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-                        
-                        // 判定坐标：左侧上一首，右侧下一首
-                        val keyCode = if (width > 0 && e.x > width / 2) {
-                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT
-                        } else {
-                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
-                        }
-                        
-                        // 发送原生媒体按键指令完成切歌
-                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
-                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
-                        
-                        return true // 返回 true 表示拦截成功，事件被我们消化
-                    }
-                    return false // 不满足条件，乖乖放行
-                }
-            })
-
-            // 将事件代理绑定给 ViewPager
-            viewPager.setOnTouchListener { v, event ->
-                // 1. 先让拦截器嗅探是不是 Default 横屏下的双击
-                if (doubleTapInterceptor.onTouchEvent(event)) {
-                    return@setOnTouchListener true
-                }
-                // 2. 如果不是（如滑动、长按、单击），原封不动移交给原作者的控制器处理
-                gesturesController?.onTouch(v, event) ?: false
-            }
+            viewPager.setOnTouchListener(gesturesController)
         }
     }
 
@@ -261,28 +228,8 @@ private fun setupPageTransformer() {
         _binding = null
     }
 
-    // =========================================================================================
-    // 【核心优化】：精准拦截单击手势，彻底避免封面被隐藏
-    // =========================================================================================
     fun toggleLyrics() {
         if (isAnimatingLyrics) return
-
-        // 智能特判：检测是否为 Default 主题的平板横屏模式
-        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        if (nps == NowPlayingScreen.Default && isLandscape) {
-            try {
-                // 安全调用父级 DefaultPlayerFragment 中我们预先写好的显隐方法
-                // 这样左侧封面就绝不会触发原版的动画隐藏逻辑，而是单纯控制右侧歌词！
-                val parent = parentFragment
-                val method = parent?.javaClass?.getMethod("handleCoverClick")
-                method?.invoke(parent)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            return
-        }
-
-        // 其他主题或竖屏模式下，完美保留原作者设计的动画和逻辑
         if (isShowLyricsOnCover) {
             hideLyrics(true)
         } else {
@@ -408,6 +355,9 @@ class AlbumCoverPagerAdapter(fm: FragmentManager, private val dataSet: List<Song
         return o
     }
 
+    /**
+     * Only the latest passed [ImageFragment.ColorReceiver] is guaranteed to receive a response
+     */
     fun receiveColor(paletteReceiver: ColorReceiver, @ColorInt position: Int) {
         val fragment = getFragment(position) as ImageFragment?
         if (fragment != null) {
