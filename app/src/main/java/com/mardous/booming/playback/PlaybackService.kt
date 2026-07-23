@@ -1023,17 +1023,18 @@ class PlaybackService :
                             val result = SingletonImageLoader.get(this@PlaybackService).execute(
                                 ImageRequest.Builder(this@PlaybackService)
                                     .data(song)
-                                    .size(150) 
-                                    .scale(Scale.FILL)
                                     .build()
                             )
                             
                             if (!isActive) return@withContext
                             
-                            microBitmap = result.image?.toBitmap(150, 150)
-                            if (microBitmap != null) {
+							// 2. 拿到前台缓存的满血大图后，使用 Android 原生方法极速缩小到 150x150
+                            val fullBitmap = result.image?.toBitmap()
+                            if (fullBitmap != null) {
+                                microBitmap = Bitmap.createScaledBitmap(fullBitmap, 200, 200, true)
                                 carWithBitmapCache.put(songId, microBitmap)
                             }
+							
                         }
 
                         if (microBitmap != null) {
