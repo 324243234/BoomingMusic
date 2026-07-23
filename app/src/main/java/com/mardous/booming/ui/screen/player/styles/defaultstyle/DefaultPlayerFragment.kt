@@ -6,6 +6,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
+import android.widget.TextView // 补齐了 TextView 的导包
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -21,6 +22,7 @@ import com.mardous.booming.core.model.player.surfaceTintTarget
 import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
+import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle // 补齐了协程生命周期的导包
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
@@ -63,15 +65,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             WindowInsetsCompat.CONSUMED
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
-		
-		// 实时将当前歌曲与歌手绑定到左侧封面下方的 TextView
+
+        // 绑定左侧封面正下方的标题与歌手信息
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
                 if (song != null && leftInfoText != null) {
-                    val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName else song.artistName
-                    leftInfoText.text = "${song.title} - $artist"
-                    // 开启跑马灯滚动效果
+                    // 使用父类原生的高级解析方法获取歌手名字（自动处理未知歌手和偏好设置）
+                    leftInfoText.text = "${song.title} - ${getSongArtist(song)}"
                     setMarquee(leftInfoText, marquee = true)
                 }
             }
