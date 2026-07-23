@@ -164,7 +164,7 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:layout_marginBottom="8dp"
-        app:layout_constraintWidth_percent="0.7"
+        app:layout_constraintWidth_percent="0.6"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/songInfo">
@@ -187,8 +187,9 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:thumbRadius="3dp"
-            app:trackHeight="1dp" />
+            app:thumbRadius="1dp"
+            app:trackHeight="3dp" />  
+			<!-- 轨道高度 -->
 
         <ImageView
             android:id="@+id/volumeUpIcon"

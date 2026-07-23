@@ -133,7 +133,7 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         }
     }
 
-    private fun setupPageTransformer() {
+private fun setupPageTransformer() {
         val gesturesListener = (parentFragment as? AbsPlayerFragment)
         if (gesturesListener != null) {
             gesturesController = PlayerGesturesController(
@@ -147,7 +147,42 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
                 ),
                 listener = gesturesListener
             )
-            viewPager.setOnTouchListener(gesturesController)
+
+            // 【核心拦截器】：仅针对双击的精确打击，绝不扰乱其他代码
+            val doubleTapInterceptor = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                    val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    // 仅在 Default 主题的横屏平板模式下拦截双击
+                    if (nps == NowPlayingScreen.Default && isLandscape) {
+                        val width = viewPager.width
+                        val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                        
+                        // 判定坐标：左侧上一首，右侧下一首
+                        val keyCode = if (width > 0 && e.x > width / 2) {
+                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                        } else {
+                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        }
+                        
+                        // 发送原生媒体按键指令完成切歌
+                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
+                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
+                        
+                        return true // 返回 true 表示拦截成功，事件被我们消化
+                    }
+                    return false // 不满足条件，乖乖放行
+                }
+            })
+
+            // 将事件代理绑定给 ViewPager
+            viewPager.setOnTouchListener { v, event ->
+                // 1. 先让拦截器嗅探是不是 Default 横屏下的双击
+                if (doubleTapInterceptor.onTouchEvent(event)) {
+                    return@setOnTouchListener true
+                }
+                // 2. 如果不是（如滑动、长按、单击），原封不动移交给原作者的控制器处理
+                gesturesController?.onTouch(v, event) ?: false
+            }
         }
     }
 
