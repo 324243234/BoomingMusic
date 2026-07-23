@@ -63,6 +63,19 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             WindowInsetsCompat.CONSUMED
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
+		
+		// 实时将当前歌曲与歌手绑定到左侧封面下方的 TextView
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            playerViewModel.currentSongFlow.collect { song ->
+                val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
+                if (song != null && leftInfoText != null) {
+                    val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName else song.artistName
+                    leftInfoText.text = "${song.title} - $artist"
+                    // 开启跑马灯滚动效果
+                    setMarquee(leftInfoText, marquee = true)
+                }
+            }
+        }
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {

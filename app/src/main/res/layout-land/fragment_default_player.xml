@@ -33,6 +33,22 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
+		<!-- 新增：在封面正下方的歌曲信息 -->
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/leftCoverInfoText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:textAppearance="?textAppearanceBody1"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp"
+        app:layout_constraintTop_toBottomOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment"
+        tools:text="Song Title - Artist Name" />
 
     <!-- 右侧播放控制区 -->
     <androidx.fragment.app.FragmentContainerView

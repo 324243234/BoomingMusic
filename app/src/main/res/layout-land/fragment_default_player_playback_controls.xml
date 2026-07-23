@@ -187,7 +187,7 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:thumbRadius="1dp"
+            app:thumbRadius="6dp"
             app:trackHeight="3dp" />  
 			<!-- 轨道高度 -->
 
