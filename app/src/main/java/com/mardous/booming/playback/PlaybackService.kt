@@ -554,7 +554,7 @@ class PlaybackService :
                     .setMediaId(MediaIDs.ROOT)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
-                            .setMediaType(MediaMetadata.MEDIAMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
                             .setIsBrowsable(true)
                             .setIsPlayable(false)
                             .build()
@@ -720,7 +720,6 @@ class PlaybackService :
                     player.repeatMode = Player.REPEAT_MODE_ALL
                 }
                 
-                // 极速更新状态，完全不重新加载图片
                 requestCarWithUpdate(forceImageLoad = false, bustCache = false)
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
@@ -861,9 +860,6 @@ class PlaybackService :
         persistentStorage.saveState()
     }
 
-    // =========================================================================================
-    // 【终极重构】：彻底消灭无限制“幽灵协程”导致的 GC 内存雪崩！
-    // =========================================================================================
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
@@ -872,17 +868,13 @@ class PlaybackService :
 
         val isPlaying = player.isPlaying
 
-        // 【最强拦截网】：每次切歌瞬间腰斩之前的 IO 协程！
-        // 如果 1 秒滑了 5 次，只执行最后一次处理，彻底拯救 CPU 占用和卡顿！
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            // 延时防抖 300 毫秒，滑动手势还没停下时绝不执行底层重型查询！
             delay(300)
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
 
-            // 1. 历史播放记录处理
             withContext(IO) {
                 val previousSong = songPlayCountHelper.song
                 val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
@@ -907,7 +899,6 @@ class PlaybackService :
                 }
             }
 
-            // 2. 获取状态与歌词数据
             isCurrentSongFavorite = withContext(IO) {
                 if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
             }
@@ -922,7 +913,6 @@ class PlaybackService :
             }
             currentRawLyricsData = rawLyricsText
 
-            // 3. 车机注入分发
             if (newSong != Song.emptySong) {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
                 if (isBtLyricsEnabled) {
@@ -947,9 +937,7 @@ class PlaybackService :
         updateWidgets(force = true)
     }
 
-    // 【一体化聚合推送器】：终结多次重复替换与 Binder IPC 溢出！
     private fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
-        // 如果是强制刷新，之前已经进行过防抖拦截。这里直接同步处理逻辑
         serviceScope.launch(Main) {
             val currentItem = player.currentMediaItem ?: return@launch
 
@@ -1007,7 +995,6 @@ class PlaybackService :
 
             val songId = currentItem.mediaId.toLongOrNull()
 
-            // 仅在真实切歌(forceImageLoad=true) 或者 封面丢失时，才执行极其耗时的图像处理
             if (forceImageLoad || currentItem.mediaMetadata.artworkData == null) {
                 withContext(IO) {
                     if (songId != null) {
@@ -1015,7 +1002,6 @@ class PlaybackService :
                             if (!isActive) return@withContext
                             val song = repository.songById(songId)
                             
-                            // 【极限内存压缩】：车机不需 500x500，250x250 分辨率既高清又将内存负荷直接缩小 4 倍！
                             val result = SingletonImageLoader.get(this@PlaybackService).execute(
                                 ImageRequest.Builder(this@PlaybackService)
                                     .data(song)
@@ -1029,13 +1015,9 @@ class PlaybackService :
                             val bitmap = result.image?.toBitmap(250, 250)
                             if (bitmap != null) {
                                 val stream = ByteArrayOutputStream()
-                                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream) // 80的画质毫无损失，体积锐减
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream) 
                                 
-                                // 标准 Media3 注入方式。
                                 metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                                
-                                // 【根治 IPC 通信瘫痪】：抛弃之前复制 3 份 500x500 Bitmap 的自杀行为，
-                                // 仅仅保留 1 份最小分辨率的 ALBUM_ART 以防极个别老车机获取不到。体积下降 90%！
                                 newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
                             }
                         } catch (e: Exception) {
@@ -1055,7 +1037,6 @@ class PlaybackService :
                     }
                 }
             } else {
-                // 如果仅仅是点赞、换播放模式：完全跳过压缩流程，直接 0 延迟秒替换！
                 val newItem = currentItem.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
                 if (player.currentMediaItem?.mediaId == newItem.mediaId) {
                     player.replaceMediaItem(player.currentMediaItemIndex, newItem)
