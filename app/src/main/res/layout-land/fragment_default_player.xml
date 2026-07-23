@@ -37,7 +37,7 @@
         app:layout_constraintBottom_toTopOf="@+id/leftCoverInfoText"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline"
-        android:layout_margin="3dp">
+        android:layout_margin="2dp">
         
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
@@ -52,7 +52,7 @@
         android:id="@+id/leftCoverInfoText"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-		android:layout_marginTop="2dp"
+		android:layout_marginTop="1dp"
         android:layout_marginBottom="10dp"
         android:gravity="center"
         android:singleLine="true"
