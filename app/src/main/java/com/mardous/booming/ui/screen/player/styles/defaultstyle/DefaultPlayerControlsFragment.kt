@@ -16,12 +16,12 @@ import android.provider.Settings
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
+import android.widget.SeekBar // 引入经典的 SeekBar
 import android.widget.TextView
 import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.android.material.slider.Slider
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
@@ -93,27 +93,30 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
 
     private fun setupVolumeSlider() {
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider) ?: return
 
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
-        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
 
-        volumeSlider.valueFrom = 0f
-        volumeSlider.valueTo = maxVolume
-        volumeSlider.value = currentVolume
+        volumeSlider.max = maxVolume
+        volumeSlider.progress = currentVolume
 
-        volumeSlider.addOnChangeListener { _, value, fromUser ->
-            if (fromUser) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value.toInt(), 0)
+        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+                }
             }
-        }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
 
         volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
                 super.onChange(selfChange)
-                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-                if (volumeSlider.value != newVolume) {
-                    volumeSlider.value = newVolume
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                if (volumeSlider.progress != newVolume) {
+                    volumeSlider.progress = newVolume
                 }
             }
         }
@@ -181,16 +184,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
         super.onSharedPreferenceChanged(sharedPreferences, key)
         when(key) {
-            DISPLAY_NEXT_SONG -> {
-                setupQueueInfoView()
-            }
+            DISPLAY_NEXT_SONG -> setupQueueInfoView()
         }
     }
 
     override fun onDestroyView() {
-        volumeObserver?.let {
-            requireContext().contentResolver.unregisterContentObserver(it)
-        }
+        volumeObserver?.let { requireContext().contentResolver.unregisterContentObserver(it) }
         super.onDestroyView()
         _binding = null
     }
@@ -204,7 +203,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         
         val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
-        val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider)
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
         val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
@@ -213,23 +212,14 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             scheme.primaryColor
         }
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
-        val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
-        )
+        val newShuffleColor = getPlaybackControlsColor(isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
-        val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
-        )
+        val newRepeatColor = getPlaybackControlsColor(isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         
         volumeSlider?.let { slider ->
-            val targetColor = newEmphasisColor
-            val inactiveColor = scheme.onSurfaceVariantColor
-            
-            if (slider.trackActiveTintList?.defaultColor != targetColor) {
-                slider.trackActiveTintList = android.content.res.ColorStateList.valueOf(targetColor)
-                slider.trackInactiveTintList = android.content.res.ColorStateList.valueOf(inactiveColor)
-                slider.thumbTintList = android.content.res.ColorStateList.valueOf(targetColor)
-            }
+            val activeList = android.content.res.ColorStateList.valueOf(newEmphasisColor)
+            slider.progressTintList = activeList
+            slider.thumbTintList = activeList
         }
 
         return listOfNotNull(
@@ -261,9 +251,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
                     PropertyValuesHolder.ofFloat(View.SCALE_X, 1f),
                     PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f),
                     PropertyValuesHolder.ofFloat(View.ROTATION, 360f)
-                ).apply {
-                    setInterpolator(DecelerateInterpolator())
-                }
+                ).apply { setInterpolator(DecelerateInterpolator()) }
             )
             addScaleAnimation(animators, binding.shuffleButton, interpolator, 100)
             addScaleAnimation(animators, binding.repeatButton, interpolator, 100)
@@ -274,11 +262,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         }
 
         override fun onPrepareForAnimation() {
-            binding.playPauseButton.apply {
-                scaleX = 0f
-                scaleY = 0f
-                rotation = 0f
-            }
+            binding.playPauseButton.apply { scaleX = 0f; scaleY = 0f; rotation = 0f }
             prepareForScaleAnimation(binding.previousButton)
             prepareForScaleAnimation(binding.nextButton)
             prepareForScaleAnimation(binding.shuffleButton)

@@ -156,7 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-<!-- 【极致瘦身的音量控件】：长度 70%，厚度 1dp 完美看齐进度条 -->
+<!-- 【回归经典】：废弃 M3 强制变形的 Slider，换成轻量完美的 AppCompatSeekBar -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
@@ -176,20 +176,18 @@
             android:src="@drawable/ic_volume_down_24dp"
             app:tint="?android:attr/textColorSecondary" />
 
-        <!-- 极致变瘦：高度 1dp，圆点极小化 3dp -->
-        <com.google.android.material.slider.Slider
+        <androidx.appcompat.widget.AppCompatSeekBar
             android:id="@+id/volumeSlider"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
-            app:tickVisible="false"
-            app:labelBehavior="gone"
-            app:haloRadius="0dp"
-            app:customThumbDrawable="@drawable/custom_volume_thumb"
-            app:trackHeight="3dp" />  
-			<!--  app:thumbRadius="6dp" -->
+            android:splitTrack="false"
+            android:maxHeight="2dp"
+            android:minHeight="2dp"
+            android:progressTint="?android:attr/textColorSecondary"
+            android:thumbTint="?android:attr/textColorSecondary" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"

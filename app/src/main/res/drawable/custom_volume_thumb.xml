@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <!-- 这就是一个完美的圆形滑块，12dp大小 -->
-    <size android:width="12dp" android:height="12dp" />
-    <solid android:color="@android:color/white" /> <!-- 颜色会被 Kotlin 代码自动染色 -->
-</shape>
