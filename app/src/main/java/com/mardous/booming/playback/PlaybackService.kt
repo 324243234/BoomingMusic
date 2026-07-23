@@ -868,43 +868,44 @@ class PlaybackService :
 
         val isPlaying = player.isPlaying
 
-        // 【最强防抖护城河】：如果连续快速切歌，立即杀死上一个协程内的所有IO任务！
+        // 1. 完全隔离：将数据库历史记录单独开一个IO协程，不受防抖影响
+        serviceScope.launch(IO) {
+            val newSong = repository.songByMediaItem(mediaItem)
+            val previousSong = songPlayCountHelper.song
+            val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
+            songPlayCountHelper.notifySongChanged(newSong, isPlaying)
+
+            if (newSong != Song.emptySong) {
+                replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
+                if (preferences.getBoolean(ENABLE_HISTORY, true)) repository.upsertSongInHistory(newSong)
+                if (NetworkFeature.Lastfm.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.Lastfm, newSong)
+                if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong)
+            }
+            if (previousSong != Song.emptySong) {
+                val timestampMillis = System.currentTimeMillis()
+                val timestampSeconds = (timestampMillis / 1000)
+                if (shouldBumpPlayCount) {
+                    repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
+                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds)
+                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds)
+                } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
+                    repository.insertOrIncrementSkipCount(previousSong)
+                }
+            }
+        }
+
+        // 2. 极致防抖：如果在300ms内狂滑，上一次未完成的图片压缩会立即被杀死！
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(300) // 让子弹飞一会儿，狂切时不执行下方逻辑
+            delay(300)
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
-
-            withContext(IO) {
-                val previousSong = songPlayCountHelper.song
-                val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
-                songPlayCountHelper.notifySongChanged(newSong, isPlaying)
-
-                if (newSong != Song.emptySong) {
-                    replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
-                    if (preferences.getBoolean(ENABLE_HISTORY, true)) repository.upsertSongInHistory(newSong)
-                    if (NetworkFeature.Lastfm.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.Lastfm, newSong)
-                    if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong)
-                }
-                if (previousSong != Song.emptySong) {
-                    val timestampMillis = System.currentTimeMillis()
-                    val timestampSeconds = (timestampMillis / 1000)
-                    if (shouldBumpPlayCount) {
-                        repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
-                        if (NetworkFeature.Lastfm.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds)
-                        if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds)
-                    } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
-                        repository.insertOrIncrementSkipCount(previousSong)
-                    }
-                }
-            }
 
             isCurrentSongFavorite = withContext(IO) {
                 if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
             }
 
-            // 【完全解耦】歌词解析被严格控制在 IO 线程
             val rawLyricsText = withContext(IO) {
                 if (newSong != Song.emptySong) {
                     val rawLyrics = lyricsRepository.fileLyrics(newSong)
@@ -923,13 +924,11 @@ class PlaybackService :
                     refreshMediaButtonCustomLayout()
                 } else {
                     bluetoothLyricManager.stopLyrics()
-                    // 【不堵塞主线程】将处理时间轴的任务扔给 IO 线程
                     currentCarWithLrc = withContext(IO) {
                         if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
                     }
                     refreshMediaButtonCustomLayout()
                     
-                    // 全程在同一个协程内无缝衔接调用
                     requestCarWithUpdate(forceImageLoad = true, bustCache = false)
                 }
             } else {
@@ -941,10 +940,9 @@ class PlaybackService :
 
         if (player.currentMediaItemIndex == stopIndex) player.exoPlayer.pauseAtEndOfMediaItems = true
         persistentStorage.saveState()
-        updateWidgets(force = false)
+        updateWidgets(force = false) // ！！！防抖核心在此，绝不能是true！！！
     }
 
-    // 【破除内存泄露的终极机制】：挂起函数，全程结构化并发，无 Handler 脱管！
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -979,7 +977,6 @@ class PlaybackService :
             ).build()
             player.replaceMediaItem(player.currentMediaItemIndex, flushItem)
             
-            // 采用原生的协程挂起延时，而不是 Handler！被取消时会自动终止
             delay(50L) 
         }
 
@@ -1028,7 +1025,8 @@ class PlaybackService :
                             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream) 
                             
                             metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", bitmap)
+                            
+                            // ！！！核心毒瘤已切除：绝不把图片塞入Extras Bundle，斩断序列化风暴！！！
                         }
                     } catch (e: Exception) {
                         Log.e("CarWithFix", "Bitmap processing error", e)

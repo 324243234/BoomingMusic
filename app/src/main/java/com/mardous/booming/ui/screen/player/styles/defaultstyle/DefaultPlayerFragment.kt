@@ -66,7 +66,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 绑定左侧封面正下方的标题与歌手信息
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
@@ -78,27 +77,23 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // =========================================================================================
-    // 【最干净的手势接管】：无额外拦截器，直接覆盖原作者的底层分发逻辑
-    // =========================================================================================
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
-        // 仅在横屏时干预
         if (isLandscape) {
             when (gestureType) {
                 is GestureType.Tap -> {
-                    handleCoverClick() // 单击显隐歌词
+                    handleCoverClick()
                     return true
                 }
                 is GestureType.DoubleTap -> {
                     when (gestureType.type) {
                         GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
-                            playerViewModel.seekToPrevious() // 左侧双击切上一首
+                            playerViewModel.seekToPrevious()
                             return true
                         }
                         GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
-                            playerViewModel.seekToNext() // 右侧双击切下一首
+                            playerViewModel.seekToNext()
                             return true
                         }
                         else -> {}
@@ -107,7 +102,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 else -> {}
             }
         }
-        // 竖屏或其它手势，原封不动地返回给原作者基类处理
         return super.gestureDetected(gestureType)
     }
 
@@ -133,12 +127,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val oldPrimaryControlColor = primaryControlColor
         primaryControlColor = scheme.onSurfaceColor
 
-        return mutableListOf(
+        val targets = mutableListOf(
             binding.root.surfaceTintTarget(scheme.surfaceColor),
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
-        ).also {
-            it.addAll(playerControlsFragment.getTintTargets(scheme))
+        )
+        
+        // ！！！完美同步右上角的动态智能取色逻辑 (scheme.onSurfaceColor)！！！
+        val leftInfoText = view?.findViewById<TextView>(R.id.leftCoverInfoText)
+        if (leftInfoText != null) {
+            val oldTextColor = leftInfoText.currentTextColor
+            targets.add(leftInfoText.tintTarget(oldTextColor, scheme.onSurfaceColor))
         }
+
+        targets.addAll(playerControlsFragment.getTintTargets(scheme))
+        return targets
     }
 
     override fun onMenuInflated(menu: Menu) {
