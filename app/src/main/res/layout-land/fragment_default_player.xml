@@ -20,7 +20,7 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <!-- 左侧原生封面 -->
+    <!-- 左侧原生封面区域 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerAlbumCoverFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -33,20 +33,6 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
-
-    <!-- 【降维玻璃层】：拦截手势，同时零损耗穿透滑动 -->
-    <View
-        android:id="@+id/coverClickOverlay"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:elevation="2dp"
-        android:background="?selectableItemBackground"
-        app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
-        app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
-        app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
-        app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
     <!-- 右侧播放控制区 -->
     <androidx.fragment.app.FragmentContainerView

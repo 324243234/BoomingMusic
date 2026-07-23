@@ -156,7 +156,7 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-    <!-- 【核心修改：70% 宽度的原生音量条】：居中显示，完美短于进度条 -->
+<!-- 【极致瘦身的音量控件】：长度 70%，厚度 1dp 完美看齐进度条 -->
     <LinearLayout
         android:id="@+id/volumeContainer"
         android:layout_width="0dp"
@@ -176,7 +176,7 @@
             android:src="@drawable/ic_volume_down_24dp"
             app:tint="?android:attr/textColorSecondary" />
 
-        <!-- 彻底移除多余属性，让原生 Material 3 滑块接管 -->
+        <!-- 极致变瘦：高度 1dp，圆点极小化 3dp -->
         <com.google.android.material.slider.Slider
             android:id="@+id/volumeSlider"
             android:layout_width="0dp"
@@ -185,7 +185,10 @@
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
             app:tickVisible="false"
-            app:labelBehavior="gone" />
+            app:labelBehavior="gone"
+            app:haloRadius="0dp"
+            app:thumbRadius="3dp"
+            app:trackHeight="1dp" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"

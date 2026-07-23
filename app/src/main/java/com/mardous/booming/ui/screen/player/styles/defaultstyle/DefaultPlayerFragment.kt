@@ -4,9 +4,7 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.widget.ImageView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
@@ -28,7 +26,6 @@ import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
-import kotlin.math.abs
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -66,94 +63,30 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
         
-        setupGestureOverlay()
+        // 彻底清除了之前由于玻璃层导致的代码冗余，完全回归底层组件！
     }
 
-    private fun setupGestureOverlay() {
+    // =========================================================================================
+    // 【终极核心优化：接管原作者的封面点击逻辑】
+    // =========================================================================================
+    fun handleCoverClick() {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        
         if (isLandscape) {
-            val gestureDetector = android.view.GestureDetector(requireContext(), object : android.view.GestureDetector.SimpleOnGestureListener() {
-                // 双击切歌
-                override fun onDoubleTap(e: MotionEvent): Boolean {
-                    try {
-                        val overlayWidth = view?.findViewById<View>(R.id.playerAlbumCoverFragment)?.width ?: 0
-                        val audioManager = requireContext().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-                        val keyCode = if (overlayWidth > 0 && e.x > overlayWidth / 2) {
-                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT
-                        } else {
-                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
-                        }
-                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
-                        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
-                    } catch (ex: Exception) { }
-                    return true
-                }
-
-                // 单击显隐控制，覆盖原生逻辑
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                    val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
-                    val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
-                    val toolbar = view?.findViewById<View>(R.id.toolbar)
-                    
-                    val isLyricsVisible = rightLyrics?.isVisible == true
-                    
-                    rightLyrics?.isVisible = !isLyricsVisible
-                    rightControls?.isVisible = isLyricsVisible
-                    toolbar?.isVisible = isLyricsVisible
-                    return true
-                }
-            }).apply {
-                // 将长按权限完全让给底层的封面组件，不主动截胡
-                setIsLongpressEnabled(false) 
-            }
-
-            // 【完全零损耗滑动透传】：拒绝任何不必要的内存 GC 分配
-            var isDragging = false
-            var startX = 0f
-            var startY = 0f
-            var downTime = 0L
-            val touchSlop = ViewConfiguration.get(requireContext()).scaledTouchSlop
-
-            view?.findViewById<View>(R.id.coverClickOverlay)?.setOnTouchListener { _, event ->
-                gestureDetector.onTouchEvent(event)
-                
-                val coverFragment = view?.findViewById<View>(R.id.playerAlbumCoverFragment) ?: return@setOnTouchListener true
-                
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        isDragging = false
-                        startX = event.x
-                        startY = event.y
-                        downTime = System.currentTimeMillis()
-                        coverFragment.dispatchTouchEvent(event) // 直接透传
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (!isDragging && (abs(event.x - startX) > touchSlop || abs(event.y - startY) > touchSlop)) {
-                            isDragging = true 
-                        }
-                        coverFragment.dispatchTouchEvent(event) // 100%保留原生阻尼滑动！
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val touchDuration = System.currentTimeMillis() - downTime
-                        val isShortTap = touchDuration < ViewConfiguration.getLongPressTimeout()
-
-                        if (!isDragging && isShortTap) {
-                            // 【精确狙击】：只有确实是短促的纯点击时，才发放 CANCEL 刺杀下层的响应！
-                            val cancelEvent = MotionEvent.obtain(event)
-                            cancelEvent.action = MotionEvent.ACTION_CANCEL
-                            coverFragment.dispatchTouchEvent(cancelEvent)
-                            cancelEvent.recycle()
-                        } else {
-                            // 滑动放手，或者长按放手，完美放行！
-                            coverFragment.dispatchTouchEvent(event)
-                        }
-                    }
-                    else -> {
-                        coverFragment.dispatchTouchEvent(event)
-                    }
-                }
-                true
-            }
+            // 平板横屏逻辑：左侧封面绝对不隐藏！仅负责切换右侧控件与歌词的显示
+            val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
+            val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
+            val toolbar = view?.findViewById<View>(R.id.toolbar)
+            
+            val isLyricsVisible = rightLyrics?.isVisible == true
+            
+            // 再次单击即可实现反向切换
+            rightLyrics?.isVisible = !isLyricsVisible
+            rightControls?.isVisible = isLyricsVisible
+            toolbar?.isVisible = isLyricsVisible
+        } else {
+            // 竖屏或其他主题：保留原作者默认的在封面悬浮显示歌词的逻辑
+            onQuickActionEvent(NowPlayingAction.ShowLyrics)
         }
     }
 

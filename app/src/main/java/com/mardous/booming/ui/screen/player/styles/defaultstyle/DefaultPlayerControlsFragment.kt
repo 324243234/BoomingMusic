@@ -95,7 +95,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
-        // 彻底清空瞎造的自定义滑块代码，全权交由 Android 原生 Material Slider 接管
+        // 彻底清空所有自造滑块代码，保证极速稳定运行
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
 
@@ -222,20 +222,15 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 【核心优化：严格同步进度条逻辑】：
-        // 进度条使用的是 newEmphasisColor，这里将音量条的目标色完全统一。
-        // 同时保留了默认色的底层对比，确保在不改变颜色的情况下绝对不会引发 60fps 的重绘卡顿！
+        // 【终极瘦身防抖机制】：与进度条统一色彩！
         volumeSlider?.let { slider ->
             val targetColor = newEmphasisColor
             val inactiveColor = scheme.onSurfaceVariantColor
-
+            
             if (slider.trackActiveTintList?.defaultColor != targetColor) {
-                val activeList = android.content.res.ColorStateList.valueOf(targetColor)
-                val inactiveList = android.content.res.ColorStateList.valueOf(inactiveColor)
-                
-                slider.trackActiveTintList = activeList
-                slider.trackInactiveTintList = inactiveList
-                slider.thumbTintList = activeList
+                slider.trackActiveTintList = android.content.res.ColorStateList.valueOf(targetColor)
+                slider.trackInactiveTintList = android.content.res.ColorStateList.valueOf(inactiveColor)
+                slider.thumbTintList = android.content.res.ColorStateList.valueOf(targetColor)
             }
         }
 

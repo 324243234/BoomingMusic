@@ -111,8 +111,6 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         arguments: androidx.savedstate.SavedState?
     ) {
         if (isLyricsViewVisible && isShowLyricsOnCover) {
-            // If the user opens any of queue, sound settings or song details dialogs
-            // we must ensure that we don't keep the screen on unnecessarily.
             activity?.keepScreenOn(destination.navigatorName != "dialog" && playerViewModel.isPlaying)
         }
     }
@@ -125,12 +123,12 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
             viewPager.clipToPadding = false
             viewPager.setPadding(padding, 0, padding, 0)
             viewPager.pageMargin = 0
-            viewPager.offscreenPageLimit = 1 // Only adjacent pages are visible in carousel
+            viewPager.offscreenPageLimit = 1 
             viewPager.setPageTransformer(false, CarouselPagerTransformer(requireContext()))
         } else {
             val (transformer, reverse) = Preferences.getNowPlayingTransition(nps)
                 .transformerFactory(R.id.player_image)
-            viewPager.offscreenPageLimit = 2 // Parallax and other transitions need more pages
+            viewPager.offscreenPageLimit = 2 
             viewPager.setPageTransformer(reverse, transformer)
         }
     }
@@ -228,8 +226,28 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         _binding = null
     }
 
+    // =========================================================================================
+    // 【核心优化】：精准拦截单击手势，彻底避免封面被隐藏
+    // =========================================================================================
     fun toggleLyrics() {
         if (isAnimatingLyrics) return
+
+        // 智能特判：检测是否为 Default 主题的平板横屏模式
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (nps == NowPlayingScreen.Default && isLandscape) {
+            try {
+                // 安全调用父级 DefaultPlayerFragment 中我们预先写好的显隐方法
+                // 这样左侧封面就绝不会触发原版的动画隐藏逻辑，而是单纯控制右侧歌词！
+                val parent = parentFragment
+                val method = parent?.javaClass?.getMethod("handleCoverClick")
+                method?.invoke(parent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return
+        }
+
+        // 其他主题或竖屏模式下，完美保留原作者设计的动画和逻辑
         if (isShowLyricsOnCover) {
             hideLyrics(true)
         } else {
@@ -355,9 +373,6 @@ class AlbumCoverPagerAdapter(fm: FragmentManager, private val dataSet: List<Song
         return o
     }
 
-    /**
-     * Only the latest passed [ImageFragment.ColorReceiver] is guaranteed to receive a response
-     */
     fun receiveColor(paletteReceiver: ColorReceiver, @ColorInt position: Int) {
         val fragment = getFragment(position) as ImageFragment?
         if (fragment != null) {
