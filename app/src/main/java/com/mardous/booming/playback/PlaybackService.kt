@@ -1,5 +1,6 @@
 package com.mardous.booming.playback
 
+import android.graphics.Bitmap
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator

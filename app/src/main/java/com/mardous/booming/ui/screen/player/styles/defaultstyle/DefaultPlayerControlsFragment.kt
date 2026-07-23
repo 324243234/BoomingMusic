@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -50,9 +49,6 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
 
     private lateinit var audioManager: AudioManager
     private var volumeObserver: ContentObserver? = null
-
-    // 缓存手势滑块对象，实现零开销极速染色
-    private var customVolumeThumb: GradientDrawable? = null
 
     override val playPauseFab: FloatingActionButton
         get() = binding.playPauseButton
@@ -99,17 +95,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val volumeSlider = view?.findViewById<Slider>(R.id.volumeSlider) ?: return
 
-        // 【核心审美优化】：绘制一个被“上下切扁”的长条形滑块
-        val density = requireContext().resources.displayMetrics.density
-        customVolumeThumb = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 3f * density // 两侧微圆角
-            // 宽 14dp，高 6dp。高度远远小于宽度，呈现出极致扁平的视觉效果
-            setSize((14 * density).toInt(), (6 * density).toInt())
-            setColor(Color.WHITE)
-        }
-        volumeSlider.setCustomThumbDrawable(customVolumeThumb!!)
-
+        // 彻底清空瞎造的自定义滑块代码，全权交由 Android 原生 Material Slider 接管
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
 
@@ -236,18 +222,20 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor
         )
         
-        // 【终极防卡顿拦截机制】：直接提取底层的 defaultColor 做等值判断！
+        // 【核心优化：严格同步进度条逻辑】：
+        // 进度条使用的是 newEmphasisColor，这里将音量条的目标色完全统一。
+        // 同时保留了默认色的底层对比，确保在不改变颜色的情况下绝对不会引发 60fps 的重绘卡顿！
         volumeSlider?.let { slider ->
-            val targetColor = scheme.onSurfaceColor
+            val targetColor = newEmphasisColor
             val inactiveColor = scheme.onSurfaceVariantColor
 
-            // 为自定义的“扁平滑块”安全换色，0 性能开销
-            customVolumeThumb?.setColor(targetColor)
-            
-            // 只有当颜色真的变化时，才进行替换操作！彻底断绝重绘风暴！
             if (slider.trackActiveTintList?.defaultColor != targetColor) {
-                slider.trackActiveTintList = android.content.res.ColorStateList.valueOf(targetColor)
-                slider.trackInactiveTintList = android.content.res.ColorStateList.valueOf(inactiveColor)
+                val activeList = android.content.res.ColorStateList.valueOf(targetColor)
+                val inactiveList = android.content.res.ColorStateList.valueOf(inactiveColor)
+                
+                slider.trackActiveTintList = activeList
+                slider.trackInactiveTintList = inactiveList
+                slider.thumbTintList = activeList
             }
         }
 
