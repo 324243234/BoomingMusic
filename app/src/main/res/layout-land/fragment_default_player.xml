@@ -37,8 +37,8 @@
         
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline"
-		app:layout_constraintDimensionRatio="0.9:0.9"
-        android:layout_margin="0dp">
+		app:layout_constraintDimensionRatio="0.8:0.8"
+        android:layout_margin="1dp">
         
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
