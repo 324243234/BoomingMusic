@@ -187,9 +187,9 @@
             app:tickVisible="false"
             app:labelBehavior="gone"
             app:haloRadius="0dp"
-            app:thumbRadius="6dp"
+            app:customThumbDrawable="@drawable/custom_volume_thumb"
             app:trackHeight="3dp" />  
-			<!-- 轨道高度 -->
+			<!--  app:thumbRadius="6dp" -->
 
         <ImageView
             android:id="@+id/volumeUpIcon"

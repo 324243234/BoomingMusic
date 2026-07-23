@@ -941,7 +941,7 @@ class PlaybackService :
 
         if (player.currentMediaItemIndex == stopIndex) player.exoPlayer.pauseAtEndOfMediaItems = true
         persistentStorage.saveState()
-        updateWidgets(force = true)
+        updateWidgets(force = false)
     }
 
     // 【破除内存泄露的终极机制】：挂起函数，全程结构化并发，无 Handler 脱管！

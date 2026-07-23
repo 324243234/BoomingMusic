@@ -6,7 +6,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
-import android.widget.TextView // 补齐了 TextView 的导包
+import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -22,7 +22,7 @@ import com.mardous.booming.core.model.player.surfaceTintTarget
 import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
-import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle // 补齐了协程生命周期的导包
+import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
@@ -71,7 +71,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
                 if (song != null && leftInfoText != null) {
-                    // 使用父类原生的高级解析方法获取歌手名字（自动处理未知歌手和偏好设置）
                     leftInfoText.text = "${song.title} - ${getSongArtist(song)}"
                     setMarquee(leftInfoText, marquee = true)
                 }
@@ -79,23 +78,27 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
+    // =========================================================================================
+    // 【最干净的手势接管】：无额外拦截器，直接覆盖原作者的底层分发逻辑
+    // =========================================================================================
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
+        // 仅在横屏时干预
         if (isLandscape) {
             when (gestureType) {
                 is GestureType.Tap -> {
-                    handleCoverClick()
+                    handleCoverClick() // 单击显隐歌词
                     return true
                 }
                 is GestureType.DoubleTap -> {
                     when (gestureType.type) {
                         GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
-                            playerViewModel.seekToPrevious()
+                            playerViewModel.seekToPrevious() // 左侧双击切上一首
                             return true
                         }
                         GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
-                            playerViewModel.seekToNext()
+                            playerViewModel.seekToNext() // 右侧双击切下一首
                             return true
                         }
                         else -> {}
@@ -104,6 +107,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 else -> {}
             }
         }
+        // 竖屏或其它手势，原封不动地返回给原作者基类处理
         return super.gestureDetected(gestureType)
     }
 
