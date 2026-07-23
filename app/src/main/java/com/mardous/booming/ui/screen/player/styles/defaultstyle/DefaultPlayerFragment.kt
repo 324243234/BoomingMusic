@@ -62,32 +62,21 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             WindowInsetsCompat.CONSUMED
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
-        
-        // 彻底清除了之前由于玻璃层导致的代码冗余，完全回归底层组件！
     }
 
     // =========================================================================================
-    // 【终极核心优化：接管原作者的封面点击逻辑】
+    // 【干净利落的点击接管】：底层传来时已确保是横屏平板状态，直接执行显隐，0 性能浪费！
     // =========================================================================================
     fun handleCoverClick() {
-        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
+        val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
+        val toolbar = view?.findViewById<View>(R.id.toolbar)
         
-        if (isLandscape) {
-            // 平板横屏逻辑：左侧封面绝对不隐藏！仅负责切换右侧控件与歌词的显示
-            val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
-            val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
-            val toolbar = view?.findViewById<View>(R.id.toolbar)
-            
-            val isLyricsVisible = rightLyrics?.isVisible == true
-            
-            // 再次单击即可实现反向切换
-            rightLyrics?.isVisible = !isLyricsVisible
-            rightControls?.isVisible = isLyricsVisible
-            toolbar?.isVisible = isLyricsVisible
-        } else {
-            // 竖屏或其他主题：保留原作者默认的在封面悬浮显示歌词的逻辑
-            onQuickActionEvent(NowPlayingAction.ShowLyrics)
-        }
+        val isLyricsVisible = rightLyrics?.isVisible == true
+        
+        rightLyrics?.isVisible = !isLyricsVisible
+        rightControls?.isVisible = isLyricsVisible
+        toolbar?.isVisible = isLyricsVisible
     }
 
     private fun setupToolbar() {
