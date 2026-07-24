@@ -203,9 +203,16 @@ fun QueueScreen(
             .wrapContentHeight()
             .nestedScroll(rememberNestedScrollInteropConnection())
     ) {
-        BottomSheetDefaults.DragHandle(
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        )
+        // 获取当前屏幕方向（这段在下方也有，你可以提到上面来或者直接用下面已有的）
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+        // 核心修改：只有在【非横屏】时才显示顶部的 DragHandle 手柄
+        if (!isLandscape) {
+            BottomSheetDefaults.DragHandle(
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+        }
 
     // 获取当前屏幕方向
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
