@@ -6,13 +6,11 @@ import android.animation.PropertyValuesHolder
 import android.animation.TimeInterpolator
 import android.content.Context
 import android.content.SharedPreferences
-import android.database.ContentObserver
+
 import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
+
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
@@ -48,7 +46,17 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     private val binding get() = _binding!!
 
     private lateinit var audioManager: AudioManager
-    private var volumeObserver: ContentObserver? = null
+    private val volumeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val slider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+                if (slider != null && slider.progress != newVolume) {
+                    slider.progress = newVolume
+                }
+            }
+        }
+    }
 
     override val playPauseFab: FloatingActionButton
         get() = binding.playPauseButton
@@ -111,17 +119,10 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                super.onChange(selfChange)
-                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                if (volumeSlider.progress != newVolume) {
-                    volumeSlider.progress = newVolume
-                }
-            }
-        }
-        requireContext().contentResolver.registerContentObserver(
-            Settings.System.CONTENT_URI, true, volumeObserver!!
+        
+        requireContext().registerReceiver(
+            volumeReceiver, 
+            android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION")
         )
     }
 
@@ -189,7 +190,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     }
 
     override fun onDestroyView() {
-        volumeObserver?.let { requireContext().contentResolver.unregisterContentObserver(it) }
+	    runCatching { requireContext().unregisterReceiver(volumeReceiver) }
         super.onDestroyView()
         _binding = null
     }
@@ -218,8 +219,11 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         
         volumeSlider?.let { slider ->
             val activeList = android.content.res.ColorStateList.valueOf(newEmphasisColor)
-            slider.progressTintList = activeList
-            slider.thumbTintList = activeList
+            // 🛡️ 增加拦截护盾：如果颜色没变，绝对不允许重复赋值！
+            if (slider.progressTintList?.defaultColor != newEmphasisColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
         }
 
         return listOfNotNull(

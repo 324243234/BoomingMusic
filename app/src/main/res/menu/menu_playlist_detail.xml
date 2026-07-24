@@ -5,6 +5,43 @@
 		android:title="@string/search_label"
 		android:icon="@drawable/ic_search_24dp"
 		app:showAsAction="ifRoom"/>
+		
+	<item
+        android:id="@+id/action_sort_order"
+        android:title="@string/action_sort_order"
+        app:showAsAction="never">
+        <menu>
+            <!-- 歌名 -->
+            <group android:id="@+id/group_sort_title">
+                <item android:id="@+id/action_sort_by_title_asc" android:title="按歌名 (正序 A-Z)" />
+                <item android:id="@+id/action_sort_by_title_desc" android:title="按歌名 (倒序 Z-A)" />
+            </group>
+            
+            <!-- 歌手 -->
+            <group android:id="@+id/group_sort_artist">
+                <item android:id="@+id/action_sort_by_artist_asc" android:title="按歌手 (正序)" />
+                <item android:id="@+id/action_sort_by_artist_desc" android:title="按歌手 (倒序)" />
+            </group>
+
+            <!-- 专辑 -->
+            <group android:id="@+id/group_sort_album">
+                <item android:id="@+id/action_sort_by_album_asc" android:title="按专辑 (正序)" />
+                <item android:id="@+id/action_sort_by_album_desc" android:title="按专辑 (倒序)" />
+            </group>
+
+            <!-- 时长 -->
+            <group android:id="@+id/group_sort_duration">
+                <item android:id="@+id/action_sort_by_duration_asc" android:title="按时长 (从短到长)" />
+                <item android:id="@+id/action_sort_by_duration_desc" android:title="按时长 (从长到短)" />
+            </group>
+
+            <!-- 添加时间 -->
+            <group android:id="@+id/group_sort_date">
+                <item android:id="@+id/action_sort_by_date_asc" android:title="按添加时间 (最早)" />
+                <item android:id="@+id/action_sort_by_date_desc" android:title="按添加时间 (最新)" />
+            </group>
+        </menu>
+    </item>	
 	<item
 		android:id="@+id/action_lock"
 		android:title="@string/action_toggle_playlist_lock"

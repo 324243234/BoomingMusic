@@ -214,6 +214,58 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+	    // 1. 获取当前适配器中的歌曲列表
+        val currentSongs = playlistSongAdapter?.dataSet
+        
+        // 2. 拦截排序菜单，进行稳妥的内存重排
+        if (!currentSongs.isNullOrEmpty()) {
+            val sortedList = when (menuItem.itemId) {
+                // 歌名
+                R.id.action_sort_by_title_asc -> currentSongs.sortedBy { it.title }
+                R.id.action_sort_by_title_desc -> currentSongs.sortedByDescending { it.title }
+                
+                // 歌手
+                R.id.action_sort_by_artist_asc -> currentSongs.sortedBy { it.artist }
+                R.id.action_sort_by_artist_desc -> currentSongs.sortedByDescending { it.artist }
+                
+                // 专辑
+                R.id.action_sort_by_album_asc -> currentSongs.sortedBy { it.album }
+                R.id.action_sort_by_album_desc -> currentSongs.sortedByDescending { it.album }
+                
+                // 时长
+                R.id.action_sort_by_duration_asc -> currentSongs.sortedBy { it.duration }
+                R.id.action_sort_by_duration_desc -> currentSongs.sortedByDescending { it.duration }
+                
+                // 添加时间
+                R.id.action_sort_by_date_asc -> currentSongs.sortedBy { it.dateAdded }
+                R.id.action_sort_by_date_desc -> currentSongs.sortedByDescending { it.dateAdded }
+                
+                else -> null
+            }
+
+            // 3. 核心逻辑：防御性中断 -> UI 更新 -> 写入数据库
+            if (sortedList != null) {
+                // 防御性操作：强制取消所有可能正在进行的拖拽行为，防止数据冲突
+                recyclerViewDragDropManager?.cancelDrag()
+                
+                // 更新 UI：替换数据源并刷新
+                playlistSongAdapter?.dataSet = sortedList
+                binding.recyclerView.adapter?.notifyDataSetChanged()
+                
+                // UX 优化：列表自动滚动回顶部，让用户立刻看到排序结果
+                binding.recyclerView.scrollToPosition(0)
+                
+                // 数据库持久化：复用原作者的写库通道[cite: 1]
+                playlistSongAdapter?.saveSongs(playlist.playlistEntity)
+                
+                // UX 优化：弹出提示反馈
+                showToast("排序已保存")
+                
+                return true
+            }
+        }
+
+        // 4. 下面保持原项目其他的常规菜单项逻辑不变[cite: 1]
         return when (menuItem.itemId) {
             android.R.id.home -> {
                 findNavController().navigateUp()
