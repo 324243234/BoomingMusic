@@ -42,7 +42,7 @@
         android:singleLine="true"
         android:ellipsize="marquee"
         android:gravity="center"
-        android:textSize="12sp"
+        android:textSize="10sp"
         android:textColor="?android:attr/textColorPrimary"
         android:textStyle="bold"
         app:layout_constraintTop_toTopOf="parent"  
