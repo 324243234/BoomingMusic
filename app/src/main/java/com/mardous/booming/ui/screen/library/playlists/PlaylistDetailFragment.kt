@@ -213,8 +213,10 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-	    // 1. 获取当前适配器中的歌曲列表
+        
+        // 1. 获取当前适配器中的歌曲列表
         val currentSongs = playlistSongAdapter?.dataSet
         
         // 2. 拦截排序菜单，进行稳妥的内存重排
@@ -224,13 +226,13 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 R.id.action_sort_by_title_asc -> currentSongs.sortedBy { it.title }
                 R.id.action_sort_by_title_desc -> currentSongs.sortedByDescending { it.title }
                 
-                // 歌手
-                R.id.action_sort_by_artist_asc -> currentSongs.sortedBy { it.artist }
-                R.id.action_sort_by_artist_desc -> currentSongs.sortedByDescending { it.artist }
+                // 歌手（修正为 artistName）
+                R.id.action_sort_by_artist_asc -> currentSongs.sortedBy { it.artistName }
+                R.id.action_sort_by_artist_desc -> currentSongs.sortedByDescending { it.artistName }
                 
-                // 专辑
-                R.id.action_sort_by_album_asc -> currentSongs.sortedBy { it.album }
-                R.id.action_sort_by_album_desc -> currentSongs.sortedByDescending { it.album }
+                // 专辑（修正为 albumName）
+                R.id.action_sort_by_album_asc -> currentSongs.sortedBy { it.albumName }
+                R.id.action_sort_by_album_desc -> currentSongs.sortedByDescending { it.albumName }
                 
                 // 时长
                 R.id.action_sort_by_duration_asc -> currentSongs.sortedBy { it.duration }
@@ -258,8 +260,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 // 数据库持久化：复用原作者的写库通道[cite: 1]
                 playlistSongAdapter?.saveSongs(playlist.playlistEntity)
                 
-                // UX 优化：弹出提示反馈
-                showToast("排序已保存")
+                 
                 
                 return true
             }
@@ -271,7 +272,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 findNavController().navigateUp()
                 true
             }
-
             R.id.action_search -> {
                 findNavController().navigate(
                     R.id.nav_search,
@@ -279,7 +279,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 )
                 true
             }
-
             R.id.action_lock -> {
                 val lockedPlaylists = !Preferences.lockedPlaylists
                 Preferences.lockedPlaylists = lockedPlaylists
@@ -293,7 +292,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 playlistSongAdapter?.setLockDrag(lockedPlaylists)
                 true
             }
-
             else -> playlist.onPlaylistMenu(this, menuItem)
         }
     }
