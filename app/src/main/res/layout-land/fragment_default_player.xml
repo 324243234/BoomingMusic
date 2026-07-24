@@ -38,6 +38,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline"
         app:layout_constraintDimensionRatio="1:1" 
+		app:layout_constraintVertical_bias="1.0"
                    
         android:layout_margin="0dp">
         
