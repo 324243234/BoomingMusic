@@ -40,6 +40,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 	// 在 DefaultPlayerFragment 中添加成员变量
     private var lastProcessedSongId: Long = -1L
 
+	private var isDraggingInlineSlider = false // 🔑 防冲突：记录用户是否正在拖拽迷你进度条
+	
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
     override val playerControlsFragment: AbsPlayerControlsFragment
@@ -75,12 +77,15 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
                 if (song != null && leftInfoText != null) {
 				// 直接获取纯粹的艺术家名字，绝不夹杂专辑名
-                    val artist = if (Preferences.preferAlbumArtistName) {
-                        song.albumArtistName().displayArtistName()
-                    } else {
-                        song.displayArtistName()
-                    }
-                    leftInfoText.text = "${song.title} - $artist"
+                    //val artist = if (Preferences.preferAlbumArtistName) {
+                       // song.albumArtistName().displayArtistName()
+                   // } else {
+                    //    song.displayArtistName()
+                    //}
+                    //leftInfoText.text = "${song.title} - $artist"
+					
+					// 🔑 优化1：只显示歌曲名，彻底丢弃歌手信息
+                    leftInfoText.text = song.title
                     setMarquee(leftInfoText, marquee = true)
 					// 2. 【核心优化拦截】：如果是同一首歌（仅车机后台替换了 MediaItem），严禁重复触发 Palette 取色与变色动画！
                    if (song.id != lastProcessedSongId) {
@@ -90,6 +95,41 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
         }
+		// 🔑 优化2：为迷你进度条设置拖拽快进功能
+        val inlineProgressBar = view.findViewById<SeekBar>(R.id.inlineProgressSlider)
+        inlineProgressBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                isDraggingInlineSlider = true
+                // 开启触摸隔离护盾：防止拖拽进度条时，触发了平板的外层左右滑动切歌
+                seekBar?.parent?.requestDisallowInterceptTouchEvent(true)
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                isDraggingInlineSlider = false
+                seekBar?.parent?.requestDisallowInterceptTouchEvent(false)
+                seekBar?.progress?.let { progress ->
+                    // 动态自适应跳转：兼容 Int 和 Long 两种可能的底层源码类型，绝不报错
+                    runCatching { playerViewModel.seekTo(progress) }
+                        .onFailure { runCatching { playerViewModel.seekTo(progress.toLong()) } }
+                }
+            }
+        })
+		// 🔑 优化3：“影子同步”机制 —— 最稳定地获取进度，绝不引发编译错误
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            while (kotlinx.coroutines.isActive) {
+                // 直接去子 Fragment 里抓取那个已经完美运行的主进度条
+                val mainSlider = view.findViewById<SeekBar>(R.id.progressSlider)
+                if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {
+                    // 实时镜像它的最大值和当前进度
+                    inlineProgressBar.max = mainSlider.max
+                    if (inlineProgressBar.progress != mainSlider.progress) {
+                        inlineProgressBar.progress = mainSlider.progress
+                    }
+                }
+                kotlinx.coroutines.delay(500) // 每 0.5 秒同步一次，极致省电不卡顿
+            }}
 	}
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
@@ -148,11 +188,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         )
         
         // ！！！完美同步右上角的动态智能取色逻辑 (scheme.onSurfaceColor)！！！
-        val leftInfoText = view?.findViewById<TextView>(R.id.leftCoverInfoText)
-        if (leftInfoText != null) {
-            val oldTextColor = leftInfoText.currentTextColor
-            targets.add(leftInfoText.tintTarget(oldTextColor, scheme.onSurfaceColor))
-        }
+        //val leftInfoText = view?.findViewById<TextView>(R.id.leftCoverInfoText)
+        //if (leftInfoText != null) {
+        //    val oldTextColor = leftInfoText.currentTextColor
+        //    targets.add(leftInfoText.tintTarget(oldTextColor, scheme.onSurfaceColor))
+        //}
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets

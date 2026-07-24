@@ -225,6 +225,18 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
                 slider.thumbTintList = activeList
             }
         }
+		// ✅ 使用这个方案：蹭主进度条的 newEmphasisColor 色值，绝对零开销！
+        val inlineSlider = view?.rootView?.findViewById<SeekBar>(R.id.inlineProgressSlider)
+        inlineSlider?.let { slider ->
+            val activeList = android.content.res.ColorStateList.valueOf(newEmphasisColor)
+            if (slider.progressTintList?.defaultColor != newEmphasisColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
+        }
+		// ✅ 3. 左侧歌名文字：抓取左侧文本，准备镜像
+        val leftInfoText = view?.rootView?.findViewById<TextView>(R.id.leftCoverInfoText)
+        val oldLeftTextColor = leftInfoText?.currentTextColor ?: oldPrimaryTextColor
 
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
@@ -237,6 +249,8 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songInfo?.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.queueInfo.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+			// 🔑 终极镜像：左侧歌名完美复刻右侧歌名的变色逻辑 (scheme.onSurfaceColor)
+            leftInfoText?.tintTarget(oldLeftTextColor, scheme.onSurfaceColor),
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),

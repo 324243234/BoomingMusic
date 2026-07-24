@@ -50,26 +50,50 @@
     </FrameLayout>
 
     <!-- 精致的歌曲信息：字体调小(13sp)，牢牢固定在屏幕左下方 -->
+    <!-- 将原先 TextView 的外部约束、边距全部转移到这个 LinearLayout 容器上 -->
+<LinearLayout
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:layout_marginTop="2dp"
+    android:layout_marginBottom="12dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    app:layout_constraintTop_toBottomOf="@+id/coverContainer"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toStartOf="@id/center_guideline">
+
+    <!-- 1. 左侧：仅保留歌曲名 -->
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/leftCoverInfoText"
-        android:layout_width="0dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-		app:layout_constraintTop_toBottomOf="@+id/coverContainer"
-	 
-		android:layout_marginTop="2dp"
-        android:layout_marginBottom="12dp"
-        android:gravity="center"
         android:singleLine="true"
-        android:ellipsize="marquee"
-        android:textSize="16sp" 
+        android:ellipsize="end"
+        android:textSize="16sp"
         android:textColor="?android:attr/textColorPrimary"
         android:textStyle="bold"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/center_guideline"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        tools:text="Song Title - Artist Name" />
+        tools:text="Song Title" />
+
+    <!-- 2. 右侧：超纤细的迷你进度条 -->
+    <androidx.appcompat.widget.AppCompatSeekBar
+        android:id="@+id/inlineProgressSlider"
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:background="@null"
+        android:stateListAnimator="@null"
+        android:focusable="false"
+        android:splitTrack="false"
+        android:thumb="@null"
+        android:minHeight="4dp"
+        android:maxHeight="4dp"
+        android:progressTint="?android:attr/textColorPrimary" />
+
+</LinearLayout>
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
