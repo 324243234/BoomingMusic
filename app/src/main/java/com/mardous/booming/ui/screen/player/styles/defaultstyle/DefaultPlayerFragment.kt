@@ -14,7 +14,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.updatePadding
-import androidx.core.view.isInvisible // 🔑 导入 isInvisible 防跳动
 import androidx.core.view.isVisible
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -64,6 +63,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         _binding = FragmentDefaultPlayerBinding.bind(view)
         setupToolbar()
         inflateMenuInView(playerToolbar)
+        
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
             v.updatePadding(top = systemBars.top, bottom = systemBars.bottom)
@@ -73,6 +73,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
+        // 1. 歌曲信息更新与取色防抖拦截
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
@@ -87,34 +88,56 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         }
 
+        // 2. 左侧迷你进度条拖拽控制（极致流畅与防回弹优化）
         val inlineProgressBar = view.findViewById<SeekBar>(R.id.inlineProgressSlider)
+        
+        // 🔑 核心优化 A：消除起手“粘滞感” (突破 Touch Slop)
+        // 拦截 ACTION_DOWN，在手指触碰滑块的绝对瞬间，强制向所有父容器下达“禁止拦截”指令。
+        // 彻底绕过手势判定的犹豫期，实现即触即滑，0延迟跟手！
+        inlineProgressBar?.setOnTouchListener { v, event ->
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                v.parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            // 必须返回 false，不消费事件，让 SeekBar 继续处理自己的标准滑动逻辑
+            false 
+        }
+
         inlineProgressBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // 🛡️ 性能底线：保持此处为空！
+                // 绝不在高频拖拽中实时调用 seekTo 发送指令，完美保护 CPU 性能，杜绝发热和耗电。
+            }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
                 isDraggingInlineSlider = true
-                seekBar?.parent?.requestDisallowInterceptTouchEvent(true)
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                isDraggingInlineSlider = false
-                seekBar?.parent?.requestDisallowInterceptTouchEvent(false)
                 seekBar?.progress?.let { progress ->
                     playerViewModel.seekTo(progress.toLong())
                 }
+                
+                // 🔑 核心优化 B：消除松手后的“回弹拉扯感”
+                // 底层音频 seekTo 存在合理的微秒级异步延迟。
+                // 我们在松手后，给“拖拽锁定”状态强行续命 500 毫秒。
+                // 保护滑块在此期间绝不会被“影子同步协程”拉回老位置，平滑过渡！
+                seekBar?.postDelayed({
+                    isDraggingInlineSlider = false
+                }, 500)
             }
         })
 
-        // 🔑 终极性能优化版：影子同步护盾
+        // 3. 影子同步机制（极致精简版）
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             while (isActive) {
                 val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
                 
-                // 🛡️ 性能防线：只有当进度条真正可见 (View.VISIBLE) 时，才做计算与渲染！完全掐断后台耗电。
-                if (inlineProgressBar != null && inlineProgressBar.visibility == View.VISIBLE && mainSlider != null && !isDraggingInlineSlider) {
-                    // 💡 Material Slider 的最大值和当前值是 Float 类型，需转为 Int 赋值给原生成品 SeekBar
+                // 🛡️ 终极性能优化：左侧进度条常驻，只需拦截空指针和用户拖拽状态。
+                // 彻底省去冗余的 View 状态判定，降低 CPU 开销。
+                if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {
                     inlineProgressBar.max = mainSlider.valueTo.toInt()
                     val currentProgress = mainSlider.value.toInt()
+                    
                     if (inlineProgressBar.progress != currentProgress) {
                         inlineProgressBar.progress = currentProgress
                     }
@@ -156,21 +179,15 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
         val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
         val toolbar = view?.findViewById<View>(R.id.toolbar)
-        val inlineProgressBar = view?.findViewById<View>(R.id.inlineProgressSlider)
         
         val isLyricsCurrentlyVisible = rightLyrics?.isVisible == true
-        
-        // 判定即将显示的是什么：
         val willShowLyrics = !isLyricsCurrentlyVisible
         
+        // 🔑 仅翻转右侧组件。
+        // 左侧组件彻底解耦，静默常驻，杜绝 ConstraintLayout 全局重绘引发的卡顿。
         rightLyrics?.isVisible = willShowLyrics
         rightControls?.isVisible = !willShowLyrics
         toolbar?.isVisible = !willShowLyrics
-        
-        // 🔑 防抖动逻辑交互：
-        // 按你的需求：当点击封面显示右边歌词时，左侧也显示进度条；隐藏右侧歌词时，左侧也隐藏。
-        // 我们用 isInvisible 替代 isVisible=false，这样它“隐身”时依然占着空间，封面就不会来回跳动！
-        inlineProgressBar?.isInvisible = !willShowLyrics
     }
 
     private fun setupToolbar() {
