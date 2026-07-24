@@ -1,11 +1,14 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
+
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
+import android.widget.SeekBar
+import kotlinx.coroutines.isActive
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
