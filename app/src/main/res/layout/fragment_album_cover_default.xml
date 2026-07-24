@@ -9,7 +9,7 @@
         android:id="@+id/player_image"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_margin="16dp"
+        android:layout_margin="@dimen/player_cover_margin"
         android:scaleType="centerCrop"
         app:shapeAppearanceOverlay="?shapeAppearanceCornerExtraLarge"
         app:layout_constraintDimensionRatio="1:1"

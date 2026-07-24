@@ -45,4 +45,6 @@
     <!-- Glance App Widget -->
     <dimen name="glance_widget_background_radius">16dp</dimen>
     <dimen name="glance_widget_inner_radius">8dp</dimen>
+	<!-- 🔑 新增：播放器封面默认（竖屏）外边距 -->
+    <dimen name="player_cover_margin">16dp</dimen>
 </resources>
