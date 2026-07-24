@@ -114,8 +114,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 seekBar?.parent?.requestDisallowInterceptTouchEvent(false)
                 seekBar?.progress?.let { progress ->
                     // 动态自适应跳转：兼容 Int 和 Long 两种可能的底层源码类型，绝不报错
-                    runCatching { playerViewModel.seekTo(progress) }
-                        .onFailure { runCatching { playerViewModel.seekTo(progress.toLong()) } }
+                    //runCatching { playerViewModel.seekTo(progress) }
+                     //   .onFailure { runCatching { playerViewModel.seekTo(progress.toLong()) } }
+					 playerViewModel.seekTo(progress.toLong())
                 }
             }
         })
