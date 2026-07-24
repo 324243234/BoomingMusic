@@ -213,7 +213,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    @SuppressLint("NotifyDataSetChanged")
+     
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
         
         // 1. 获取当前适配器中的歌曲列表
