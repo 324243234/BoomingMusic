@@ -28,18 +28,39 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.45" />
 
-    <!-- 将封面关进 FrameLayout 笼子里，它就不会向下疯长撑爆屏幕 -->
+    <!-- ================= 左侧区域重构：顶歌名 + 中封面 + 底进度 ================= -->
+
+    <!-- 1. 顶部：歌名 (居中对齐，顶到系统状态栏下方) -->
+	<!-- android:layout_marginTop="24dp🎛️ 调试数值A：距离屏幕顶部的极限距离。如果想更靠上可以改成 8dp 或 12dp -->
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/leftCoverInfoText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="0dp" 
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:gravity="center"
+        android:textSize="18sp"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textStyle="bold"
+        app:layout_constraintTop_toTopOf="parent"  
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/center_guideline" />
+
+    <!-- 2. 中间：封面容器 (被顶部的歌名和底部的进度条完美夹在中间) -->
     <FrameLayout
         android:id="@+id/coverContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/leftInfoContainer"
-        app:layout_constraintEnd_toStartOf="@id/center_guideline"
-        app:layout_constraintDimensionRatio="1:1" 
-		app:layout_constraintStart_toStartOf="parent"
-                   
-        android:layout_margin="2dp">
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="12dp"
+        app:layout_constraintDimensionRatio="1:1"  
+        app:layout_constraintTop_toBottomOf="@+id/leftCoverInfoText"  
+        app:layout_constraintBottom_toTopOf="@+id/inlineProgressSlider"  
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/center_guideline">
         
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
@@ -49,47 +70,17 @@
             tools:layout="@layout/fragment_album_cover_default"/>
     </FrameLayout>
 
-    <!-- 精致的歌曲信息：字体调小(13sp)，牢牢固定在屏幕左下方 -->
-    <!-- 🔑 升级为 ConstraintLayout 容器，完美控制子控件的边界碰撞 -->
-<androidx.constraintlayout.widget.ConstraintLayout
-    android:id="@+id/leftInfoContainer"
-    android:layout_width="0dp"
-    android:layout_height="wrap_content"
-    android:layout_marginTop="2dp"
-    android:layout_marginBottom="12dp"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp"
-    app:layout_constraintTop_toBottomOf="@+id/coverContainer"
-    app:layout_constraintBottom_toBottomOf="parent"
-    app:layout_constraintStart_toStartOf="parent"
-    app:layout_constraintEnd_toStartOf="@id/center_guideline">
-
-    <!-- 1. 左侧：动态自适应歌名 -->
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/leftCoverInfoText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:singleLine="true"
-        android:ellipsize="end"
-        android:textSize="16sp"
-        android:textColor="?android:attr/textColorPrimary"
-        android:textStyle="bold"
-        app:layout_constrainedWidth="true"          
-	 
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/inlineProgressSlider"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintHorizontal_bias="0.0"
-        app:layout_constraintHorizontal_chainStyle="spread_inside" />
-         
-
-    <!-- 2. 右侧：带有保底宽度的迷你进度条 -->
+    <!-- 3. 底部：迷你进度条 (独占一行，极致贴底) -->
+	<!--android:layout_marginBottom="24dp" 🎛️ 调试数值C：距离屏幕底部的极限摆放高度。如果要贴底可以改成 8dp -->
+	<!-- android:layout_height="24dp"🎛️ 调试数值B：进度条高度（触控区）。建议保留 24dp 保证好拉动 -->
+	<!-- constraintBottom_toBottomOf="parent"🔑 牢牢吸附在屏幕最底端 -->
     <androidx.appcompat.widget.AppCompatSeekBar
         android:id="@+id/inlineProgressSlider"
-        android:layout_width="0dp"                  
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_width="0dp"
+        android:layout_height="24dp" 
+        android:layout_marginBottom="24dp" 
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
         android:background="@null"
         android:stateListAnimator="@null"
         android:focusable="false"
@@ -98,15 +89,11 @@
         android:minHeight="4dp"
         android:maxHeight="4dp"
         android:progressTint="?android:attr/textColorPrimary"
-		
-        app:layout_constraintWidth_min="150dp"     
-		 
-        app:layout_constraintStart_toEndOf="@+id/leftCoverInfoText"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
+        app:layout_constraintBottom_toBottomOf="parent" 
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/center_guideline" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- ================= 右侧区域 ================= -->
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"

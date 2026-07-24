@@ -1,6 +1,5 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
-
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Menu
@@ -15,6 +14,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.updatePadding
+import androidx.core.view.isInvisible // 🔑 导入 isInvisible 防跳动
 import androidx.core.view.isVisible
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -26,11 +26,10 @@ import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
-import com.mardous.booming.extensions.media.albumArtistName
-import com.mardous.booming.extensions.media.displayArtistName
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
@@ -40,11 +39,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     private var _binding: FragmentDefaultPlayerBinding? = null
     private val binding get() = _binding!!
-	// 在 DefaultPlayerFragment 中添加成员变量
-    private var lastProcessedSongId: Long = -1L
 
-	private var isDraggingInlineSlider = false // 🔑 防冲突：记录用户是否正在拖拽迷你进度条
-	
+    private var lastProcessedSongId: Long = -1L
+    private var isDraggingInlineSlider = false
+    
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
     override val playerControlsFragment: AbsPlayerControlsFragment
@@ -79,33 +77,22 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             playerViewModel.currentSongFlow.collect { song ->
                 val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
                 if (song != null && leftInfoText != null) {
-				// 直接获取纯粹的艺术家名字，绝不夹杂专辑名
-                    //val artist = if (Preferences.preferAlbumArtistName) {
-                       // song.albumArtistName().displayArtistName()
-                   // } else {
-                    //    song.displayArtistName()
-                    //}
-                    //leftInfoText.text = "${song.title} - $artist"
-					
-					// 🔑 优化1：只显示歌曲名，彻底丢弃歌手信息
                     leftInfoText.text = song.title
                     setMarquee(leftInfoText, marquee = true)
-					// 2. 【核心优化拦截】：如果是同一首歌（仅车机后台替换了 MediaItem），严禁重复触发 Palette 取色与变色动画！
-                   if (song.id != lastProcessedSongId) {
-                   lastProcessedSongId = song.id
-                   // 在这里才触发 Palette 取色和背景/文字颜色渐变动画
-                   }
+
+                    if (song.id != lastProcessedSongId) {
+                        lastProcessedSongId = song.id
+                    }
                 }
             }
         }
-		// 🔑 优化2：为迷你进度条设置拖拽快进功能
+
         val inlineProgressBar = view.findViewById<SeekBar>(R.id.inlineProgressSlider)
         inlineProgressBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
                 isDraggingInlineSlider = true
-                // 开启触摸隔离护盾：防止拖拽进度条时，触发了平板的外层左右滑动切歌
                 seekBar?.parent?.requestDisallowInterceptTouchEvent(true)
             }
 
@@ -113,28 +100,27 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 isDraggingInlineSlider = false
                 seekBar?.parent?.requestDisallowInterceptTouchEvent(false)
                 seekBar?.progress?.let { progress ->
-                    // 动态自适应跳转：兼容 Int 和 Long 两种可能的底层源码类型，绝不报错
-                    //runCatching { playerViewModel.seekTo(progress) }
-                     //   .onFailure { runCatching { playerViewModel.seekTo(progress.toLong()) } }
-					 playerViewModel.seekTo(progress.toLong())
+                    playerViewModel.seekTo(progress.toLong())
                 }
             }
         })
-		// 🔑 优化3：“影子同步”机制 —— 最稳定地获取进度，绝不引发编译错误
+
+        // 🔑 终极性能优化版：影子同步护盾
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             while (isActive) {
-                // 直接去子 Fragment 里抓取那个已经完美运行的主进度条
-                val mainSlider = view.findViewById<SeekBar>(R.id.progressSlider)
-                if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {
-                    // 实时镜像它的最大值和当前进度
-                    inlineProgressBar.max = mainSlider.max
+                val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+                
+                // 🛡️ 性能防线：只有当进度条真正可见 (View.VISIBLE) 时，才做计算与渲染！完全掐断后台耗电。
+                if (inlineProgressBar != null && inlineProgressBar.visibility == View.VISIBLE && mainSlider != null && !isDraggingInlineSlider) {
+                    inlineProgressBar.max = mainSlider.max.toInt()
                     if (inlineProgressBar.progress != mainSlider.progress) {
-                        inlineProgressBar.progress = mainSlider.progress
+                        inlineProgressBar.progress = mainSlider.progress.toInt()
                     }
                 }
-                kotlinx.coroutines.delay(500) // 每 0.5 秒同步一次，极致省电不卡顿
-            }}
-	}
+                kotlinx.coroutines.delay(500)
+            }
+        }
+    }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -168,12 +154,21 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
         val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
         val toolbar = view?.findViewById<View>(R.id.toolbar)
+        val inlineProgressBar = view?.findViewById<View>(R.id.inlineProgressSlider)
         
-        val isLyricsVisible = rightLyrics?.isVisible == true
+        val isLyricsCurrentlyVisible = rightLyrics?.isVisible == true
         
-        rightLyrics?.isVisible = !isLyricsVisible
-        rightControls?.isVisible = isLyricsVisible
-        toolbar?.isVisible = isLyricsVisible
+        // 判定即将显示的是什么：
+        val willShowLyrics = !isLyricsCurrentlyVisible
+        
+        rightLyrics?.isVisible = willShowLyrics
+        rightControls?.isVisible = !willShowLyrics
+        toolbar?.isVisible = !willShowLyrics
+        
+        // 🔑 防抖动逻辑交互：
+        // 按你的需求：当点击封面显示右边歌词时，左侧也显示进度条；隐藏右侧歌词时，左侧也隐藏。
+        // 我们用 isInvisible 替代 isVisible=false，这样它“隐身”时依然占着空间，封面就不会来回跳动！
+        inlineProgressBar?.isInvisible = !willShowLyrics
     }
 
     private fun setupToolbar() {
@@ -191,13 +186,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
-        // ！！！完美同步右上角的动态智能取色逻辑 (scheme.onSurfaceColor)！！！
-        //val leftInfoText = view?.findViewById<TextView>(R.id.leftCoverInfoText)
-        //if (leftInfoText != null) {
-        //    val oldTextColor = leftInfoText.currentTextColor
-        //    targets.add(leftInfoText.tintTarget(oldTextColor, scheme.onSurfaceColor))
-        //}
-
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
