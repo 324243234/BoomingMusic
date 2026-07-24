@@ -214,10 +214,7 @@ fun QueueScreen(
             )
         }
 
-    // 获取当前屏幕方向
-    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-
+    
     // 只有在非横屏（竖屏）时才显示顶部的当前播放封面和歌曲信息
     if (!isLandscape) {
         SmallHeader(
