@@ -117,6 +117,10 @@ fun QueueScreen(
     onDetailsClick: (Song) -> Unit,
     playerViewModel: PlayerViewModel = koinActivityViewModel()
 ) {
+    // 获取当前屏幕方向（这段在下方也有，你可以提到上面来或者直接用下面已有的）
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
 
@@ -203,10 +207,7 @@ fun QueueScreen(
             .wrapContentHeight()
             .nestedScroll(rememberNestedScrollInteropConnection())
     ) {
-        // 获取当前屏幕方向（这段在下方也有，你可以提到上面来或者直接用下面已有的）
-        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-
+        
         // 核心修改：只有在【非横屏】时才显示顶部的 DragHandle 手柄
         if (!isLandscape) {
             BottomSheetDefaults.DragHandle(
@@ -349,7 +350,7 @@ fun QueueScreen(
             ) {
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(8.dp) + PaddingValues(bottom = listBottomPadding),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp) + PaddingValues(bottom = listBottomPadding),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     itemsIndexed(
@@ -533,8 +534,8 @@ fun QueueScreen(
                         painter = painterResource(R.drawable.ic_recenter_24dp),
                         contentDescription = null
                     )
-                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.go_to_current_track))
+                    //Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                   // Text(stringResource(R.string.go_to_current_track))
                 }
             }
         }
