@@ -112,9 +112,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 
                 // 🛡️ 性能防线：只有当进度条真正可见 (View.VISIBLE) 时，才做计算与渲染！完全掐断后台耗电。
                 if (inlineProgressBar != null && inlineProgressBar.visibility == View.VISIBLE && mainSlider != null && !isDraggingInlineSlider) {
-                    inlineProgressBar.max = mainSlider.max.toInt()
-                    if (inlineProgressBar.progress != mainSlider.progress) {
-                        inlineProgressBar.progress = mainSlider.progress.toInt()
+                    // 💡 Material Slider 的最大值和当前值是 Float 类型，需转为 Int 赋值给原生成品 SeekBar
+                    inlineProgressBar.max = mainSlider.valueTo.toInt()
+                    val currentProgress = mainSlider.value.toInt()
+                    if (inlineProgressBar.progress != currentProgress) {
+                        inlineProgressBar.progress = currentProgress
                     }
                 }
                 kotlinx.coroutines.delay(500)
