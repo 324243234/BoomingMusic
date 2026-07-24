@@ -32,19 +32,21 @@
 
     <!-- 1. 顶部：歌名 (居中对齐，顶到系统状态栏下方) -->
 	<!-- android:layout_marginTop="24dp🎛️ 调试数值A：距离屏幕顶部的极限距离。如果想更靠上可以改成 8dp 或 12dp -->
-    <com.google.android.material.textview.MaterialTextView
+    
+	<com.google.android.material.textview.MaterialTextView
         android:id="@+id/leftCoverInfoText"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="0dp" 
+		android:layout_marginTop="0dp"  
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:singleLine="true"
         android:ellipsize="marquee"
         android:gravity="center"
-        android:textSize="10sp"
+        android:textSize="14sp"
         android:textColor="?android:attr/textColorPrimary"
         android:textStyle="bold"
+		android:includeFontPadding="false"
         app:layout_constraintTop_toTopOf="parent"  
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline" />
@@ -55,7 +57,7 @@
         android:id="@+id/coverContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="0dp"
+        android:layout_marginTop="-5dp"
         android:layout_marginBottom="8dp"
         app:layout_constraintDimensionRatio="1:1"  
         app:layout_constraintTop_toBottomOf="@+id/leftCoverInfoText"  
