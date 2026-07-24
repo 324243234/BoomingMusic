@@ -122,7 +122,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         })
 		// 🔑 优化3：“影子同步”机制 —— 最稳定地获取进度，绝不引发编译错误
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            while (kotlinx.coroutines.isActive) {
+            while (isActive) {
                 // 直接去子 Fragment 里抓取那个已经完美运行的主进度条
                 val mainSlider = view.findViewById<SeekBar>(R.id.progressSlider)
                 if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {

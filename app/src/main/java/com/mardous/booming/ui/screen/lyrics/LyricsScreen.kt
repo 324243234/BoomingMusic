@@ -187,7 +187,7 @@ fun LyricsScreen(
             AnimatedContent(
                 targetState = Pair(lyricsViewSettings.backgroundEffect, gradientColors),
                 transitionSpec = {
-                    fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
+                    fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000)))
                 }
             ) { (effect, gradientColors) ->
                 when {
@@ -246,8 +246,8 @@ fun LyricsScreen(
                 isPlaying = isPlaying,
                 isPowerSaveMode = isPowerSaveMode,
                 hasBackgroundEffects = hasBackgroundEffects,
-                onSeekToLine = {
-                    playerViewModel.seekTo(it.start)
+                onSeekTo = { position ->
+                    playerViewModel.seekTo(position) // 作者更新[cite: 7]
                     if (lyricsViewSettings.resumeOnSeek) {
                         playerViewModel.play()
                     }
@@ -311,8 +311,8 @@ fun CoverLyricsScreen(
                 isPlaying = isPlaying,
                 isPowerSaveMode = isPowerSaveMode,
                 hasBackgroundEffects = false,
-                onSeekToLine = {
-                    playerViewModel.seekTo(it.start)
+                onSeekTo = { position ->
+                    playerViewModel.seekTo(position) // 作者更新[cite: 7]
                     if (lyricsViewSettings.resumeOnSeek) {
                         playerViewModel.play()
                     }
@@ -402,7 +402,8 @@ private fun LyricsSurface(
     isPlaying: Boolean,
     isPowerSaveMode: Boolean,
     hasBackgroundEffects: Boolean,
-    onSeekToLine: (SyncedLyrics.Line) -> Unit,
+    //onSeekToLine: (SyncedLyrics.Line) -> Unit,
+	onSeekTo: (Long) -> Unit, // 改为这行[cite: 7]
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -494,7 +495,8 @@ private fun LyricsSurface(
                     contentColor = contentColor,
                     isPowerSaveMode = isPowerSaveMode,
                     hasBackgroundEffects = hasBackgroundEffects,
-                    onLineClick = { onSeekToLine(it) }
+                    //onLineClick = { onSeekToLine(it) }
+					onSeekTo = onSeekTo // 改为这行[cite: 7]
                 )
             }
         }
