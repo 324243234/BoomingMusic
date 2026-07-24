@@ -184,8 +184,8 @@
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
             android:splitTrack="false"
-            android:maxHeight="2dp"
-            android:minHeight="2dp"
+            android:maxHeight="4dp"
+            android:minHeight="4dp"
             android:progressTint="?android:attr/textColorSecondary"
             android:thumbTint="?android:attr/textColorSecondary" />
 
