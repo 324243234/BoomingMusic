@@ -17,6 +17,8 @@
 
 package com.mardous.booming.ui.screen.library.playlists
 
+import com.mardous.booming.core.sort.SongSortMode
+import com.mardous.booming.ui.screen.library.ReloadType
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Menu
@@ -193,6 +195,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
 
     override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
         menuInflater.inflate(R.menu.menu_playlist_detail, menu)
+		// 🔑 有了 import，这里就变短了
+    SongSortMode.AllSongs.createMenu(menu)
     }
 
     override fun onPrepareMenu(menu: Menu) {
@@ -214,6 +218,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+	// 🔑 【新增】拦截排序选项的点击事件
+    // 🔑 前缀去掉，代码更干净
+    if (SongSortMode.AllSongs.sortItemSelected(menuItem)) {
+        libraryViewModel.forceReload(ReloadType.Songs)
+        return true
+    }
         return when (menuItem.itemId) {
             android.R.id.home -> {
                 findNavController().navigateUp()
