@@ -474,7 +474,7 @@ private fun LyricsSurface(
                 // 2. 独立监听真实进度锚点 (仅在页面可见时接收数据更新)
                 LaunchedEffect(lyricsViewState, playerViewModel) {
                     playerViewModel.progressFlow.collect { position ->
-                        if (view.visibility == android.view.View.VISIBLE) {
+                        if (view.isShown) {
                             basePosition = position
                             baseRealtime = SystemClock.elapsedRealtime()
                             lyricsViewState.updatePosition(position)
@@ -484,9 +484,10 @@ private fun LyricsSurface(
 
                 // 3. 独立的 30fps 平滑插值引擎 (兼具物理降温与丝滑视觉)
                 LaunchedEffect(lyricsViewState, isPlaying) {
+				kotlinx.coroutines.delay(150L)
                     while (isActive) {
                         // 利用函数自带的 isPlaying 参数与 View 可见性双重拦截
-                        if (isPlaying && view.visibility == android.view.View.VISIBLE) {
+                        if (isPlaying && view.isShown) {
                             val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                             val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
                             lyricsViewState.updatePosition(smoothPosition)
