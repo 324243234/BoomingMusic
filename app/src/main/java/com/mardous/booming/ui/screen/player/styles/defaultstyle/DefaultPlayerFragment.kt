@@ -150,28 +150,28 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         })
 
-        // 3. 影子同步机制
+        // 3. 影子同步机制 (彻底切除耗电的 while 轮询，改用 ViewModel 原生数据流事件驱动)
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            var cachedMainSlider: MusicSlider? = null
-            
-            while (isActive) {
-                if (cachedMainSlider == null) {
-                    cachedMainSlider = view.findViewById(R.id.progressSlider)
-                }
-                
-                val mainSlider = cachedMainSlider
-                
-                if (mainSlider != null && !isDraggingInlineSlider) {
+            playerViewModel.progressFlow.collect { progress ->
+                // 只有当进度真正变化，且用户没在拖拽时才触发 UI 渲染，零多余计算！
+                if (!isDraggingInlineSlider) {
                     binding.inlineProgressSlider?.let { slider ->
-                        slider.max = mainSlider.valueTo.toInt()
-                        val currentProgress = mainSlider.value.toInt()
+                        val currentProgress = progress.toInt()
+                        
+                        // 动态同步主进度条的 Max 值，彻底消灭轮询
+                        val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+                        if (mainSlider != null) {
+                            val max = mainSlider.valueTo.toInt()
+                            if (slider.max != max) {
+                                slider.max = max
+                            }
+                        }
                         
                         if (slider.progress != currentProgress) {
                             slider.progress = currentProgress
                         }
                     }
                 }
-                kotlinx.coroutines.delay(500)
             }
         }
     }

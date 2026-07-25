@@ -37,7 +37,7 @@
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="13dp"
+        android:layout_marginTop="6dp"
         android:layout_marginBottom="8dp"
         android:layout_marginStart="24dp"
         app:layout_constraintDimensionRatio="1:1"
@@ -96,7 +96,7 @@
         android:id="@+id/rightSongInfoContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"       
+        android:layout_marginTop="6dp"       
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:visibility="invisible"           
@@ -110,7 +110,7 @@
             android:layout_height="wrap_content"
             android:singleLine="true"
             android:ellipsize="marquee"
-            android:textSize="16sp"
+            android:textSize="18sp"
             android:textColor="?android:attr/textColorPrimary"
             android:textStyle="bold"
             android:includeFontPadding="false"
@@ -122,14 +122,16 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
+        <!-- 增加 layout_marginEnd 让文字即使过长，也会在红心前自动省略，绝不重叠 -->
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/rightSongArtistText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"    
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="12dp"
             android:singleLine="true"
             android:ellipsize="end"
-            android:textSize="15sp"
+            android:textSize="16sp"
             android:alpha="0.7"
             android:textColor="?android:attr/textColorSecondary"  
             android:includeFontPadding="false"
@@ -139,20 +141,18 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
-        <!-- 🌟 新增：右侧红心收藏按钮 -->
+        <!-- 🌟 右侧红心收藏按钮 (脱离 Chain 链条，钉死在 parent 最右侧) -->
         <ImageView
             android:id="@+id/rightFavoriteButton"
             android:layout_width="32dp"
             android:layout_height="32dp"
-            android:layout_marginStart="8dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:padding="4dp"
             android:alpha="0.8"
             android:src="@drawable/ic_favorite_outline_24dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toEndOf="@+id/rightSongArtistText" />
+            app:layout_constraintBottom_toBottomOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
