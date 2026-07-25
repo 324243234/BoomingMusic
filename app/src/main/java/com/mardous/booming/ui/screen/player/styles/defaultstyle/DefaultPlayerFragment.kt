@@ -8,6 +8,9 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.SeekBar
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -45,6 +48,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
+    // 🌟 Koin 注入，用于安全查询数据库
+    private val repository: com.mardous.booming.data.local.repository.Repository by org.koin.android.ext.android.inject()
+
     override val playerControlsFragment: AbsPlayerControlsFragment
         get() = controlsFragment
 
@@ -74,7 +80,19 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 1. 歌曲信息更新机制 (加入安全调用符 ?.)
+        // 🌟 注册收藏按钮点击事件（极速乐观更新）
+        binding.rightFavoriteButton?.setOnClickListener {
+            val isFav = it.tag as? Boolean ?: false
+            updateFavoriteIcon(!isFav)
+            try {
+                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
+                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
+                }
+                requireContext().startService(intent)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+
+        // 1. 歌曲信息更新机制
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
                 if (song != null && song.id != lastProcessedSongId) {
@@ -92,10 +110,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                     lastProcessedSongId = song.id
                 }
+
+                // 🌟 同步收藏状态：放进 IO 线程，绝对不阻碍渲染！
+                if (song != null && song.id != 0L) {
+                    launch(Dispatchers.IO) {
+                        val isFav = repository.isSongFavorite(song.id)
+                        withContext(Dispatchers.Main) {
+                            updateFavoriteIcon(isFav)
+                        }
+                    }
+                }
             }
         }
 
-        // 2. 左侧迷你进度条拖拽控制 (加入安全调用符 ?.)
+        // 2. 左侧迷你进度条拖拽控制
         binding.inlineProgressSlider?.setOnTouchListener { v, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
@@ -133,7 +161,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val mainSlider = cachedMainSlider
                 
                 if (mainSlider != null && !isDraggingInlineSlider) {
-                    // 使用 let 作用域，确保 inlineProgressSlider 存在时再赋值
                     binding.inlineProgressSlider?.let { slider ->
                         slider.max = mainSlider.valueTo.toInt()
                         val currentProgress = mainSlider.value.toInt()
@@ -145,6 +172,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
                 kotlinx.coroutines.delay(500)
             }
+        }
+    }
+
+    // 🌟 更新红心 UI 函数
+    private fun updateFavoriteIcon(isFavorite: Boolean) {
+        binding.rightFavoriteButton?.apply {
+            tag = isFavorite
+            setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
     }
 
@@ -177,7 +212,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     private fun handleCoverClick() {
-        // 加入安全调用符，即使竖屏模式下找不到这些布局也不会崩溃
         val isLyricsCurrentlyVisible = binding.rightLyricsFragment?.isInvisible == false
         val willShowLyrics = !isLyricsCurrentlyVisible
         
@@ -203,13 +237,17 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
-        // 使用 let 作用域安全地提取当前颜色并应用 Tint
         binding.rightSongTitleText?.let { titleText ->
             targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
         }
         
         binding.rightSongArtistText?.let { artistText ->
             targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
+        }
+
+        // 🌟 将收藏红心加入变色队列，无缝融合主题
+        binding.rightFavoriteButton?.let { favBtn ->
+            targets.add(favBtn.tintTarget(favBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
         }
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
