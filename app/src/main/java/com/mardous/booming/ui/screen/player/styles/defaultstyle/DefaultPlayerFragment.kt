@@ -25,6 +25,8 @@ import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
+import com.mardous.booming.extensions.media.albumArtistName
+import com.mardous.booming.extensions.media.displayArtistName
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
@@ -73,15 +75,26 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 1. 歌曲信息更新与取色防抖拦截
+        // 1. 歌曲信息更新机制 (恢复完美的过滤专辑名逻辑 + 极致防抖)
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
-                val leftInfoText = view.findViewById<TextView>(R.id.leftCoverInfoText)
-                if (song != null && leftInfoText != null) {
-                    leftInfoText.text = song.title
-                    setMarquee(leftInfoText, marquee = true)
-
+                if (song != null) {
+                    // 🛡️ 性能底线：仅在切歌时执行唯一一次文本渲染！
                     if (song.id != lastProcessedSongId) {
+                        val titleText = view.findViewById<TextView>(R.id.rightSongTitleText)
+                        val artistText = view.findViewById<TextView>(R.id.rightSongArtistText)
+                        
+                        titleText?.text = song.title
+                        setMarquee(titleText, marquee = true)
+
+                        // 🔑 恢复之前的成品逻辑：直接获取纯粹的艺术家名字，绝不夹杂专辑名！
+                        val artist = if (Preferences.preferAlbumArtistName) {
+                            song.albumArtistName().displayArtistName()
+                        } else {
+                            song.displayArtistName()
+                        }
+                        artistText?.text = "- $artist"
+
                         lastProcessedSongId = song.id
                     }
                 }
@@ -91,22 +104,15 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         // 2. 左侧迷你进度条拖拽控制（极致流畅与防回弹优化）
         val inlineProgressBar = view.findViewById<SeekBar>(R.id.inlineProgressSlider)
         
-        // 🔑 核心优化 A：消除起手“粘滞感” (突破 Touch Slop)
-        // 拦截 ACTION_DOWN，在手指触碰滑块的绝对瞬间，强制向所有父容器下达“禁止拦截”指令。
-        // 彻底绕过手势判定的犹豫期，实现即触即滑，0延迟跟手！
         inlineProgressBar?.setOnTouchListener { v, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
             }
-            // 必须返回 false，不消费事件，让 SeekBar 继续处理自己的标准滑动逻辑
             false 
         }
 
         inlineProgressBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                // 🛡️ 性能底线：保持此处为空！
-                // 绝不在高频拖拽中实时调用 seekTo 发送指令，完美保护 CPU 性能，杜绝发热和耗电。
-            }
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
                 isDraggingInlineSlider = true
@@ -117,10 +123,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     playerViewModel.seekTo(progress.toLong())
                 }
                 
-                // 🔑 核心优化 B：消除松手后的“回弹拉扯感”
-                // 底层音频 seekTo 存在合理的微秒级异步延迟。
-                // 我们在松手后，给“拖拽锁定”状态强行续命 500 毫秒。
-                // 保护滑块在此期间绝不会被“影子同步协程”拉回老位置，平滑过渡！
                 seekBar?.postDelayed({
                     isDraggingInlineSlider = false
                 }, 500)
@@ -132,8 +134,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             while (isActive) {
                 val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
                 
-                // 🛡️ 终极性能优化：左侧进度条常驻，只需拦截空指针和用户拖拽状态。
-                // 彻底省去冗余的 View 状态判定，降低 CPU 开销。
                 if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {
                     inlineProgressBar.max = mainSlider.valueTo.toInt()
                     val currentProgress = mainSlider.value.toInt()
@@ -179,13 +179,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
         val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
         val toolbar = view?.findViewById<View>(R.id.toolbar)
+        val rightSongInfoContainer = view?.findViewById<View>(R.id.rightSongInfoContainer)
         
         val isLyricsCurrentlyVisible = rightLyrics?.isVisible == true
         val willShowLyrics = !isLyricsCurrentlyVisible
         
-        // 🔑 仅翻转右侧组件。
-        // 左侧组件彻底解耦，静默常驻，杜绝 ConstraintLayout 全局重绘引发的卡顿。
         rightLyrics?.isVisible = willShowLyrics
+        rightSongInfoContainer?.isVisible = willShowLyrics
+        
         rightControls?.isVisible = !willShowLyrics
         toolbar?.isVisible = !willShowLyrics
     }
@@ -205,6 +206,19 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
+        // 🔑 取色性能极致优化：直接“白嫖”源作者已经算好的调色板 (scheme)！
+        // 这里的 scheme 携带的 onSurfaceColor，正是原版控制台用来给歌曲信息染色的色值。
+        val titleText = view?.findViewById<TextView>(R.id.rightSongTitleText)
+        val artistText = view?.findViewById<TextView>(R.id.rightSongArtistText)
+        
+        if (titleText != null) {
+            targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
+        }
+        
+        if (artistText != null) {
+            targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
+        }
+
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }

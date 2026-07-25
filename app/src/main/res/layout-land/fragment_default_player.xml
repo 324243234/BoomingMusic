@@ -20,7 +20,7 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <!-- 辅助参考线：将屏幕划分为左45%和右55% -->
+    <!-- 辅助参考线：左45%和右55% -->
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/center_guideline"
         android:layout_width="wrap_content"
@@ -28,39 +28,19 @@
         android:orientation="vertical"
         app:layout_constraintGuide_percent="0.45" />
 
-    <!-- ================= 左侧区域重构：顶歌名 + 中封面 + 底进度 ================= -->
+    <!-- ================= 左侧区域：极简封面 + 底部进度条 ================= -->
 
-    <!-- 1. 顶部：歌名 (居中对齐，顶到系统状态栏下方) -->
-	<!-- android:layout_marginTop="24dp🎛️ 调试数值A：距离屏幕顶部的极限距离。如果想更靠上可以改成 8dp 或 12dp -->
-    
-	<com.google.android.material.textview.MaterialTextView
-        android:id="@+id/leftCoverInfoText"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-		android:layout_marginTop="0dp"  
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        android:singleLine="true"
-        android:ellipsize="marquee"
-        android:gravity="center"
-        android:textSize="14sp"
-        android:textColor="?android:attr/textColorPrimary"
-        android:textStyle="bold"
-		android:includeFontPadding="false"
-        app:layout_constraintTop_toTopOf="parent"  
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/center_guideline" />
-
-    <!-- 2. 中间：封面容器 (被顶部的歌名和底部的进度条完美夹在中间) -->
-	<!--android:layout_marginBottom 🎛️ 封面与进度条的间距：10dp -->
+    <!-- 中间：封面容器 (已移至最顶部中央) layout_marginBottom 底部距离-->
     <FrameLayout
         android:id="@+id/coverContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="-5dp"
-        android:layout_marginBottom="8dp"
+        android:layout_marginTop="0dp"      
+        android:layout_marginBottom="8dp"   
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
         app:layout_constraintDimensionRatio="1:1"  
-        app:layout_constraintTop_toBottomOf="@+id/leftCoverInfoText"  
+        app:layout_constraintTop_toTopOf="parent" 
         app:layout_constraintBottom_toTopOf="@+id/inlineProgressSlider"  
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline">
@@ -73,15 +53,12 @@
             tools:layout="@layout/fragment_album_cover_default"/>
     </FrameLayout>
 
-    <!-- 3. 底部：迷你进度条 (独占一行，极致贴底) -->
-	<!--android:layout_marginBottom="24dp" 🎛️ 调试数值C：距离屏幕底部的极限摆放高度。如果要贴底可以改成 8dp -->
-	<!-- android:layout_height="24dp"🎛️ 调试数值B：进度条高度（触控区）。建议保留 24dp 保证好拉动 -->
-	<!-- constraintBottom_toBottomOf="parent"🔑 牢牢吸附在屏幕最底端 -->
+    <!-- 底部：迷你进度条 layout_marginBottom 进度条距离屏幕底部的极限高度 -->
     <androidx.appcompat.widget.AppCompatSeekBar
         android:id="@+id/inlineProgressSlider"
         android:layout_width="0dp"
         android:layout_height="24dp" 
-        android:layout_marginBottom="15dp" 
+        android:layout_marginBottom="15dp"   
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:background="@null"
@@ -96,8 +73,10 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/center_guideline" />
 
-    <!-- ================= 右侧区域 ================= -->
 
+    <!-- ================= 右侧区域：控制面板 OR 歌词 + 歌名组合 ================= -->
+
+    <!-- 右侧：控制面板 (不受影响) -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.defaultstyle.DefaultPlayerControlsFragment"
@@ -110,6 +89,7 @@
         app:layout_constraintEnd_toEndOf="parent"
         tools:layout="@layout/fragment_default_player_playback_controls"/>
 
+    <!-- 右侧：底部菜单栏 (不受影响) -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="0dp"
@@ -122,14 +102,67 @@
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:menu="@menu/menu_now_playing"/>
 
+    <!-- ================= 核心重构：右侧顶部的歌名与歌手信息 layout_marginTop 歌名距离屏幕顶部的距离 (建议 12dp ~ 32dp 避开状态栏) ================= -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/rightSongInfoContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="0dp"       
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:visibility="gone"           
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/center_guideline"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- 歌名：加粗，高亮主色  -->
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/rightSongTitleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:ellipsize="marquee"
+            android:textSize="16sp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:textStyle="bold"
+            android:includeFontPadding="false"
+            app:layout_constrainedWidth="true"
+            app:layout_constraintHorizontal_chainStyle="packed"  
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/rightSongArtistText"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" 
+
+        <!-- 歌手：不加粗，灰色次级文本 layout_marginStart 歌名和歌手名之间的间距 (建议 6dp ~ 10dp) -->
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/rightSongArtistText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"    
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textSize="15sp"
+			android:alpha="0.7"
+            android:textColor="?android:attr/textColorSecondary"  
+            android:includeFontPadding="false"
+            app:layout_constrainedWidth="true"
+            app:layout_constraintStart_toEndOf="@+id/rightSongTitleText"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" 
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- 右侧：纯净歌词容器 (悬挂在歌名下方) layout_marginTop 下方歌词距离上方歌名/歌手的间距 (建议 12dp ~ 24dp) -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/rightLyricsFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:layout_marginTop="10dp"       
         android:visibility="gone"
         android:elevation="5dp" 
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/rightSongInfoContainer" 
         app:layout_constraintBottom_toBottomOf="parent" 
         app:layout_constraintStart_toEndOf="@+id/center_guideline"
         app:layout_constraintEnd_toEndOf="parent" />
