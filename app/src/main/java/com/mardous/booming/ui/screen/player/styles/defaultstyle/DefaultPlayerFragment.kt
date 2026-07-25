@@ -36,6 +36,7 @@ import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
+import org.koin.android.ext.android.inject
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -49,7 +50,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
     // 🌟 Koin 注入，用于安全查询数据库
-    private val repository: com.mardous.booming.data.local.repository.Repository by org.koin.android.ext.android.inject()
+    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
 
     override val playerControlsFragment: AbsPlayerControlsFragment
         get() = controlsFragment
