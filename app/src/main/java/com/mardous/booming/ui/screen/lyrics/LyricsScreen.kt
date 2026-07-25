@@ -97,30 +97,30 @@ private fun rememberLyricsViewState(lyrics: SyncedLyrics): LyricsViewState {
     return remember(lyrics) { LyricsViewState(lyrics) }
 }
 
-@Composable
-fun rememberSmoothPlaybackPosition(
-    playerPosition: Long,
-    playbackSpeed: Float,
-    isPlaying: Boolean
-): State<Long> {
-    val position = remember { mutableLongStateOf(playerPosition) }
-    LaunchedEffect(playerPosition, isPlaying) {
-        val baseRealtime = SystemClock.elapsedRealtime()
-        if (!isPlaying) {
-            position.longValue = playerPosition
-            return@LaunchedEffect
-        }
-
-        while (isActive) {
-            withFrameNanos {
-                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                position.longValue = playerPosition + (elapsed * playbackSpeed).toLong()
-            }
-        }
-    }
-
-    return position
-}
+//@Composable
+//fun rememberSmoothPlaybackPosition(
+//    playerPosition: Long,
+//    playbackSpeed: Float,
+//    isPlaying: Boolean
+//): State<Long> {
+//    val position = remember { mutableLongStateOf(playerPosition) }
+//    LaunchedEffect(playerPosition, isPlaying) {
+//        val baseRealtime = SystemClock.elapsedRealtime()
+//        if (!isPlaying) {
+//            position.longValue = playerPosition
+//            return@LaunchedEffect
+//        }
+//
+//        while (isActive) {
+//            withFrameNanos {
+//                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
+//                position.longValue = playerPosition + (elapsed * playbackSpeed).toLong()
+//            }
+//        }
+//    }
+//
+//   return position
+//}
 
 @Composable
 fun LyricsScreen(
@@ -210,7 +210,11 @@ fun LyricsScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .blur(90.dp)
+                                    //.blur(90.dp)
+									
+									.graphicsLayer()
+									.blur(30.dp)
+									
                                     .drawWithContent {
                                         drawContent()
 
@@ -364,7 +368,7 @@ fun CoverLyricsScreen(
                         painter = painterResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp),
                         contentDescription = null,
                         modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.onSurface
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                 }
 
@@ -475,18 +479,23 @@ private fun LyricsSurface(
                 val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
 
                 val playerPosition by playerViewModel.progressFlow.collectAsStateWithLifecycle()
-                val playbackSpeed by playerViewModel.playbackSpeed.collectAsStateWithLifecycle()
+                //val playbackSpeed by playerViewModel.playbackSpeed.collectAsStateWithLifecycle()
 
-                val smoothProgress by rememberSmoothPlaybackPosition(
-                    playerPosition = playerPosition,
-                    playbackSpeed = playbackSpeed,
-                    isPlaying = isPlaying
-                )
+                //val smoothProgress by rememberSmoothPlaybackPosition(
+                //    playerPosition = playerPosition,
+                //    playbackSpeed = playbackSpeed,
+                 //   isPlaying = isPlaying
+               // )
 
+                //LaunchedEffect(playerPosition) {
+                 //   lyricsViewState.updatePosition(smoothProgress)
+                //}
+
+				// 🛡️ 降温核心：抛弃虚假的帧计算循环，直接把 ViewModel 精确时间喂给歌词引擎
                 LaunchedEffect(playerPosition) {
-                    lyricsViewState.updatePosition(smoothProgress)
+                    lyricsViewState.updatePosition(playerPosition)
                 }
-
+				
                 LyricsView(
                     state = lyricsViewState,
                     settings = settings,
