@@ -131,7 +131,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/rightSongArtistText"
             app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" 
+            app:layout_constraintBottom_toBottomOf="parent" />
 
         <!-- 歌手：不加粗，灰色次级文本 layout_marginStart 歌名和歌手名之间的间距 (建议 6dp ~ 10dp) -->
         <com.google.android.material.textview.MaterialTextView
@@ -149,7 +149,7 @@
             app:layout_constraintStart_toEndOf="@+id/rightSongTitleText"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" 
+            app:layout_constraintBottom_toBottomOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
