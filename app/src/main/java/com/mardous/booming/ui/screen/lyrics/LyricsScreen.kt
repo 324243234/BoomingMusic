@@ -385,6 +385,7 @@ private fun LyricsSurface(
             else -> colorScheme.secondary
         }
     }
+    
     Box(modifier) {
         when (uiState) {
             is LyricsUiState.Empty -> {
@@ -444,56 +445,60 @@ private fun LyricsSurface(
 
             is LyricsUiState.Synced -> {
                 val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
-                
-				//val playerPosition by playerViewModel.progressFlow.collectAsStateWithLifecycle()
-                //val playbackSpeed by playerViewModel.playbackSpeed.collectAsStateWithLifecycle()
-
-                //val smoothProgress by rememberSmoothPlaybackPosition(
-                //    playerPosition = playerPosition,
-                //    playbackSpeed = playbackSpeed,
-                 //   isPlaying = isPlaying
-               // )
-
-                //LaunchedEffect(playerPosition) {
-                 //   lyricsViewState.updatePosition(smoothProgress)
-                //}
-                // 🌟 动态获取 View 实例，解决 isViewVisible 找不到引用的问题
                 val view = androidx.compose.ui.platform.LocalView.current
 
                 var basePosition by remember { mutableLongStateOf(0L) }
                 var baseRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
                 var playbackSpeed by remember { mutableStateOf(1f) }
 
-                // 1. 独立监听播放速度 (彻底解耦，无需 launch)
+                // 1. 【极轻量】独立监听播放速度
                 LaunchedEffect(playerViewModel) {
                     playerViewModel.playbackSpeed.collect { speed ->
                         playbackSpeed = speed
                     }
                 }
 
-                // 2. 独立监听真实进度锚点 (仅在页面可见时接收数据更新)
+                // 2. 【防断层】独立更新真实进度基准
                 LaunchedEffect(lyricsViewState, playerViewModel) {
                     playerViewModel.progressFlow.collect { position ->
+                        // 后台静默咬合时间戳，确保切回界面时进度绝不跳秒
+                        basePosition = position
+                        baseRealtime = SystemClock.elapsedRealtime()
+                        
+                        // 仅在界面全链路真正可见时，才通知 Compose 重绘
                         if (view.isShown) {
-                            basePosition = position
-                            baseRealtime = SystemClock.elapsedRealtime()
                             lyricsViewState.updatePosition(position)
                         }
                     }
                 }
 
-                // 3. 独立的 30fps 平滑插值引擎 (兼具物理降温与丝滑视觉)
-                LaunchedEffect(lyricsViewState, isPlaying) {
-				kotlinx.coroutines.delay(150L)
+                // 3. 【自适应插值引擎】智能平衡流畅度与发热，错峰让出 UI 动画算力
+                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode) {
+                    var wasVisible = view.isShown
+                    
+                    // 🌟 动态帧率策略：
+                    // 普通状态下锁 16ms (60fps)，完美匹配屏幕 VSYNC，彻底告别滚动微抖动；
+                    // 省电/高热模式下降至 33ms (30fps)，实现极致降温。
+                    val targetFrameDelay = if (isPowerSaveMode) 33L else 16L
+
                     while (isActive) {
-                        // 利用函数自带的 isPlaying 参数与 View 可见性双重拦截
-                        if (isPlaying && view.isShown) {
+                        val isVisible = view.isShown
+
+                        // 🛡️ 交互体验护盾：捕捉从“隐藏”变为“显示”的瞬间
+                        if (isVisible && !wasVisible) {
+                            // 强制休眠 150ms，把主线程算力 100% 留给 Fragment 显隐过渡动画
+                            kotlinx.coroutines.delay(150L)
+                        }
+
+                        // 渲染更新逻辑
+                        if (isPlaying && isVisible) {
                             val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                             val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
                             lyricsViewState.updatePosition(smoothPosition)
                         }
-                        // 锁帧 30fps，避免设备常亮过热
-                        kotlinx.coroutines.delay(33L)
+
+                        wasVisible = isVisible
+                        kotlinx.coroutines.delay(targetFrameDelay)
                     }
                 }
 
