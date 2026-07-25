@@ -374,8 +374,7 @@ private fun LyricsSurface(
     isPlaying: Boolean,
     isPowerSaveMode: Boolean,
     hasBackgroundEffects: Boolean,
-    //onSeekToLine: (SyncedLyrics.Line) -> Unit,
-	onSeekTo: (Long) -> Unit, // 改为这行[cite: 7]
+    onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -445,8 +444,8 @@ private fun LyricsSurface(
 
             is LyricsUiState.Synced -> {
                 val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
-
-                //val playerPosition by playerViewModel.progressFlow.collectAsStateWithLifecycle()
+                
+				//val playerPosition by playerViewModel.progressFlow.collectAsStateWithLifecycle()
                 //val playbackSpeed by playerViewModel.playbackSpeed.collectAsStateWithLifecycle()
 
                 //val smoothProgress by rememberSmoothPlaybackPosition(
@@ -458,58 +457,42 @@ private fun LyricsSurface(
                 //LaunchedEffect(playerPosition) {
                  //   lyricsViewState.updatePosition(smoothProgress)
                 //}
+                // 🌟 动态获取 View 实例，解决 isViewVisible 找不到引用的问题
+                val view = androidx.compose.ui.platform.LocalView.current
 
-				// 🛡️ 降温核心：抛弃虚假的帧计算循环，直接把 ViewModel 精确时间喂给歌词引擎
-                // 🌟 终极融合引擎：既保留原作者的平滑数学公式，又实现物理级降温
-                LaunchedEffect(lyricsViewState, playerViewModel, isViewVisible) {
-                    // 如果歌词界面不可见，直接休眠，0 功耗
-                    if (!isViewVisible) return@LaunchedEffect
+                var basePosition by remember { mutableLongStateOf(0L) }
+                var baseRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+                var playbackSpeed by remember { mutableStateOf(1f) }
 
-                    var basePosition = 0L
-                    var baseRealtime = SystemClock.elapsedRealtime()
-                    var currentIsPlaying = false
-                    var currentSpeed = 1f
-
-                    // 1. 静默收集播放状态（不触发 Compose 重组）
-                    launch {
-                        playerViewModel.isPlayingFlow.collect { playing ->
-                            currentIsPlaying = playing
-                        }
+                // 1. 独立监听播放速度 (彻底解耦，无需 launch)
+                LaunchedEffect(playerViewModel) {
+                    playerViewModel.playbackSpeed.collect { speed ->
+                        playbackSpeed = speed
                     }
+                }
 
-                    // 2. 静默收集播放速度
-                    launch {
-                        playerViewModel.playbackSpeed.collect { speed ->
-                            currentSpeed = speed
-                        }
-                    }
-
-                    // 3. 收集底层发来的真实进度，作为插值的“基准锚点”
-                    launch {
-                        playerViewModel.progressFlow.collect { position ->
+                // 2. 独立监听真实进度锚点 (仅在页面可见时接收数据更新)
+                LaunchedEffect(lyricsViewState, playerViewModel) {
+                    playerViewModel.progressFlow.collect { position ->
+                        if (view.visibility == android.view.View.VISIBLE) {
                             basePosition = position
                             baseRealtime = SystemClock.elapsedRealtime()
                             lyricsViewState.updatePosition(position)
                         }
                     }
+                }
 
-                    // 4. 自建锁帧插值引擎（彻底取代原作者耗电的 withFrameNanos）
-                    launch {
-                        while (isActive) {
-                            if (currentIsPlaying) {
-                                // 完美复刻原作者的丝滑数学公式
-                                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                                val smoothPosition = basePosition + (elapsed * currentSpeed).toLong()
-                                
-                                // 直接将结果喂给底层的歌词引擎，完全绕开 Compose 的 UI 渲染管线！
-                                lyricsViewState.updatePosition(smoothPosition)
-                            }
-                            
-                            // 🛑 核心物理降温点：锁帧 30fps (1000ms / 30帧 ≈ 33ms)
-                            // 30帧的文字滚动对人眼来说已经是绝对丝滑，
-                            // 但比原作者绑死 120Hz 屏幕的方案省下了整整 75% 的 GPU/CPU 算力！
-                            kotlinx.coroutines.delay(33L)
+                // 3. 独立的 30fps 平滑插值引擎 (兼具物理降温与丝滑视觉)
+                LaunchedEffect(lyricsViewState, isPlaying) {
+                    while (isActive) {
+                        // 利用函数自带的 isPlaying 参数与 View 可见性双重拦截
+                        if (isPlaying && view.visibility == android.view.View.VISIBLE) {
+                            val elapsed = SystemClock.elapsedRealtime() - baseRealtime
+                            val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                            lyricsViewState.updatePosition(smoothPosition)
                         }
+                        // 锁帧 30fps，避免设备常亮过热
+                        kotlinx.coroutines.delay(33L)
                     }
                 }
 
