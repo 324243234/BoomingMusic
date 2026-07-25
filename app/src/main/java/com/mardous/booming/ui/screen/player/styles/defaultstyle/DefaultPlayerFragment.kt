@@ -8,13 +8,12 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.SeekBar
 import kotlinx.coroutines.isActive
-import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.updatePadding
-import androidx.core.view.isVisible
+import androidx.core.view.isInvisible
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
@@ -75,43 +74,38 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 1. 歌曲信息更新机制 (恢复完美的过滤专辑名逻辑 + 极致防抖)
+        // 1. 歌曲信息更新机制 (内存直连 + 错峰渲染)
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
-                if (song != null) {
-                    // 🛡️ 性能底线：仅在切歌时执行唯一一次文本渲染！
-                    if (song.id != lastProcessedSongId) {
-                        val titleText = view.findViewById<TextView>(R.id.rightSongTitleText)
-                        val artistText = view.findViewById<TextView>(R.id.rightSongArtistText)
-                        
-                        titleText?.text = song.title
-                        setMarquee(titleText, marquee = true)
+                if (song != null && song.id != lastProcessedSongId) {
+                    // 错峰渲染：避开切歌时的封面加载与取色算力高峰
+                    kotlinx.coroutines.delay(80)
+                    
+                    // 🔑 优化 A：抛弃 findViewById，直接使用 binding 内存直连对象，O(1) 零算力损耗
+                    binding.rightSongTitleText.text = song.title
+                    setMarquee(binding.rightSongTitleText, marquee = true)
 
-                        // 🔑 恢复之前的成品逻辑：直接获取纯粹的艺术家名字，绝不夹杂专辑名！
-                        val artist = if (Preferences.preferAlbumArtistName) {
-                            song.albumArtistName().displayArtistName()
-                        } else {
-                            song.displayArtistName()
-                        }
-                        artistText?.text = "- $artist"
-
-                        lastProcessedSongId = song.id
+                    val artist = if (Preferences.preferAlbumArtistName) {
+                        song.albumArtistName().displayArtistName()
+                    } else {
+                        song.displayArtistName()
                     }
+                    binding.rightSongArtistText.text = "- $artist"
+
+                    lastProcessedSongId = song.id
                 }
             }
         }
 
-        // 2. 左侧迷你进度条拖拽控制（极致流畅与防回弹优化）
-        val inlineProgressBar = view.findViewById<SeekBar>(R.id.inlineProgressSlider)
-        
-        inlineProgressBar?.setOnTouchListener { v, event ->
+        // 2. 左侧迷你进度条拖拽控制 (直接复用 binding)
+        binding.inlineProgressSlider.setOnTouchListener { v, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
             }
             false 
         }
 
-        inlineProgressBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        binding.inlineProgressSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
@@ -129,17 +123,27 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         })
 
-        // 3. 影子同步机制（极致精简版）
+        // 3. 影子同步机制 (终极省电版：实例永久缓存)
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            // 🔑 优化 B：将右侧进度条的查找移出 500ms 死循环！
+            // 声明一个局部变量缓存，只在刚进入界面时寻找一次，找到后永久持有引用。
+            // 彻底切断后台高频遍历 UI 树造成的手机发热。
+            var cachedMainSlider: MusicSlider? = null
+            
             while (isActive) {
-                val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+                if (cachedMainSlider == null) {
+                    cachedMainSlider = view.findViewById(R.id.progressSlider)
+                }
                 
-                if (inlineProgressBar != null && mainSlider != null && !isDraggingInlineSlider) {
-                    inlineProgressBar.max = mainSlider.valueTo.toInt()
+                val mainSlider = cachedMainSlider
+                
+                if (mainSlider != null && !isDraggingInlineSlider) {
+                    // 直接使用 binding.inlineProgressSlider，免去判空和反复查找
+                    binding.inlineProgressSlider.max = mainSlider.valueTo.toInt()
                     val currentProgress = mainSlider.value.toInt()
                     
-                    if (inlineProgressBar.progress != currentProgress) {
-                        inlineProgressBar.progress = currentProgress
+                    if (binding.inlineProgressSlider.progress != currentProgress) {
+                        binding.inlineProgressSlider.progress = currentProgress
                     }
                 }
                 kotlinx.coroutines.delay(500)
@@ -176,19 +180,16 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     private fun handleCoverClick() {
-        val rightLyrics = view?.findViewById<View>(R.id.rightLyricsFragment)
-        val rightControls = view?.findViewById<View>(R.id.playbackControlsFragment)
-        val toolbar = view?.findViewById<View>(R.id.toolbar)
-        val rightSongInfoContainer = view?.findViewById<View>(R.id.rightSongInfoContainer)
-        
-        val isLyricsCurrentlyVisible = rightLyrics?.isVisible == true
+        // 🔑 优化 C：全盘废除 handleCoverClick 里的 findViewById
+        // 点击封面是高频操作，全部改为 binding 内存直连！
+        val isLyricsCurrentlyVisible = !binding.rightLyricsFragment.isInvisible
         val willShowLyrics = !isLyricsCurrentlyVisible
         
-        rightLyrics?.isVisible = willShowLyrics
-        rightSongInfoContainer?.isVisible = willShowLyrics
+        binding.rightLyricsFragment.isInvisible = !willShowLyrics
+        binding.rightSongInfoContainer.isInvisible = !willShowLyrics
         
-        rightControls?.isVisible = !willShowLyrics
-        toolbar?.isVisible = !willShowLyrics
+        binding.playbackControlsFragment.isInvisible = willShowLyrics
+        binding.toolbar.isInvisible = willShowLyrics
     }
 
     private fun setupToolbar() {
@@ -206,18 +207,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
-        // 🔑 取色性能极致优化：直接“白嫖”源作者已经算好的调色板 (scheme)！
-        // 这里的 scheme 携带的 onSurfaceColor，正是原版控制台用来给歌曲信息染色的色值。
-        val titleText = view?.findViewById<TextView>(R.id.rightSongTitleText)
-        val artistText = view?.findViewById<TextView>(R.id.rightSongArtistText)
+        // 🔑 优化 D：取色系统同样使用 binding 直连，彻底剔除 ?.let 和冗余判空
+        val oldTitleColor = binding.rightSongTitleText.currentTextColor
+        targets.add(binding.rightSongTitleText.tintTarget(oldTitleColor, scheme.onSurfaceColor))
         
-        if (titleText != null) {
-            targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
-        }
-        
-        if (artistText != null) {
-            targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
-        }
+        val oldArtistColor = binding.rightSongArtistText.currentTextColor
+        targets.add(binding.rightSongArtistText.tintTarget(oldArtistColor, scheme.onSurfaceColor))
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
