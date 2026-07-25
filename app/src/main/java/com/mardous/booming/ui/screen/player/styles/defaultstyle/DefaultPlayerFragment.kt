@@ -74,38 +74,36 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 1. 歌曲信息更新机制 (内存直连 + 错峰渲染)
+        // 1. 歌曲信息更新机制 (加入安全调用符 ?.)
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             playerViewModel.currentSongFlow.collect { song ->
                 if (song != null && song.id != lastProcessedSongId) {
-                    // 错峰渲染：避开切歌时的封面加载与取色算力高峰
                     kotlinx.coroutines.delay(80)
                     
-                    // 🔑 优化 A：抛弃 findViewById，直接使用 binding 内存直连对象，O(1) 零算力损耗
-                    binding.rightSongTitleText.text = song.title
-                    setMarquee(binding.rightSongTitleText, marquee = true)
+                    binding.rightSongTitleText?.text = song.title
+                    binding.rightSongTitleText?.let { setMarquee(it, marquee = true) }
 
                     val artist = if (Preferences.preferAlbumArtistName) {
                         song.albumArtistName().displayArtistName()
                     } else {
                         song.displayArtistName()
                     }
-                    binding.rightSongArtistText.text = "- $artist"
+                    binding.rightSongArtistText?.text = "- $artist"
 
                     lastProcessedSongId = song.id
                 }
             }
         }
 
-        // 2. 左侧迷你进度条拖拽控制 (直接复用 binding)
-        binding.inlineProgressSlider.setOnTouchListener { v, event ->
+        // 2. 左侧迷你进度条拖拽控制 (加入安全调用符 ?.)
+        binding.inlineProgressSlider?.setOnTouchListener { v, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
             }
             false 
         }
 
-        binding.inlineProgressSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        binding.inlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
@@ -123,11 +121,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         })
 
-        // 3. 影子同步机制 (终极省电版：实例永久缓存)
+        // 3. 影子同步机制
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            // 🔑 优化 B：将右侧进度条的查找移出 500ms 死循环！
-            // 声明一个局部变量缓存，只在刚进入界面时寻找一次，找到后永久持有引用。
-            // 彻底切断后台高频遍历 UI 树造成的手机发热。
             var cachedMainSlider: MusicSlider? = null
             
             while (isActive) {
@@ -138,12 +133,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val mainSlider = cachedMainSlider
                 
                 if (mainSlider != null && !isDraggingInlineSlider) {
-                    // 直接使用 binding.inlineProgressSlider，免去判空和反复查找
-                    binding.inlineProgressSlider.max = mainSlider.valueTo.toInt()
-                    val currentProgress = mainSlider.value.toInt()
-                    
-                    if (binding.inlineProgressSlider.progress != currentProgress) {
-                        binding.inlineProgressSlider.progress = currentProgress
+                    // 使用 let 作用域，确保 inlineProgressSlider 存在时再赋值
+                    binding.inlineProgressSlider?.let { slider ->
+                        slider.max = mainSlider.valueTo.toInt()
+                        val currentProgress = mainSlider.value.toInt()
+                        
+                        if (slider.progress != currentProgress) {
+                            slider.progress = currentProgress
+                        }
                     }
                 }
                 kotlinx.coroutines.delay(500)
@@ -180,15 +177,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     private fun handleCoverClick() {
-        // 🔑 优化 C：全盘废除 handleCoverClick 里的 findViewById
-        // 点击封面是高频操作，全部改为 binding 内存直连！
-        val isLyricsCurrentlyVisible = !binding.rightLyricsFragment.isInvisible
+        // 加入安全调用符，即使竖屏模式下找不到这些布局也不会崩溃
+        val isLyricsCurrentlyVisible = binding.rightLyricsFragment?.isInvisible == false
         val willShowLyrics = !isLyricsCurrentlyVisible
         
-        binding.rightLyricsFragment.isInvisible = !willShowLyrics
-        binding.rightSongInfoContainer.isInvisible = !willShowLyrics
+        binding.rightLyricsFragment?.isInvisible = !willShowLyrics
+        binding.rightSongInfoContainer?.isInvisible = !willShowLyrics
         
-        binding.playbackControlsFragment.isInvisible = willShowLyrics
+        binding.playbackControlsFragment?.isInvisible = willShowLyrics
         binding.toolbar.isInvisible = willShowLyrics
     }
 
@@ -207,12 +203,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
-        // 🔑 优化 D：取色系统同样使用 binding 直连，彻底剔除 ?.let 和冗余判空
-        val oldTitleColor = binding.rightSongTitleText.currentTextColor
-        targets.add(binding.rightSongTitleText.tintTarget(oldTitleColor, scheme.onSurfaceColor))
+        // 使用 let 作用域安全地提取当前颜色并应用 Tint
+        binding.rightSongTitleText?.let { titleText ->
+            targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
+        }
         
-        val oldArtistColor = binding.rightSongArtistText.currentTextColor
-        targets.add(binding.rightSongArtistText.tintTarget(oldArtistColor, scheme.onSurfaceColor))
+        binding.rightSongArtistText?.let { artistText ->
+            targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
+        }
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
