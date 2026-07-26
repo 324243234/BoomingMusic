@@ -17,11 +17,14 @@ import com.mardous.booming.util.USE_FOLDER_ART
 
 class SongMapper(private val preferences: SharedPreferences) : Mapper<Song, AudioCover> {
     override fun map(data: Song, options: Options): AudioCover? {
+        // 💡 杀手锏 1：抛弃系统被污染的 ID，使用“歌手+专辑”生成专属的隔离 Hash ID
+        val isolatedAlbumId = "${data.artistName}_${data.albumName}".hashCode().toLong()
+
         return AudioCover(
-            albumId = data.albumId,
+            albumId = isolatedAlbumId, // 💡 替换原本的 data.albumId
             uri = data.uri,
             path = data.data,
-            artistName = data.albumArtistName(),
+            artistName = data.artistName, // 💡 换成 artistName，隔离更彻底
             albumName = data.albumName,
             title = data.title,
             lastModified = data.rawDateModified,
@@ -38,8 +41,10 @@ class AlbumMapper(private val preferences: SharedPreferences) : Mapper<Album, Au
         options: Options
     ): AudioCover? {
         return data.safeGetFirstSong().let {
+		// 💡 杀手锏 2：专辑列表页也同样适用隔离 Hash，防止专辑分类卡片显示错误
+            val isolatedAlbumId = "${it.artistName}_${it.albumName}".hashCode().toLong()
             AudioCover(
-                albumId = data.id,
+                albumId = isolatedAlbumId, // 💡 替换原本的 data.id
                 uri = it.uri,
                 path = it.data,
                 artistName = it.albumArtistName(),

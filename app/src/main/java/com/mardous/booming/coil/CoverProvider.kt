@@ -1,6 +1,5 @@
 package com.mardous.booming.coil
 
-import android.media.MediaMetadataRetriever
 import android.content.ContentProvider
 import android.content.ContentResolver
 import android.content.ContentValues
@@ -57,30 +56,8 @@ class CoverProvider : ContentProvider(), KoinComponent {
         }
 
         val result = runBlocking {
-            var customCoilKey: String? = null // 💡 新增：定义 Coil 的强制隔离 Key
-
-            val data: Any? = when (matchCode) {
-                SONG_COVER_CODE -> {
-                    val song = repository.songById(idAsLong!!)
-                    var artBytes: ByteArray? = null
-                    
-                    if (song != null) {
-                        // 💡 修复 1：强制绑定“歌手+专辑”，确保 Coil 缓存绝不串号
-                        customCoilKey = "song_${song.artistName}_${song.albumName}"
-                        
-                        try {
-                            // 💡 修复 2：杀手锏！直接从物理音频文件中提取独立封面，彻底绕开系统 albumId 的污染
-                            val mmr = MediaMetadataRetriever()
-                            mmr.setDataSource(song.data)
-                            artBytes = mmr.embeddedPicture
-                            mmr.release()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to extract embedded art", e)
-                        }
-                    }
-                    // 如果成功抽取出独立封面，直接传字节流给 Coil；如果没有，才退回 song 对象走老路
-                    artBytes ?: song 
-                }
+            val data = when (matchCode) {
+                SONG_COVER_CODE -> repository.songById(idAsLong!!)
                 ALBUM_COVER_CODE -> repository.albumById(idAsLong!!)
                 ARTIST_COVER_CODE -> repository.artistById(idAsLong!!)
                 ALBUM_ARTIST_COVER_CODE -> repository.albumArtistByName(id)
@@ -94,21 +71,16 @@ class CoverProvider : ContentProvider(), KoinComponent {
                 }
                 else -> null
             }
-            
             if (data != null) {
                 context?.let {
-                    val requestBuilder = ImageRequest.Builder(it)
-                        .data(data)
-                        .memoryCachePolicy(CachePolicy.DISABLED)
-                        .precision(Precision.EXACT)
-                        .size(MAX_BITMAP_DIMENSION)
-                        
-                    // 💡 修复 3：将专属 Key 注入给 Coil
-                    if (customCoilKey != null) {
-                        requestBuilder.diskCacheKey(customCoilKey)
-                    }
-                    
-                    SingletonImageLoader.get(it).execute(requestBuilder.build())
+                    SingletonImageLoader.get(it).execute(
+                        ImageRequest.Builder(it)
+                            .data(data)
+                            .memoryCachePolicy(CachePolicy.DISABLED)
+                            .precision(Precision.EXACT)
+                            .size(MAX_BITMAP_DIMENSION)
+                            .build()
+                    )
                 }
             } else null
         }
