@@ -367,7 +367,7 @@ class PlaybackService :
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
                 .setSeekBackIncrementMs(seekInterval)
                 .setSeekForwardIncrementMs(seekInterval)
-                .setPlaybackLooper(playerThread.looper)
+                .setPlaybackLooper(Looper.getMainLooper())
                 .build()
         )
 

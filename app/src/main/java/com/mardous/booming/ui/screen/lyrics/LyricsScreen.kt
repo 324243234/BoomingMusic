@@ -167,7 +167,12 @@ fun LyricsScreen(
         }
     }
 
-    var hasBackgroundEffects by remember { mutableStateOf(false) }
+    //var hasBackgroundEffects by remember { mutableStateOf(false) }
+	// ✅ 改为纯状态推导（放在 Scaffold 上方）：
+    val hasBackgroundEffects = remember(lyricsViewSettings.backgroundEffect, gradientColors) {
+    (lyricsViewSettings.backgroundEffect.isGradient && gradientColors.size >= 2) || 
+            lyricsViewSettings.backgroundEffect.isBlur
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets
@@ -201,7 +206,7 @@ fun LyricsScreen(
                                 .fillMaxSize()
                                 .animatedGradient(gradientColors, isPlaying)
                         )
-                        hasBackgroundEffects = true
+                        //hasBackgroundEffects = true
                     }
 
                     effect.isBlur -> {
@@ -235,11 +240,11 @@ fun LyricsScreen(
                                     }
                             )
                         }
-                        hasBackgroundEffects = true
+                        //hasBackgroundEffects = true
                     }
 
                     else -> {
-                        hasBackgroundEffects = false
+                        //hasBackgroundEffects = false
                     }
                 }
             }
@@ -291,8 +296,16 @@ fun CoverLyricsScreen(
     val hideExpandButton = isLandscape && isDefaultTheme
 
     val translationKey = "lyrics_show_translation"
-    val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
-    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+    //val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+    //var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+	//------
+	val prefs = remember(context) { 
+    androidx.preference.PreferenceManager.getDefaultSharedPreferences(context) 
+    }
+    var isTranslationEnabled by remember { 
+    mutableStateOf(prefs.getBoolean(translationKey, true)) 
+    }
+	//---------
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {

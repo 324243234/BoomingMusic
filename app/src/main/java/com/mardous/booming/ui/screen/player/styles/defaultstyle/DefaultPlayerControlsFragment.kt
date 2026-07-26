@@ -120,10 +120,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         })
 
         
-        requireContext().registerReceiver(
-            volumeReceiver, 
-            android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION")
-        )
+        androidx.core.content.ContextCompat.registerReceiver(
+    requireContext(),
+    volumeReceiver,
+    android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+    androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+     )
     }
 
     override fun onCreatePlayerAnimator(): PlayerAnimator {

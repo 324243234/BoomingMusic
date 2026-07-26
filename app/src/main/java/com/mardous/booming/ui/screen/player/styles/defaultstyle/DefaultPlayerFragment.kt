@@ -1,6 +1,7 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.flow.sample
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
@@ -151,29 +152,28 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         })
 
         // 3. 影子同步机制 (彻底切除耗电的 while 轮询，改用 ViewModel 原生数据流事件驱动)
-        // ✅ 优化后的写法：
+        // 3. 影子同步机制（使用 60ms 采样，兼顾极致丝滑与超低 CPU 消耗）
       viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-       // 1. 在外面找一次，死死攥在手里（缓存引用）
-       val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
-    
-        playerViewModel.progressFlow.collect { progress ->
-           if (!isDraggingInlineSlider) {
-             binding.inlineProgressSlider?.let { slider ->
-                val currentProgress = progress.toInt()
-                
-                // 2. 只需要最廉价的内存读取
-                mainSlider?.let { 
-                    val max = it.valueTo.toInt()
-                    if (slider.max != max) slider.max = max
-                }
-                
-                // 3. 加入视觉欺骗阀门：相差 250ms（约4fps）才重绘，人眼看不出，但省电 90%
-                if (kotlin.math.abs(slider.progress - currentProgress) > 250) {
+    // 在外面找一次，缓存引用
+    val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+
+    playerViewModel.progressFlow
+        .sample(60L) // 💡 控制每 60ms 采样一次（约 16fps），绝对平滑且零浪费
+        .collect { progress ->
+            if (!isDraggingInlineSlider) {
+                binding.inlineProgressSlider?.let { slider ->
+                    val currentProgress = progress.toInt()
+
+                    mainSlider?.let { 
+                        val max = it.valueTo.toInt()
+                        if (slider.max != max) slider.max = max
+                    }
+
+                    // 💡 移除原本 > 250 的阀门，直接平滑赋值
                     slider.progress = currentProgress
                 }
             }
         }
-      }
      }
     }
 
