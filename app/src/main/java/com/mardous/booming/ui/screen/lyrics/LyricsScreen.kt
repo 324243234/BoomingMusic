@@ -377,9 +377,36 @@ private fun LyricsSurface(
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    
+    // 🌡️ 手机/车机全局温度雷达：记录设备物理发热状态
+    var isOverheating by remember { mutableStateOf(false) }
+
+    // 注册硬件温度回调（纯事件驱动，0 轮询开销，Unit 确保全局仅注册一次）
+    DisposableEffect(Unit) {
+        val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        
+        val thermalListener = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            android.os.PowerManager.OnThermalStatusChangedListener { status ->
+                // 阈值：达到 MODERATE (中度发热) 即触发自我保护
+                isOverheating = status >= android.os.PowerManager.THERMAL_STATUS_MODERATE
+            }
+        } else null
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && thermalListener != null) {
+            powerManager?.addThermalStatusListener(thermalListener)
+        }
+
+        onDispose {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && thermalListener != null) {
+                powerManager?.removeThermalStatusListener(thermalListener)
+            }
+        }
+    }
+
     val contentColor = when {
-        hasBackgroundEffects -> Color.White
+        hasBackgroundEffects -> androidx.compose.ui.graphics.Color.White
         else -> when (settings.mode) {
             LyricsViewSettings.Mode.Player -> colorScheme.onSurface
             else -> colorScheme.secondary
@@ -448,57 +475,70 @@ private fun LyricsSurface(
                 val view = androidx.compose.ui.platform.LocalView.current
 
                 var basePosition by remember { mutableLongStateOf(0L) }
-                var baseRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-                var playbackSpeed by remember { mutableStateOf(1f) }
+                var baseRealtime by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+                var playbackSpeed by remember { mutableFloatStateOf(1f) }
 
-                // 1. 【极轻量】独立监听播放速度
+                // 1. 【解耦基建】：独立监听播放速度变化
                 LaunchedEffect(playerViewModel) {
                     playerViewModel.playbackSpeed.collect { speed ->
                         playbackSpeed = speed
                     }
                 }
 
-                // 2. 【防断层】独立更新真实进度基准
+                // 2. 【防跳秒锚点】：独立监听底层进度打底，确保切回界面时无缝接合
                 LaunchedEffect(lyricsViewState, playerViewModel) {
                     playerViewModel.progressFlow.collect { position ->
-                        // 后台静默咬合时间戳，确保切回界面时进度绝不跳秒
                         basePosition = position
-                        baseRealtime = SystemClock.elapsedRealtime()
+                        baseRealtime = android.os.SystemClock.elapsedRealtime()
                         
-                        // 仅在界面全链路真正可见时，才通知 Compose 重绘
+                        // 兜底：即使插值引擎在休眠，底层真实数据来了，只要肉眼可见就更新一次
                         if (view.isShown) {
                             lyricsViewState.updatePosition(position)
                         }
                     }
                 }
 
-                // 3. 【自适应插值引擎】智能平衡流畅度与发热，错峰让出 UI 动画算力
-                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode) {
+                // 3. 👑【三段式终极调度引擎】
+                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode, isOverheating) {
                     var wasVisible = view.isShown
                     
-                    // 🌟 动态帧率策略：
-                    // 普通状态下锁 16ms (60fps)，完美匹配屏幕 VSYNC，彻底告别滚动微抖动；
-                    // 省电/高热模式下降至 33ms (30fps)，实现极致降温。
-                    val targetFrameDelay = if (isPowerSaveMode) 33L else 16L
-
                     while (isActive) {
                         val isVisible = view.isShown
 
-                        // 🛡️ 交互体验护盾：捕捉从“隐藏”变为“显示”的瞬间
+                        // 🛡️ 破晓护盾：从不可见（切桌面/被遮挡）变为可见的瞬间
                         if (isVisible && !wasVisible) {
-                            // 强制休眠 150ms，把主线程算力 100% 留给 Fragment 显隐过渡动画
+                            // 主动挂起 150ms，100% 避让系统级的切屏过渡动画，杜绝掉帧卡顿
                             kotlinx.coroutines.delay(150L)
                         }
 
-                        // 渲染更新逻辑
                         if (isPlaying && isVisible) {
-                            val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                            val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
-                            lyricsViewState.updatePosition(smoothPosition)
+                            // 【状态评估】：是否处于系统省电模式 或 物理发热状态？
+                            if (isPowerSaveMode || isOverheating) {
+                                // 🧊 【阶段一：自保降频模式 (30fps)】
+                                // 主动降级为 33ms 软时钟，强制压制 CPU/GPU，控制温度
+                                val elapsed = android.os.SystemClock.elapsedRealtime() - baseRealtime
+                                val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                lyricsViewState.updatePosition(smoothPosition)
+                                
+                                kotlinx.coroutines.delay(33L)
+                            } else {
+                                // 🔥 【阶段二：火力全开模式 (VSYNC)】
+                                // 常温且电量健康，无缝接管系统底层 Choreographer 帧信号 (60Hz/120Hz 自动满血)
+                                androidx.compose.runtime.withFrameNanos {
+                                    val elapsed = android.os.SystemClock.elapsedRealtime() - baseRealtime
+                                    val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                    lyricsViewState.updatePosition(smoothPosition)
+                                }
+                            }
+                        } else {
+                            // 💤 【阶段三：深度休眠模式 (0fps)】
+                            // 当切到桌面（桌面卡片由底层 Service 独立接管）、切播放列表或音乐暂停时
+                            // 停止一切渲染插值，进入 100ms 的低频心跳巡检，功耗彻底归零
+                            kotlinx.coroutines.delay(100L)
                         }
 
+                        // 闭环状态更新
                         wasVisible = isVisible
-                        kotlinx.coroutines.delay(targetFrameDelay)
                     }
                 }
 
