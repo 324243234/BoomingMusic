@@ -17,8 +17,8 @@ class AudioCoverKeyer : Keyer<AudioCover> {
                 append("song::")
             }
             append("albumId=").append(data.albumId)
-            //append("|uri=").append(data.uri.toString())
-            //append("|path=").append(data.path)
+            append("|uri=").append(data.uri.toString())
+            append("|path=").append(data.path)
             append("|folderArt=").append(data.isUseFolderArt)
             append("|lastModified=").append(data.lastModified)
         }
