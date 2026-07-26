@@ -214,7 +214,14 @@ fun LyricsScreen(
 
                         Box(modifier = Modifier.fillMaxSize()) {
                             AsyncImage(
-                                model = song,
+                                //原来model = song,
+								//新替换
+								// 💡 修改这里：不要直接传 song，强制指定加载 200x200 的缩略图
+                                model = ImageRequest.Builder(context)
+                                    .data(song)
+                                    .size(200) // 尺寸越小，GPU 模糊计算越快，反正最后都要被糊掉
+                                    .build(),
+								
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
@@ -397,15 +404,40 @@ private fun LyricsSurface(
     
     // 🌡️ 手机/车机全局温度雷达：记录设备物理发热状态
     var isOverheating by remember { mutableStateOf(false) }
+	// 🔋 电量雷达：纯事件驱动，记录是否低于 50%
+    var isLowBattery by remember { mutableStateOf(false) }
 
+	DisposableEffect(Unit) {
+        val batteryReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context, intent: android.content.Intent) {
+                val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+                if (level != -1 && scale != -1) {
+                    val batteryPct = level * 100 / scale.toFloat()
+                    // 阈值：低于 50% 触发降频护盾
+                    isLowBattery = batteryPct < 30f
+                }
+            }
+        }
+		// 注册电量变化广播（系统级粘性广播，极低频触发）
+        context.registerReceiver(
+            batteryReceiver,
+            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        )
+
+        onDispose {
+            context.unregisterReceiver(batteryReceiver)
+        }
+    }
+		
     // 注册硬件温度回调（纯事件驱动，0 轮询开销，Unit 确保全局仅注册一次）
     DisposableEffect(Unit) {
         val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
         
         val thermalListener = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             android.os.PowerManager.OnThermalStatusChangedListener { status ->
-                // 阈值：达到 MODERATE (中度发热) 即触发自我保护
-                isOverheating = status >= android.os.PowerManager.THERMAL_STATUS_MODERATE
+                // 阈值：达到 MODERATE (轻度发热) 即触发自我保护
+                isOverheating = status >= android.os.PowerManager.THERMAL_STATUS_LIGHT
             }
         } else null
 
@@ -528,7 +560,7 @@ private fun LyricsSurface(
 
                         if (isPlaying && isVisible) {
                             // 【状态评估】：是否处于系统省电模式 或 物理发热状态？
-                            if (isPowerSaveMode || isOverheating) {
+                            if (isPowerSaveMode || isOverheating || isLowBattery) {
                                 // 🧊 【阶段一：自保降频模式 (30fps)】
                                 // 主动降级为 33ms 软时钟，强制压制 CPU/GPU，控制温度
                                 val elapsed = android.os.SystemClock.elapsedRealtime() - baseRealtime
