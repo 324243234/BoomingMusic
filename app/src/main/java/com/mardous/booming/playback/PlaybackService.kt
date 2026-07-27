@@ -912,13 +912,43 @@ class PlaybackService :
             }
 
             val rawLyricsText = withContext(IO) {
-                if (newSong != Song.emptySong) {
-                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                        ?: lyricsRepository.embeddedLyrics(newSong)
-                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                    rawLyrics?.lyrics
-                } else null
-            }
+            if (newSong != Song.emptySong) {
+                // 1. 正常走 App 原有的逻辑，把歌词读到内存里（支持同名文件、内嵌歌词等）
+                val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                    ?: lyricsRepository.embeddedLyrics(newSong)
+                    ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                
+                var text = rawLyrics?.lyrics
+
+                // 2. 🌟 核心拦截逻辑：判断这坨歌词是不是 TTML/XML
+                val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
+
+                if (isTtml) {
+                    // ⚠️ 警报：App 正在用 TTML！车机会乱码！
+                    // 此时才启动备用通道：去物理硬盘找纯净的同名 .lrc 文件给车机
+                    try {
+                        val audioPath = newSong.data
+                        if (!audioPath.isNullOrBlank()) {
+                            val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
+                            val lrcFile = java.io.File(lrcPath)
+                            if (lrcFile.exists() && lrcFile.isFile) {
+                                // 成功找到同名 .lrc，替换掉有毒的 TTML
+                                text = lrcFile.readText()
+                            } else {
+                                // 没找到本地 .lrc，宁可车机没歌词，也绝不传乱码
+                                text = null
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CarWithLrc", "Failed to read local LRC file for CarWith fallback", e)
+                        text = null
+                    }
+                }
+
+                // 3. 最终返回纯净的文本（要么是原本就是 LRC，要么是兜底找来的 LRC，要么是 null）
+                text
+            } else null
+        }
             currentRawLyricsData = rawLyricsText
 
             if (newSong != Song.emptySong) {
