@@ -575,7 +575,7 @@ class PlaybackService :
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
         return serviceScope.future(IO) {
             val result = runCatching {
-                libraryProvider.getChildren(this@PlaybackService, parentId)
+                libraryProvider.getChildren(parentId)
             }
             if (result.isSuccess) {
                 LibraryResult.ofItemList(result.getOrThrow(), params)
@@ -591,7 +591,7 @@ class PlaybackService :
         mediaId: String
     ): ListenableFuture<LibraryResult<MediaItem>> {
         return serviceScope.future(IO) {
-            val mediaItem = runCatching { libraryProvider.getItem(this@PlaybackService, mediaId) }
+            val mediaItem = runCatching { libraryProvider.getItem(mediaId) }
                 .getOrDefault(MediaItem.EMPTY)
             if (mediaItem != MediaItem.EMPTY) {
                 LibraryResult.ofItem(mediaItem, null)
@@ -608,7 +608,7 @@ class PlaybackService :
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
         return serviceScope.future(IO) {
-            runCatching { libraryProvider.search(this@PlaybackService, query) }
+            runCatching { libraryProvider.search(query) }
                 .onSuccess { session.notifySearchResultChanged(browser, query, it.size, params) }
 
             LibraryResult.ofVoid()
@@ -634,7 +634,7 @@ class PlaybackService :
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
-            runCatching { libraryProvider.getMediaItemsForPlayback(this@PlaybackService, mediaItems) }
+            runCatching { libraryProvider.getMediaItemsForPlayback(mediaItems) }
                 .getOrDefault(emptyList())
         }
     }
@@ -663,7 +663,7 @@ class PlaybackService :
         return serviceScope.future(IO) {
             if (mediaSession.isAutomotiveController(controller) ||
                 mediaSession.isAutoCompanionController(controller)) {
-                runCatching { libraryProvider.getMediaItemsForAAOSPlayback(this@PlaybackService, mediaItems) }
+                runCatching { libraryProvider.getMediaItemsForAAOSPlayback(mediaItems) }
                     .getOrNull()
                     .let {
                         MediaItemsWithStartPosition(
@@ -675,7 +675,6 @@ class PlaybackService :
             } else {
                 runCatching {
                     libraryProvider.getMediaItemsForPlayback(
-                        context = this@PlaybackService,
                         mediaItems = mediaItems,
                         tryToResolveComplexPaths = true
                     )

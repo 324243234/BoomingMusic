@@ -87,7 +87,10 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        applicationId = namespace
+        //applicationId = namespace
+		
+		applicationId = "com.luna.music"   //改的
+		
         versionCode = 1310102
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)

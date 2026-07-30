@@ -17,7 +17,6 @@
 
 package com.mardous.booming.data.model
 
-import android.content.Context//
 import android.content.ContentUris
 import android.net.Uri
 import android.os.Parcelable
@@ -101,8 +100,7 @@ open class Song(
         song.volumeName
     )
 
-    // 1. 在参数列表最前面加上 context: Context
-    fun toMediaItem(context: Context, itemId: String = id.toString()): MediaItem =
+    fun toMediaItem(itemId: String = id.toString()): MediaItem =
         if (this == emptySong) {
             MediaItem.EMPTY
         } else {
@@ -113,8 +111,7 @@ open class Song(
                     MediaMetadata.Builder()
                         .setIsPlayable(true)
                         .setIsBrowsable(false)
-                        // 2. 将 context 传给 getImageUri
-                        .setArtworkUri(CoverProvider.getImageUri(context, CoverProvider.SONG_COVER_PATH, id))
+                        .setArtworkUri(CoverProvider.getImageUri(CoverProvider.SONG_COVER_PATH, id))
                         .setTitle(title)
                         .setSubtitle(songInfo())
                         .setAlbumTitle(albumName)

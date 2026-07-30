@@ -27,7 +27,6 @@ class LibraryProvider(private val repository: Repository) {
     val searchResult: List<MediaItem> get() = _searchResult
 
     suspend fun getMediaItemsForPlayback(
-        context: Context,
         mediaItems: List<MediaItem>,
         tryToResolveComplexPaths: Boolean = false
     ): List<MediaItem> {
@@ -49,8 +48,8 @@ class LibraryProvider(private val repository: Repository) {
                 emptyList()
             }
             if (complexMediaItems.isNotEmpty()) {
-                getMediaItemsForAAOSPlayback(context, complexMediaItems)?.first?.forEach {
-                resolvedMediaItems.add(it)
+                getMediaItemsForAAOSPlayback(complexMediaItems)?.first?.forEach {
+                    resolvedMediaItems.add(it)
                 }
             } else {
                 missingMediaItems.forEach {
@@ -65,12 +64,7 @@ class LibraryProvider(private val repository: Repository) {
         return resolvedMediaItems
     }
 
-    // ❌ 原代码：
-    // suspend fun getMediaItemsForAAOSPlayback(mediaItems: List<MediaItem>): Pair<List<MediaItem>, Int>? {
-
-    // ✅ 修改为：
     suspend fun getMediaItemsForAAOSPlayback(
-        context: Context,
         mediaItems: List<MediaItem>
     ): Pair<List<MediaItem>, Int>? {
         val single = mediaItems.singleOrNull()
@@ -91,7 +85,7 @@ class LibraryProvider(private val repository: Repository) {
                     val id = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val allSongs = repository.allSongs()
                     Pair(
-                        allSongs.map { it.toAutoMediaItem(context) },
+                        allSongs.map { it.toAutoMediaItem() },
                         allSongs.indexOfFirst { it.id == id }.coerceAtLeast(0)
                     )
                 }
@@ -101,7 +95,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(2)?.toLongOrNull() ?: return null
                     val album = repository.albumById(albumId)
                     Pair(
-                        album.songs.map { it.toAutoMediaItem(context) },
+                        album.songs.map { it.toAutoMediaItem() },
                         album.songs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -111,7 +105,7 @@ class LibraryProvider(private val repository: Repository) {
                     val artistId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val artistSongs = repository.artistById(artistId).sortedSongs
                     Pair(
-                        artistSongs.map { it.toAutoMediaItem(context) },
+                        artistSongs.map { it.toAutoMediaItem() },
                         artistSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -121,7 +115,7 @@ class LibraryProvider(private val repository: Repository) {
                     val albumArtistName = path.getOrNull(1) ?: return null
                     val albumArtistSongs = repository.albumArtistByName(albumArtistName).sortedSongs
                     Pair(
-                        albumArtistSongs.map { it.toAutoMediaItem(context) },
+                        albumArtistSongs.map { it.toAutoMediaItem() },
                         albumArtistSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -131,7 +125,7 @@ class LibraryProvider(private val repository: Repository) {
                     val playlistId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val playlist = repository.playlistWithSongs(playlistId)
                     Pair(
-                        playlist.songs.toSongs().map { it.toAutoMediaItem(context) },
+                        playlist.songs.toSongs().map { it.toAutoMediaItem() },
                         playlist.songs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -141,7 +135,7 @@ class LibraryProvider(private val repository: Repository) {
                     val genreId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val songsByGenre = repository.songsByGenre(genreId)
                     Pair(
-                        songsByGenre.map { it.toAutoMediaItem(context) },
+                        songsByGenre.map { it.toAutoMediaItem() },
                         songsByGenre.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -150,7 +144,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val playCountSongs = repository.playCountSongs()
                     Pair(
-                        playCountSongs.map { it.toAutoMediaItem(context) },
+                        playCountSongs.map { it.toAutoMediaItem() },
                         playCountSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -159,7 +153,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val historySongs = repository.historySongs()
                     Pair(
-                        historySongs.map { it.toAutoMediaItem(context) },
+                        historySongs.map { it.toAutoMediaItem() },
                         historySongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -178,7 +172,7 @@ class LibraryProvider(private val repository: Repository) {
             if (parts.size < 2) {
                 listOf(MediaItem.EMPTY)
             } else {
-                getPlayableMediaItems(context, parts[0], parts[1])
+                getPlayableMediaItems(parts[0], parts[1])
             }
         } else when (parentId) {
             MediaIDs.ROOT -> {
@@ -192,7 +186,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
-                                .setArtworkUri(getImageUri(context, ALBUM_COVER_PATH, album.id))
+                                .setArtworkUri(getImageUri(ALBUM_COVER_PATH, album.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(album.name)
@@ -210,7 +204,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                .setArtworkUri(getImageUri(context, ALBUM_ARTIST_COVER_PATH, albumArtist.name))
+                                .setArtworkUri(getImageUri(ALBUM_ARTIST_COVER_PATH, albumArtist.name))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(albumArtist.name)
@@ -228,7 +222,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                .setArtworkUri(getImageUri(context, ARTIST_COVER_PATH, artist.id))
+                                .setArtworkUri(getImageUri(ARTIST_COVER_PATH, artist.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(artist.name)
@@ -246,7 +240,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
-                                .setArtworkUri(getImageUri(context, PLAYLIST_COVER_PATH, playlistWithSongs.playlistEntity.playListId))
+                                .setArtworkUri(getImageUri(PLAYLIST_COVER_PATH, playlistWithSongs.playlistEntity.playListId))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(playlistWithSongs.playlistEntity.playlistName)
@@ -264,7 +258,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_GENRE)
-                                .setArtworkUri(getImageUri(context, GENRE_COVER_PATH, genre.id))
+                                .setArtworkUri(getImageUri(GENRE_COVER_PATH, genre.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(genre.name)
@@ -276,28 +270,18 @@ class LibraryProvider(private val repository: Repository) {
             }
 
             // SONGS, TOP_TRACKS, RECENT_SONGS
-            else -> getPlayableMediaItems(context, parentId)
+            else -> getPlayableMediaItems(parentId)
         }
     }
 
-    // ❌ 原代码：
-    // fun getItem(itemId: String): MediaItem {
-
-    // ✅ 修改为：
-    fun getItem(context: Context, itemId: String): MediaItem {
+    fun getItem(itemId: String): MediaItem {
         val songId = itemId.toLongOrNull() ?: return MediaItem.EMPTY
-        // 👈 把 context 传进去
-        return repository.songById(songId).toAutoMediaItem(context)
+        return repository.songById(songId).toAutoMediaItem()
     }
 
-    // ❌ 原代码：
-    // suspend fun search(query: String): List<MediaItem> {
-
-    // ✅ 修改为：
-    suspend fun search(context: Context, query: String): List<MediaItem> {
+    suspend fun search(query: String): List<MediaItem> {
         _searchResult.clear()
-        // 👈 把 context 传进去
-        _searchResult.addAll(repository.searchSongs(query).map { it.toAutoMediaItem(context, SEARCH) })
+        _searchResult.addAll(repository.searchSongs(query).map { it.toAutoMediaItem(SEARCH) })
         return _searchResult
     }
 
@@ -458,19 +442,17 @@ class LibraryProvider(private val repository: Repository) {
         }
     }
 
-    private suspend fun getPlayableMediaItems(context: Context, parentId: String, childId: String? = null) =
+    private suspend fun getPlayableMediaItems(parentId: String, childId: String? = null) =
         getPlayableSongs(parentId, childId)
             .filterNot { it == Song.emptySong }
             .map { song ->
                 song.toAutoMediaItem(
-                    context, // 👈 把 context 传进去
                     if (childId.isNullOrEmpty()) parentId else MediaIDs.getPathId(parentId, childId)
                 )
             }
 
-    // ✅ 修改为（把 context 传进去）：
-    private fun Song.toAutoMediaItem(context: Context, parent: String? = null): MediaItem =
-       toMediaItem(context, if (parent.isNullOrEmpty()) id.toString() else MediaIDs.getPathId(parent, id))
+    private fun Song.toAutoMediaItem(parent: String? = null): MediaItem =
+        toMediaItem(if (parent.isNullOrEmpty()) id.toString() else MediaIDs.getPathId(parent, id))
 
     companion object {
         // Internal ID for search requests
