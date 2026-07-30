@@ -30,16 +30,36 @@
                 app:shapeAppearanceOverlay="?shapeAppearanceCornerLarge"
                 tools:srcCompat="@tools:sample/avatars"/>
 
+            <!-- 使用横向 LinearLayout 将两个按钮并排放在一起 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:orientation="horizontal">
+
+            <!-- 新增：该播放列表的随机播放按钮 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/shuffle_play"
+                style="?materialIconButtonFilledStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                app:backgroundTint="@color/alpha_surface_container"
+                app:iconTint="?colorOnSurface"
+                app:icon="@drawable/ic_shuffle_24dp" />
+
+            <!-- 原有：该播放列表的顺序播放按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/play"
                 style="?materialIconButtonFilledStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom|end"
-                android:layout_margin="4dp"
                 app:backgroundTint="@color/alpha_surface_container"
                 app:iconTint="?colorOnSurface"
                 app:icon="@drawable/ic_play_24dp" />
+
+        </LinearLayout>
 
         </com.mardous.booming.ui.component.views.WidthFitSquareLayout>
 

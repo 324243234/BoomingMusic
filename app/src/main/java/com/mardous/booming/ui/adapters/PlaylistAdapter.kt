@@ -17,6 +17,7 @@
 
 package com.mardous.booming.ui.adapters
 
+import com.mardous.booming.data.mapper.toSongs
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
@@ -104,6 +105,9 @@ class PlaylistAdapter(
     }
 
     inner class ViewHolder(itemView: View) : MediaEntryViewHolder(itemView) {
+	
+	    // 1. 获取随机播放按钮的引用
+        private val shufflePlayButton: View? = itemView.findViewById(R.id.shuffle_play)
 
         init {
             menu?.setOnClickListener(object : OnClickMenu() {
@@ -116,6 +120,12 @@ class PlaylistAdapter(
             play?.setOnClickListener {
                 getViewModel<PlayerViewModel>()?.openPlaylist(playlist.playlistEntity)
             }
+			
+			// 2. 新增的随机播放点击事件
+            shufflePlayButton?.setOnClickListener {
+                getViewModel<PlayerViewModel>()?.openAndShuffleQueue(playlist.songs.toSongs())
+            }
+			
         }
 
         private val playlist: PlaylistWithSongs

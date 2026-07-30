@@ -17,6 +17,8 @@
 
 package com.mardous.booming.ui.screen.library.playlists
 
+import com.mardous.booming.extensions.media.isFavorites
+import com.mardous.booming.data.mapper.toSongs
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.Menu
@@ -45,9 +47,12 @@ import com.mardous.booming.ui.screen.library.ReloadType
  */
 class PlaylistListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter, GridLayoutManager>(),
     IPlaylistCallback {
+	
+	// 1. 开启悬浮随机按钮
+    override val isShuffleVisible: Boolean = true
 
     override val titleRes: Int = R.string.playlists_label
-    override val isShuffleVisible: Boolean = false
+     
     override val emptyMessageRes: Int
         get() = R.string.no_device_playlists
 
@@ -62,7 +67,27 @@ class PlaylistListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapt
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         libraryViewModel.getPlaylists().observe(viewLifecycleOwner) { playlists ->
-            adapter?.dataSet = playlists
+		
+		// 2. 收藏夹置顶逻辑：将数据分为“收藏夹”和“其他列表”，然后拼接在一起
+            val favorites = playlists.filter { it.playlistEntity.isFavorites(requireContext()) }
+            val others = playlists.filter { !it.playlistEntity.isFavorites(requireContext()) }
+            adapter?.dataSet = favorites + others
+        }
+    }
+	
+	// 3. 重写悬浮随机按钮逻辑：排除收藏夹
+    override fun onShuffleClicked() {
+        val playlists = adapter?.dataSet
+        if (playlists.isNullOrEmpty()) return
+
+        // 过滤掉“我的收藏”这个播放列表
+        val filteredPlaylists = playlists.filter { !it.playlistEntity.isFavorites(requireContext()) }
+
+        // 提取剩余所有播放列表中的歌曲并去重
+        val songsToPlay = filteredPlaylists.flatMap { it.songs.toSongs() }.distinctBy { it.id }
+
+        if (songsToPlay.isNotEmpty()) {
+            playerViewModel.openAndShuffleQueue(songsToPlay)
         }
     }
 
