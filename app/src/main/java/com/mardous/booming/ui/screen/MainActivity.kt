@@ -48,6 +48,16 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         updateTabs()
         setupNavigationController()
 
+		// 🌟 新增：监听 Mini 播放器高度，动态垫高导航栏，防止被遮挡 🌟
+        libraryViewModel.getMiniPlayerMargin().observe(this) { margin ->
+            // 获取计算好的高度（带入屏幕安全区等计算）
+            val bottomMargin = margin.getWithSpace()
+            
+            // 直接利用父类定义好的 navigationView（无论它是底部的还是左侧的）
+            // 设置它底部的 Padding，把它强行“顶”上去
+            navigationView.setPadding(0, 0, 0, bottomMargin)
+        }
+		
         val shortcutManager = getSystemService<ShortcutManager>()
         shortcutManager?.removeDynamicShortcuts(OLD_SHORTCUT_IDS)
 
