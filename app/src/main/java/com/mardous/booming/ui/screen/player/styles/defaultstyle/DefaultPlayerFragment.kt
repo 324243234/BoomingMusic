@@ -94,37 +94,41 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             } catch (e: Exception) { e.printStackTrace() }
         }
 
-        // 1. 歌曲信息更新机制
+        // 1. 歌曲信息更新机制 & 全局系统级收藏同步监听
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            playerViewModel.currentSongFlow.collect { song ->
-                if (song != null && song.id != lastProcessedSongId) {
-                    kotlinx.coroutines.delay(80)
-                    
-                    binding.rightSongTitleText?.text = song.title
-                    binding.rightSongTitleText?.let { setMarquee(it, marquee = true) }
+            
+            // A. 监听切歌与歌曲信息改变
+            launch {
+                playerViewModel.currentSongFlow.collect { song ->
+                    if (song != null && song.id != lastProcessedSongId) {
+                        kotlinx.coroutines.delay(80)
+                        
+                        binding.rightSongTitleText?.text = song.title
+                        binding.rightSongTitleText?.let { setMarquee(it, marquee = true) }
 
-                    val artist = if (Preferences.preferAlbumArtistName) {
-                        song.albumArtistName().displayArtistName()
-                    } else {
-                        song.displayArtistName()
+                        val artist = if (Preferences.preferAlbumArtistName) {
+                            song.albumArtistName().displayArtistName()
+                        } else {
+                            song.displayArtistName()
+                        }
+                        binding.rightSongArtistText?.text = "- $artist"
+
+                        lastProcessedSongId = song.id
                     }
-                    binding.rightSongArtistText?.text = "- $artist"
 
-                    lastProcessedSongId = song.id
-                }
-
-                // 🌟 同步收藏状态：放进 IO 线程，绝对不阻碍渲染！
-                if (song != null && song.id != 0L) {
-                    launch(Dispatchers.IO) {
-                        val isFav = repository.isSongFavorite(song.id)
-                        withContext(Dispatchers.Main) {
-                            updateFavoriteIcon(isFav)
+                    // 切歌时：同步收藏状态
+                    if (song != null && song.id != 0L) {
+                        launch(Dispatchers.IO) {
+                            val isFav = repository.isSongFavorite(song.id)
+                            withContext(Dispatchers.Main) {
+                                updateFavoriteIcon(isFav)
+                            }
                         }
                     }
                 }
             }
-        }
-		// B. 🌟 零开销系统级全局收藏事件监听（完美解决手势长按、车机、通知栏的同步问题）
+
+            // B. 🌟 零开销系统级全局收藏事件监听（完美解决手势长按、车机、通知栏的同步问题）
             launch {
                 playerViewModel.mediaEventFlow.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
@@ -141,7 +145,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
         }
-		
 
         // 2. 左侧迷你进度条拖拽控制
         binding.inlineProgressSlider?.setOnTouchListener { v, event ->
@@ -169,30 +172,29 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         })
 
-        // 3. 影子同步机制 (彻底切除耗电的 while 轮询，改用 ViewModel 原生数据流事件驱动)
         // 3. 影子同步机制（使用 60ms 采样，兼顾极致丝滑与超低 CPU 消耗）
-      viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-    // 在外面找一次，缓存引用
-    val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            // 在外面找一次，缓存引用
+            val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
 
-    playerViewModel.progressFlow
-        .sample(60L) // 💡 控制每 60ms 采样一次（约 16fps），绝对平滑且零浪费
-        .collect { progress ->
-            if (!isDraggingInlineSlider) {
-                binding.inlineProgressSlider?.let { slider ->
-                    val currentProgress = progress.toInt()
+            playerViewModel.progressFlow
+                .sample(60L) // 💡 控制每 60ms 采样一次（约 16fps），绝对平滑且零浪费
+                .collect { progress ->
+                    if (!isDraggingInlineSlider) {
+                        binding.inlineProgressSlider?.let { slider ->
+                            val currentProgress = progress.toInt()
 
-                    mainSlider?.let { 
-                        val max = it.valueTo.toInt()
-                        if (slider.max != max) slider.max = max
+                            mainSlider?.let { 
+                                val max = it.valueTo.toInt()
+                                if (slider.max != max) slider.max = max
+                            }
+
+                            // 💡 移除原本 > 250 的阀门，直接平滑赋值
+                            slider.progress = currentProgress
+                        }
                     }
-
-                    // 💡 移除原本 > 250 的阀门，直接平滑赋值
-                    slider.progress = currentProgress
                 }
-            }
         }
-     }
     }
 
     // 🌟 更新红心 UI 函数
