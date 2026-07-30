@@ -22,7 +22,6 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.Process
 import android.util.Log
-import android.util.LruCache
 import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.concurrent.futures.CallbackToFutureAdapter
@@ -155,9 +154,6 @@ class PlaybackService :
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
     private var currentRawLyricsData: String? = null
-
-    // 【大厂级性能神器】：车机微型封面 LRU 内存缓存 (最大缓存 30 张，0.1毫秒极速读取，CPU占用为0)
-    private val carWithBitmapCache = LruCache<Long, Bitmap>(30)
 
     private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
@@ -447,7 +443,6 @@ class PlaybackService :
         }
         eqStateHandler?.removeCallbacksAndMessages(null)
         uiHandler.removeCallbacks(headsetClickRunnable)
-        carWithBitmapCache.evictAll()
         serviceScope.cancel()
         preferences.unregisterOnSharedPreferenceChangeListener(this)
         audioOutputObserver.stopObserver()
@@ -596,7 +591,7 @@ class PlaybackService :
         mediaId: String
     ): ListenableFuture<LibraryResult<MediaItem>> {
         return serviceScope.future(IO) {
-            val mediaItem = runCatching { libraryProvider.getItem(mediaId) }
+            val mediaItem = runCatching { libraryProvider.getItem(this@PlaybackService, mediaId) }
                 .getOrDefault(MediaItem.EMPTY)
             if (mediaItem != MediaItem.EMPTY) {
                 LibraryResult.ofItem(mediaItem, null)
@@ -613,7 +608,7 @@ class PlaybackService :
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
         return serviceScope.future(IO) {
-            runCatching { libraryProvider.search(query) }
+            runCatching { libraryProvider.search(this@PlaybackService, query) }
                 .onSuccess { session.notifySearchResultChanged(browser, query, it.size, params) }
 
             LibraryResult.ofVoid()
@@ -639,7 +634,7 @@ class PlaybackService :
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
-            runCatching { libraryProvider.getMediaItemsForPlayback(mediaItems) }
+            runCatching { libraryProvider.getMediaItemsForPlayback(this@PlaybackService, mediaItems) }
                 .getOrDefault(emptyList())
         }
     }
@@ -668,7 +663,7 @@ class PlaybackService :
         return serviceScope.future(IO) {
             if (mediaSession.isAutomotiveController(controller) ||
                 mediaSession.isAutoCompanionController(controller)) {
-                runCatching { libraryProvider.getMediaItemsForAAOSPlayback(mediaItems) }
+                runCatching { libraryProvider.getMediaItemsForAAOSPlayback(this@PlaybackService, mediaItems) }
                     .getOrNull()
                     .let {
                         MediaItemsWithStartPosition(
@@ -680,6 +675,7 @@ class PlaybackService :
             } else {
                 runCatching {
                     libraryProvider.getMediaItemsForPlayback(
+                        context = this@PlaybackService,
                         mediaItems = mediaItems,
                         tryToResolveComplexPaths = true
                     )
@@ -978,7 +974,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-    // 【极速车机数据更新】：使用 150x150 微型图片 + LRU 缓存，彻底断绝卡顿发热
+    // 【极速车机数据更新】：仅更新歌词与状态，图片交由系统通过正确的 URL 自动获取
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1036,65 +1032,11 @@ class PlaybackService :
 
         val metadataBuilder = currentItemNow.mediaMetadata.buildUpon()
             .setUserRating(HeartRating(isCurrentSongFavorite))
+            .setExtras(newExtras)
 
-        if (forceImageLoad || currentItemNow.mediaMetadata.artworkData == null) {
-            withContext(IO) {
-                val songId = currentItemNow.mediaId.toLongOrNull()
-                if (songId != null) {
-                    try {
-                        if (!isActive) return@withContext
-                        
-                        // 1. 【LRU 缓存优先】：命中缓存直接使用，0.1ms 响应，CPU 消耗为 0
-                        var microBitmap: Bitmap? = carWithBitmapCache.get(songId)
-                        
-                        if (microBitmap == null) {
-                            val song = repository.songById(songId)
-                            // 2. 【微型图片生成】：向大厂看齐，严格压缩为 150x150，IPC 体积仅 ~30KB
-                            val result = SingletonImageLoader.get(this@PlaybackService).execute(
-                                ImageRequest.Builder(this@PlaybackService)
-                                    .data(song)
-                                    .build()
-                            )
-                            
-                            if (!isActive) return@withContext
-                            
-							// 2. 拿到前台缓存的满血大图后，使用 Android 原生方法极速缩小到 150x150
-                            val fullBitmap = result.image?.toBitmap()
-                            if (fullBitmap != null) {
-                                microBitmap = Bitmap.createScaledBitmap(fullBitmap, 200, 200, true)
-                                carWithBitmapCache.put(songId, microBitmap)
-                            }
-							
-                        }
+        val newItem = currentItemNow.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
 
-                        if (microBitmap != null) {
-                            // 字节流与 Parcelable 图片注入
-                            //val stream = ByteArrayOutputStream()
-                           // microBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream) 
-                           // metadataBuilder.setArtworkData(stream.toByteArray(), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                            
-                            // 满足 CarWith 源码中 s.f() 高斯模糊与取色需求（150x150 不会阻塞 IPC）
-                            newExtras.putParcelable("android.media.metadata.ALBUM_ART", microBitmap)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CarWithFix", "Bitmap processing error", e)
-                    }
-                }
-
-                if (!isActive) return@withContext
-
-                metadataBuilder.setExtras(newExtras)
-                val newItem = currentItemNow.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
-
-                withContext(Main) {
-                    if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                        player.replaceMediaItem(player.currentMediaItemIndex, newItem)
-                    }
-                }
-            }
-        } else {
-            metadataBuilder.setExtras(newExtras)
-            val newItem = currentItemNow.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
+        withContext(Main) {
             if (player.currentMediaItem?.mediaId == newItem.mediaId) {
                 player.replaceMediaItem(player.currentMediaItemIndex, newItem)
             }

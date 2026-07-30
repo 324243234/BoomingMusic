@@ -27,6 +27,7 @@ class LibraryProvider(private val repository: Repository) {
     val searchResult: List<MediaItem> get() = _searchResult
 
     suspend fun getMediaItemsForPlayback(
+        context: Context,
         mediaItems: List<MediaItem>,
         tryToResolveComplexPaths: Boolean = false
     ): List<MediaItem> {
@@ -48,8 +49,8 @@ class LibraryProvider(private val repository: Repository) {
                 emptyList()
             }
             if (complexMediaItems.isNotEmpty()) {
-                getMediaItemsForAAOSPlayback(complexMediaItems)?.first?.forEach {
-                    resolvedMediaItems.add(it)
+                getMediaItemsForAAOSPlayback(context, complexMediaItems)?.first?.forEach {
+                resolvedMediaItems.add(it)
                 }
             } else {
                 missingMediaItems.forEach {
@@ -64,7 +65,12 @@ class LibraryProvider(private val repository: Repository) {
         return resolvedMediaItems
     }
 
+    // ❌ 原代码：
+    // suspend fun getMediaItemsForAAOSPlayback(mediaItems: List<MediaItem>): Pair<List<MediaItem>, Int>? {
+
+    // ✅ 修改为：
     suspend fun getMediaItemsForAAOSPlayback(
+        context: Context,
         mediaItems: List<MediaItem>
     ): Pair<List<MediaItem>, Int>? {
         val single = mediaItems.singleOrNull()
@@ -85,7 +91,7 @@ class LibraryProvider(private val repository: Repository) {
                     val id = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val allSongs = repository.allSongs()
                     Pair(
-                        allSongs.map { it.toAutoMediaItem() },
+                        allSongs.map { it.toAutoMediaItem(context) },
                         allSongs.indexOfFirst { it.id == id }.coerceAtLeast(0)
                     )
                 }
@@ -95,7 +101,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(2)?.toLongOrNull() ?: return null
                     val album = repository.albumById(albumId)
                     Pair(
-                        album.songs.map { it.toAutoMediaItem() },
+                        album.songs.map { it.toAutoMediaItem(context) },
                         album.songs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -105,7 +111,7 @@ class LibraryProvider(private val repository: Repository) {
                     val artistId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val artistSongs = repository.artistById(artistId).sortedSongs
                     Pair(
-                        artistSongs.map { it.toAutoMediaItem() },
+                        artistSongs.map { it.toAutoMediaItem(context) },
                         artistSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -115,7 +121,7 @@ class LibraryProvider(private val repository: Repository) {
                     val albumArtistName = path.getOrNull(1) ?: return null
                     val albumArtistSongs = repository.albumArtistByName(albumArtistName).sortedSongs
                     Pair(
-                        albumArtistSongs.map { it.toAutoMediaItem() },
+                        albumArtistSongs.map { it.toAutoMediaItem(context) },
                         albumArtistSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -125,7 +131,7 @@ class LibraryProvider(private val repository: Repository) {
                     val playlistId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val playlist = repository.playlistWithSongs(playlistId)
                     Pair(
-                        playlist.songs.toSongs().map { it.toAutoMediaItem() },
+                        playlist.songs.toSongs().map { it.toAutoMediaItem(context) },
                         playlist.songs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -135,7 +141,7 @@ class LibraryProvider(private val repository: Repository) {
                     val genreId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val songsByGenre = repository.songsByGenre(genreId)
                     Pair(
-                        songsByGenre.map { it.toAutoMediaItem() },
+                        songsByGenre.map { it.toAutoMediaItem(context) },
                         songsByGenre.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -144,7 +150,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val playCountSongs = repository.playCountSongs()
                     Pair(
-                        playCountSongs.map { it.toAutoMediaItem() },
+                        playCountSongs.map { it.toAutoMediaItem(context) },
                         playCountSongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -153,7 +159,7 @@ class LibraryProvider(private val repository: Repository) {
                     val songId = path.getOrNull(1)?.toLongOrNull() ?: return null
                     val historySongs = repository.historySongs()
                     Pair(
-                        historySongs.map { it.toAutoMediaItem() },
+                        historySongs.map { it.toAutoMediaItem(context) },
                         historySongs.indexOfFirst { it.id == songId }.coerceAtLeast(0)
                     )
                 }
@@ -172,7 +178,7 @@ class LibraryProvider(private val repository: Repository) {
             if (parts.size < 2) {
                 listOf(MediaItem.EMPTY)
             } else {
-                getPlayableMediaItems(parts[0], parts[1])
+                getPlayableMediaItems(context, parts[0], parts[1])
             }
         } else when (parentId) {
             MediaIDs.ROOT -> {
@@ -270,18 +276,28 @@ class LibraryProvider(private val repository: Repository) {
             }
 
             // SONGS, TOP_TRACKS, RECENT_SONGS
-            else -> getPlayableMediaItems(parentId)
+            else -> getPlayableMediaItems(context, parentId)
         }
     }
 
-    fun getItem(itemId: String): MediaItem {
+    // ❌ 原代码：
+    // fun getItem(itemId: String): MediaItem {
+
+    // ✅ 修改为：
+    fun getItem(context: Context, itemId: String): MediaItem {
         val songId = itemId.toLongOrNull() ?: return MediaItem.EMPTY
-        return repository.songById(songId).toAutoMediaItem()
+        // 👈 把 context 传进去
+        return repository.songById(songId).toAutoMediaItem(context)
     }
 
-    suspend fun search(query: String): List<MediaItem> {
+    // ❌ 原代码：
+    // suspend fun search(query: String): List<MediaItem> {
+
+    // ✅ 修改为：
+    suspend fun search(context: Context, query: String): List<MediaItem> {
         _searchResult.clear()
-        _searchResult.addAll(repository.searchSongs(query).map { it.toAutoMediaItem(SEARCH) })
+        // 👈 把 context 传进去
+        _searchResult.addAll(repository.searchSongs(query).map { it.toAutoMediaItem(context, SEARCH) })
         return _searchResult
     }
 
@@ -442,17 +458,19 @@ class LibraryProvider(private val repository: Repository) {
         }
     }
 
-    private suspend fun getPlayableMediaItems(parentId: String, childId: String? = null) =
+    private suspend fun getPlayableMediaItems(context: Context, parentId: String, childId: String? = null) =
         getPlayableSongs(parentId, childId)
             .filterNot { it == Song.emptySong }
             .map { song ->
                 song.toAutoMediaItem(
+                    context, // 👈 把 context 传进去
                     if (childId.isNullOrEmpty()) parentId else MediaIDs.getPathId(parentId, childId)
                 )
             }
 
-    private fun Song.toAutoMediaItem(parent: String? = null): MediaItem =
-        toMediaItem(if (parent.isNullOrEmpty()) id.toString() else MediaIDs.getPathId(parent, id))
+    // ✅ 修改为（把 context 传进去）：
+    private fun Song.toAutoMediaItem(context: Context, parent: String? = null): MediaItem =
+       toMediaItem(context, if (parent.isNullOrEmpty()) id.toString() else MediaIDs.getPathId(parent, id))
 
     companion object {
         // Internal ID for search requests
