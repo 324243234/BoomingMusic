@@ -186,7 +186,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
-                                .setArtworkUri(getImageUri(ALBUM_COVER_PATH, album.id))
+                                .setArtworkUri(getImageUri(context, ALBUM_COVER_PATH, album.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(album.name)
@@ -204,7 +204,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                .setArtworkUri(getImageUri(ALBUM_ARTIST_COVER_PATH, albumArtist.name))
+                                .setArtworkUri(getImageUri(context, ALBUM_ARTIST_COVER_PATH, albumArtist.name))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(albumArtist.name)
@@ -222,7 +222,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                .setArtworkUri(getImageUri(ARTIST_COVER_PATH, artist.id))
+                                .setArtworkUri(getImageUri(context, ARTIST_COVER_PATH, artist.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(artist.name)
@@ -240,7 +240,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
-                                .setArtworkUri(getImageUri(PLAYLIST_COVER_PATH, playlistWithSongs.playlistEntity.playListId))
+                                .setArtworkUri(getImageUri(context, PLAYLIST_COVER_PATH, playlistWithSongs.playlistEntity.playListId))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(playlistWithSongs.playlistEntity.playlistName)
@@ -258,7 +258,7 @@ class LibraryProvider(private val repository: Repository) {
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setMediaType(MediaMetadata.MEDIA_TYPE_GENRE)
-                                .setArtworkUri(getImageUri(GENRE_COVER_PATH, genre.id))
+                                .setArtworkUri(getImageUri(context, GENRE_COVER_PATH, genre.id))
                                 .setIsBrowsable(true)
                                 .setIsPlayable(false)
                                 .setTitle(genre.name)

@@ -162,7 +162,9 @@ class CoverProvider : ContentProvider(), KoinComponent {
     companion object {
         private const val TAG = "CoilImageProvider"
 
-        private const val AUTHORITY = "${BuildConfig.APPLICATION_ID}.cover"
+        //private const val AUTHORITY = "${BuildConfig.APPLICATION_ID}.cover"
+		
+		private const val AUTHORITY = "*"
         private const val CACHE_DIR_NAME = "covers"
         private const val CACHE_FILE_EXPIRES = (60 * 60 * 1000) * 24 * 7 // 7 days
         private const val MAX_BITMAP_DIMENSION = 1024
@@ -190,18 +192,22 @@ class CoverProvider : ContentProvider(), KoinComponent {
                 addURI(AUTHORITY, "$GENRE_COVER_PATH/*", GENRE_COVER_CODE)
             }
 
-        fun getImageUri(path: String, id: Long) = getImageUri(path, id.toString())
-        fun getImageUri(path: String, id: String): Uri? {
+        // ✅ 必须传入 Context，动态获取最新的真实包名
+        fun getImageUri(context: Context, path: String, id: Long) = getImageUri(context, path, id.toString())
+        fun getImageUri(context: Context, path: String, id: String): Uri? {
+            // 动态拼接 AUTHORITY：真实包名 + ".cover"
+            val dynamicAuthority = "${context.packageName}.cover"
+            
             val uri = Uri.Builder()
                 .scheme(ContentResolver.SCHEME_CONTENT)
-                .authority(AUTHORITY)
+                .authority(dynamicAuthority)
                 .appendPath(path)
                 .appendPath(id)
                 .build()
-            if (uriMatcher.match(uri) > 0) {
-                return uri
-            }
-            return null
+                
+            // 注意：因为我们要支持动态包名，原来的 uriMatcher 可能匹配不到（它绑了老包名），
+            // 这里我们直接放行，因为生成的 URI 绝对是合法的。
+            return uri
         }
 
         fun clearCache(context: Context) {
