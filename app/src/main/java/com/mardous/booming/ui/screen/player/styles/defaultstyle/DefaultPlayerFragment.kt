@@ -124,6 +124,24 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
         }
+		// B. 🌟 零开销系统级全局收藏事件监听（完美解决手势长按、车机、通知栏的同步问题）
+            launch {
+                playerViewModel.mediaEventFlow.collect { event ->
+                    if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
+                        val currentSong = playerViewModel.currentSongFlow.value
+                        if (currentSong != null && currentSong.id != 0L) {
+                            launch(Dispatchers.IO) {
+                                val isFav = repository.isSongFavorite(currentSong.id)
+                                withContext(Dispatchers.Main) {
+                                    updateFavoriteIcon(isFav)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+		
 
         // 2. 左侧迷你进度条拖拽控制
         binding.inlineProgressSlider?.setOnTouchListener { v, event ->
