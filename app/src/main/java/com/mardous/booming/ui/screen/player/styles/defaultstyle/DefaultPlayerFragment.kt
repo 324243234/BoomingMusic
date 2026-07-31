@@ -8,7 +8,7 @@ import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
 import android.widget.SeekBar
-import android.widget.TextView
+import android.widget.TextView // 新增引用
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +34,7 @@ import com.mardous.booming.extensions.media.displayArtistName
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
@@ -50,6 +51,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
+    // 🌟 Koin 注入，用于安全查询数据库
     private val repository: com.mardous.booming.data.local.repository.Repository by inject()
 
     override val playerControlsFragment: AbsPlayerControlsFragment
@@ -81,9 +83,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
 
-        // 🌟 注册左侧红心极速更新
-        val leftFavBtn = view.findViewById<ImageView>(R.id.leftFavoriteButton)
-        leftFavBtn?.setOnClickListener {
+        // 🌟 修改点 1：原本的 right 换成 left（注册收藏按钮点击事件）
+        binding.leftFavoriteButton?.setOnClickListener {
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
             try {
@@ -94,35 +95,42 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             } catch (e: Exception) { e.printStackTrace() }
         }
 
-        // 1. 左侧状态坞信息更新机制
+        // 1. 歌曲信息更新机制 & 全局系统级收藏同步监听
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             
-            // A. 切歌与文本信息拼接 (歌名 · 歌手)
+            // A. 监听切歌与歌曲信息改变
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
                         kotlinx.coroutines.delay(80)
                         
-                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
-                        val combinedInfo = "${song.title} · $artist"
-                        
-                        val infoText = view.findViewById<TextView>(R.id.leftSongInfoText)
-                        infoText?.text = combinedInfo
-                        infoText?.let { setMarquee(it, marquee = true) }
+                        // 🌟 修改点 2：原本的 right 换成 left
+                        binding.leftSongTitleText?.text = song.title
+                        binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
+
+                        val artist = if (Preferences.preferAlbumArtistName) {
+                            song.albumArtistName().displayArtistName()
+                        } else {
+                            song.displayArtistName()
+                        }
+                        binding.leftSongArtistText?.text = "- $artist"
 
                         lastProcessedSongId = song.id
                     }
 
+                    // 🌟 切歌时：同步收藏状态
                     if (song != null && song.id != 0L) {
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
-                            withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                            withContext(Dispatchers.Main) {
+                                updateFavoriteIcon(isFav)
+                            }
                         }
                     }
                 }
             }
 
-            // B. 全局同步
+            // B. 🌟 系统级全局收藏事件监听（接收车机、通知栏传来的状态改变）
             launch {
                 playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
@@ -130,7 +138,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         if (currentSong != null && currentSong.id != 0L) {
                             launch(Dispatchers.IO) {
                                 val isFav = repository.isSongFavorite(currentSong.id)
-                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                                withContext(Dispatchers.Main) {
+                                    updateFavoriteIcon(isFav)
+                                }
                             }
                         }
                     }
@@ -138,65 +148,77 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             }
         }
 
-        // 2. 左侧主进度条拖拽控制
-        val leftSlider = view.findViewById<SeekBar>(R.id.leftProgressSlider)
-        leftSlider?.setOnTouchListener { v, event ->
+        // 2. 左侧迷你进度条拖拽控制
+        binding.inlineProgressSlider?.setOnTouchListener { v, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 v.parent?.requestDisallowInterceptTouchEvent(true)
             }
             false 
         }
 
-        leftSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        binding.inlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                isDraggingInlineSlider = true
+            }
+
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                seekBar?.progress?.let { playerViewModel.seekTo(it.toLong()) }
-                seekBar?.postDelayed({ isDraggingInlineSlider = false }, 500)
+                seekBar?.progress?.let { progress ->
+                    playerViewModel.seekTo(progress.toLong())
+                }
+                
+                seekBar?.postDelayed({
+                    isDraggingInlineSlider = false
+                }, 500)
             }
         })
 
-        // 3. 左侧进度条与时间文本的高性能更新机制
+        // 3. 影子同步机制（包含安全的镜像时间逻辑，零性能浪费）
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            val currTimeView = view.findViewById<TextView>(R.id.leftCurrentTime)
-            val totalTimeView = view.findViewById<TextView>(R.id.leftTotalTime)
+            // 获取右侧面板已有的计算结果控件
+            val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
+            val rightCurrTime = view.findViewById<TextView>(R.id.songCurrentProgress)
+            val rightTotTime = view.findViewById<TextView>(R.id.songTotalTime)
+            
+            // 获取左侧可能新增的时间控件（如果你在 XML 里没加，这里获取到的是 null，后面的逻辑会自动跳过，绝不报错）
+            val leftCurrTime = view.findViewById<TextView>(R.id.leftCurrentTime)
+            val leftTotTime = view.findViewById<TextView>(R.id.leftTotalTime)
 
             playerViewModel.progressFlow
-                .sample(60L) // 💡 极低开销采样
+                .sample(60L) // 依然控制每 60ms 采样一次
                 .collect { progress ->
                     if (!isDraggingInlineSlider) {
-                        leftSlider?.let { slider ->
+                        binding.inlineProgressSlider?.let { slider ->
                             val currentProgress = progress.toInt()
-                            val total = playerViewModel.duration.toInt()
 
-                            if (slider.max != total) {
-                                slider.max = total
-                                totalTimeView?.text = formatTimeMillis(playerViewModel.duration)
+                            mainSlider?.let { 
+                                val max = it.valueTo.toInt()
+                                if (slider.max != max) {
+                                    slider.max = max
+                                    // 🌟 镜像逻辑：切歌时同步总时长
+                                    leftTotTime?.text = rightTotTime?.text
+                                }
                             }
+
+                            // 直接平滑赋值进度
                             slider.progress = currentProgress
-                            currTimeView?.text = formatTimeMillis(progress)
+
+                            // 🌟 核心镜像机制：白嫖右侧算好的时间文本 (脏检查)
+                            rightCurrTime?.text?.let { rightText ->
+                                if (leftCurrTime != null && leftCurrTime.text != rightText) {
+                                    leftCurrTime.text = rightText
+                                }
+                            }
                         }
                     }
                 }
         }
     }
 
-    // 🌟 高效时间格式转换函数
-    private fun formatTimeMillis(millis: Long): String {
-        if (millis < 0) return "00:00"
-        val totalSeconds = millis / 1000
-        val seconds = totalSeconds % 60
-        val minutes = (totalSeconds / 60) % 60
-        val hours = totalSeconds / 3600
-        return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%02d:%02d", minutes, seconds)
-        }
-    }
-
+    // 🌟 修改点 3：原本的 right 换成 left（更新红心 UI 函数）
     private fun updateFavoriteIcon(isFavorite: Boolean) {
-        view?.findViewById<ImageView>(R.id.leftFavoriteButton)?.apply {
+        binding.leftFavoriteButton?.apply {
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
@@ -213,8 +235,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
                 is GestureType.DoubleTap -> {
                     when (gestureType.type) {
-                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
-                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
+                            playerViewModel.seekToPrevious()
+                            return true
+                        }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
+                            playerViewModel.seekToNext()
+                            return true
+                        }
                         else -> {}
                     }
                 }
@@ -229,9 +257,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val willShowLyrics = !isLyricsCurrentlyVisible
         
         binding.rightLyricsFragment?.isInvisible = !willShowLyrics
+        
+        // 🌟 修改点 4：删除了 binding.rightSongInfoContainer?.isInvisible = !willShowLyrics
+        // 因为信息现在在左边，点击右侧显示歌词时，左侧的信息不需要隐藏！
+        
         binding.playbackControlsFragment?.isInvisible = willShowLyrics
         binding.toolbar.isInvisible = willShowLyrics
-        // 💡 右侧不再有信息坞遮挡，切换时极度清爽
     }
 
     private fun setupToolbar() {
@@ -243,10 +274,25 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldPrimaryControlColor = primaryControlColor
         primaryControlColor = scheme.onSurfaceColor
+
         val targets = mutableListOf(
             binding.root.surfaceTintTarget(scheme.surfaceColor),
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
+        
+        // 🌟 修改点 5：原本的 right 换成 left
+        binding.leftSongTitleText?.let { titleText ->
+            targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
+        }
+        
+        binding.leftSongArtistText?.let { artistText ->
+            targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
+        }
+
+        binding.leftFavoriteButton?.let { favBtn ->
+            targets.add(favBtn.tintTarget(favBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
+        }
+
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
@@ -272,7 +318,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-        if (key == DISPLAY_NEXT_SONG) { setupQueueMenuItem() }
+        if (key == DISPLAY_NEXT_SONG) {
+            setupQueueMenuItem()
+        }
     }
 
     override fun onDestroyView() {
