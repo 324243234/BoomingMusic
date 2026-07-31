@@ -170,6 +170,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         })
 
         // 3. 影子同步机制
+        // 3. 影子同步机制（包含安全的镜像时间逻辑，彻底切断 GC 性能风暴）
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
             val rightCurrTime = view.findViewById<TextView>(R.id.songCurrentProgress)
@@ -177,6 +178,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             
             val leftCurrTime = view.findViewById<TextView>(R.id.leftCurrentTime)
             val leftTotTime = view.findViewById<TextView>(R.id.leftTotalTime)
+
+            // 🛡️ 核心破局点：声明一个颜色缓存，阻断无限重绘导致的 CPU 饥饿
+            var lastAppliedColor = android.graphics.Color.TRANSPARENT
 
             playerViewModel.progressFlow
                 .sample(60L) 
@@ -193,17 +197,21 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 }
                             
                                 val mainColor = main.currentColor
-                                if (mainColor != android.graphics.Color.TRANSPARENT) {
+                                // 🛡️ 脏检查：只有当提取的颜色不是透明，且“和上次不一样”时，才允许执行高耗能的上色！
+                                if (mainColor != android.graphics.Color.TRANSPARENT && mainColor != lastAppliedColor) {
+                                    lastAppliedColor = mainColor // 记录当前颜色，下次直接跳过
+                                    
                                     slider.applyColor(mainColor)
                                     val timeColor = mainColor.withAlpha(0.6f)
-                                    // 🌟 修复：应用带透明度的 timeColor，之前你不小心填成了 mainColor
                                     leftCurrTime?.applyColor(timeColor)
                                     leftTotTime?.applyColor(timeColor)
                                 }
                             }
 
+                            // 进度条只赋值数字，底层自带防抖，耗能极低
                             slider.progress = currentProgress
 
+                            // 文本同步
                             rightCurrTime?.text?.let { rightText ->
                                 if (leftCurrTime != null && leftCurrTime.text != rightText) {
                                     leftCurrTime.text = rightText
