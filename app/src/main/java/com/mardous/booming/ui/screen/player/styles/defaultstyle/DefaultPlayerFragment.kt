@@ -116,7 +116,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         lastProcessedSongId = song.id
                     }
 
-                    // 切歌时：同步收藏状态
+                    // 🌟 切歌时：同步收藏状态
                     if (song != null && song.id != 0L) {
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
@@ -128,9 +128,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
 
-            // B. 🌟 零开销系统级全局收藏事件监听（完美解决手势长按、车机、通知栏的同步问题）
+            // B. 🌟 系统级全局收藏事件监听（接收车机、通知栏传来的状态改变）
             launch {
-                playerViewModel.mediaEventFlow.collect { event ->
+                playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
                         val currentSong = playerViewModel.currentSongFlow.value
                         if (currentSong != null && currentSong.id != 0L) {
@@ -202,6 +202,16 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         binding.rightFavoriteButton?.apply {
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+        }
+    }
+
+    // 🌟 拦截动作下发：用于当前界面手势和点击的“乐观更新”，实现零延迟 UI 反馈
+    override fun onQuickActionEvent(action: NowPlayingAction) {
+        super.onQuickActionEvent(action)
+        
+        if (action.toString().contains("Favorite", ignoreCase = true)) {
+            val isFav = binding.rightFavoriteButton?.tag as? Boolean ?: false
+            updateFavoriteIcon(!isFav)
         }
     }
 
