@@ -202,7 +202,8 @@
             android:minHeight="3dp"
 			
             android:progressTint="?android:attr/textColorSecondary"
-            android:thumbTint="?android:attr/textColorSecondary" />
+            android:thumbTint="?android:attr/textColorSecondary" 
+			android:progressBackgroundTint="?android:attr/textColorSecondary" />
 
         <ImageView
             android:id="@+id/volumeUpIcon"
