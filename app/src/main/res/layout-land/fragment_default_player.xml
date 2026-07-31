@@ -144,8 +144,6 @@
             android:thumb="@null"
             android:minHeight="6dp"
             android:maxHeight="6dp"
-			android:progressTint="?attr/colorPrimary"
-			android:progressBackgroundTint="?attr/colorPrimary"
             app:layout_constraintBottom_toBottomOf="parent" 
             app:layout_constraintStart_toEndOf="@+id/leftCurrentTime"
             app:layout_constraintEnd_toStartOf="@+id/leftTotalTime"
