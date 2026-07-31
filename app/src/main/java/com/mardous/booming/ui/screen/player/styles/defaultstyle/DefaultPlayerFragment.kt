@@ -1,5 +1,6 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
+import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.resources.applyColor
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.sample
@@ -207,6 +208,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 if (mainColor != android.graphics.Color.TRANSPARENT) {
                                     // 自动同步进度条的主轨道 + 次轨道（背景轨）颜色
                                     slider.applyColor(mainColor)
+									val timeColor = mainColor.withAlpha(0.6f)
                                     // 自动同步左右两端时间文本的颜色，彻底杜绝发白
                                     leftCurrTime?.applyColor(mainColor)
                                     leftTotTime?.applyColor(mainColor)
@@ -299,7 +301,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         
         binding.leftSongArtistText?.let { artistText ->
-            targets.add(artistText.tintTarget(artistText.currentTextColor, scheme.onSurfaceColor))
+            // 给提取到的纯色加上 70% (0.7f) 或 60% (0.6f) 的透明度，完美复刻次要文字的质感
+          val secondaryColor = scheme.onSurfaceColor.withAlpha(0.7f) 
+          targets.add(artistText.tintTarget(artistText.currentTextColor, secondaryColor))
         }
 
         binding.leftFavoriteButton?.let { favBtn ->
