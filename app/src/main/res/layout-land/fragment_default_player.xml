@@ -31,6 +31,7 @@
     <!-- ================= 左侧区域 ================= -->
 
     <!-- 1. 自适应最大化封面 -->
+    <!-- 1. 封面：左右留出 20dp 的安全边距，1:1 自动居中 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerAlbumCoverFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -38,22 +39,24 @@
         android:layout_height="0dp"
         android:layout_marginTop="2dp"
         android:layout_marginBottom="2dp"
+        android:layout_marginStart="20dp"   
+        android:layout_marginEnd="20dp"    
         app:layout_constraintDimensionRatio="1:1"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
         app:layout_constraintStart_toStartOf="parent"
-		app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
+        app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:layout="@layout/fragment_album_cover_default"/>
 
-    <!-- 2. 原汁原味的歌曲信息与收藏（从右侧移到左侧，紧贴封面下边缘） -->
+    <!-- 2. 歌名信息：左右边距设为 8dp（比封面小），自然比封面更宽 -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/leftSongInfoContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginBottom="6dp"
-		android:layout_marginStart="12dp"
-		android:layout_marginEnd="12dp"
-        app:layout_constraintBottom_toTopOf="@+id/inlineProgressSlider"
+        android:layout_marginStart="2dp"     
+        android:layout_marginEnd="2dp"      
+        app:layout_constraintBottom_toTopOf="@+id/leftProgressContainer"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment">
 
@@ -63,7 +66,7 @@
             android:layout_height="wrap_content"
             android:singleLine="true"
             android:ellipsize="end"
-            android:textSize="18sp"
+            android:textSize="16sp"
             android:textColor="?android:attr/textColorPrimary"
             android:textStyle="bold"
             android:includeFontPadding="false" 
@@ -82,7 +85,7 @@
             android:layout_marginEnd="12dp"
             android:singleLine="true"
             android:ellipsize="end"
-            android:textSize="16sp"
+            android:textSize="14sp"
             android:alpha="0.7"
             android:textColor="?android:attr/textColorSecondary"  
             android:includeFontPadding="false"
@@ -106,25 +109,63 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- 3. 恢复原版的 Mini 进度条（带 android:thumb="@null"，绝对不跳动） -->
-    <androidx.appcompat.widget.AppCompatSeekBar
-        android:id="@+id/inlineProgressSlider"
+    <!-- 3. 进度条容器：左右边距同样设为 8dp，形成完美的超宽悬浮底座 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/leftProgressContainer"
         android:layout_width="0dp"
-        android:layout_height="24dp" 
-		android:layout_marginStart="16dp"
-		android:layout_marginEnd="16dp"
-        android:layout_marginBottom="16dp"   
-        android:background="@null"
-        android:stateListAnimator="@null"
-        android:focusable="false"
-        android:splitTrack="false"
-        android:thumb="@null"
-        android:minHeight="6dp"
-        android:maxHeight="6dp"
-        android:progressTint="?android:attr/textColorPrimary"
-        app:layout_constraintBottom_toBottomOf="parent" 
-        app:layout_constraintStart_toStartOf="parent"      
-        app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment" />
+        android:layout_height="wrap_content"
+        android:layout_marginStart="2dp"    
+        android:layout_marginEnd="2dp"      
+        android:layout_marginBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment">
+
+        <!-- 左侧当前时间 -->
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/leftCurrentTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="8sp"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="01:23" />
+
+        <!-- 中间 Mini 进度条 -->
+        <androidx.appcompat.widget.AppCompatSeekBar
+            android:id="@+id/inlineProgressSlider"
+            android:layout_width="0dp"
+            android:layout_height="24dp" 
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:background="@null"
+            android:stateListAnimator="@null"
+            android:focusable="false"
+            android:splitTrack="false"
+            android:thumb="@null"
+            android:minHeight="6dp"
+            android:maxHeight="6dp"
+            android:progressTint="?android:attr/textColorPrimary"
+            app:layout_constraintBottom_toBottomOf="parent" 
+            app:layout_constraintStart_toEndOf="@+id/leftCurrentTime"
+            app:layout_constraintEnd_toStartOf="@+id/leftTotalTime"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 右侧总时长 -->
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/leftTotalTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="8sp"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="03:45" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- ================= 右侧区域 (原封不动) ================= -->
 
