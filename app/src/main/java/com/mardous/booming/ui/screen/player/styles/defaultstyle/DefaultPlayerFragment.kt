@@ -194,7 +194,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             val currentProgress = progress.toInt()
 
                             mainSlider?.let { main ->
-                                val max = main.max
+                                val max = main.valueTo.toInt()
                                 if (slider.max != max) {
                                     slider.max = max
                                     // 🌟 镜像逻辑：切歌时同步总时长
