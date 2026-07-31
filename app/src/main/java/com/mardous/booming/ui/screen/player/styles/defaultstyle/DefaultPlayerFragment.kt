@@ -205,15 +205,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // 🌟 拦截动作下发：用于当前界面手势和点击的“乐观更新”，实现零延迟 UI 反馈
-    override fun onQuickActionEvent(action: NowPlayingAction) {
-        super.onQuickActionEvent(action)
-        
-        if (action.toString().contains("Favorite", ignoreCase = true)) {
-            val isFav = binding.rightFavoriteButton?.tag as? Boolean ?: false
-            updateFavoriteIcon(!isFav)
-        }
-    }
+  
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
