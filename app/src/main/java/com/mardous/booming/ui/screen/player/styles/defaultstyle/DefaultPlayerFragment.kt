@@ -1,5 +1,6 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
+import com.mardous.booming.extensions.resources.applyColor
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.sample
 import android.os.Bundle
@@ -192,14 +193,25 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         binding.inlineProgressSlider?.let { slider ->
                             val currentProgress = progress.toInt()
 
-                            mainSlider?.let { 
-                                val max = it.valueTo.toInt()
+                            mainSlider?.let { main ->
+                                val max = main.max
                                 if (slider.max != max) {
                                     slider.max = max
                                     // 🌟 镜像逻辑：切歌时同步总时长
                                     leftTotTime?.text = rightTotTime?.text
                                 }
-                            }
+                            
+							
+							// 🌟 核心突破：白嫖右侧 MusicSlider 实时算好的动态封面/主题色！
+                                val mainColor = main.currentColor
+                                if (mainColor != android.graphics.Color.TRANSPARENT) {
+                                    // 自动同步进度条的主轨道 + 次轨道（背景轨）颜色
+                                    slider.applyColor(mainColor)
+                                    // 自动同步左右两端时间文本的颜色，彻底杜绝发白
+                                    leftCurrTime?.applyColor(mainColor)
+                                    leftTotTime?.applyColor(mainColor)
+                                }
+                            
 
                             // 直接平滑赋值进度
                             slider.progress = currentProgress
@@ -213,7 +225,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         }
                     }
                 }
-        }
+            }
+		}
     }
 
     // 🌟 修改点 3：原本的 right 换成 left（更新红心 UI 函数）

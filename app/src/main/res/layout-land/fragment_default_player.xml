@@ -119,8 +119,9 @@
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftCurrentTime"
-            android:layout_width="36dp"			
+            android:layout_width="wrap_content"			
             android:layout_height="wrap_content"
+			android:minWidth="36dp"
 			android:gravity="center"
             android:textSize="10sp"
 			android:singleLine="true"
@@ -130,22 +131,31 @@
             app:layout_constraintTop_toTopOf="parent"
             tools:text="01:23" />
 
-        <com.mardous.booming.ui.component.views.MusicSlider
+        <androidx.appcompat.widget.AppCompatSeekBar
             android:id="@+id/inlineProgressSlider"
             android:layout_width="0dp"
             android:layout_height="24dp" 
             android:layout_marginStart="2dp"
             android:layout_marginEnd="2dp"
+            android:background="@null"
+            android:stateListAnimator="@null"
+            android:focusable="false"
+            android:splitTrack="false"
+            android:thumb="@null"
+            android:minHeight="6dp"
+            android:maxHeight="6dp"
+			android:progressTint="?attr/colorPrimary"
+			android:progressBackgroundTint="?attr/colorPrimary"
             app:layout_constraintBottom_toBottomOf="parent" 
             app:layout_constraintStart_toEndOf="@+id/leftCurrentTime"
             app:layout_constraintEnd_toStartOf="@+id/leftTotalTime"
-            app:layout_constraintTop_toTopOf="parent"
-            tools:progress="50" />
+            app:layout_constraintTop_toTopOf="parent" />
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftTotalTime"
-            android:layout_width="36dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+			android:minWidth="36dp"
 			android:gravity="center"
             android:textSize="10sp"
 			android:singleLine="true"
