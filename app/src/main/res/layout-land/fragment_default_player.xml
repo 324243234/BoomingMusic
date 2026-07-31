@@ -43,7 +43,6 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
         app:layout_constraintStart_toStartOf="parent" 
-		app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment"
         tools:layout="@layout/fragment_album_cover_default"/>
 
     <!-- 2. 歌名信息：锚定在全屏与右侧面板之间，算出的宽度绝对比封面大 -->
@@ -56,8 +55,7 @@
         android:layout_marginEnd="2dp"      
 		app:layout_constraintTop_toBottomOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintBottom_toTopOf="@+id/leftProgressContainer"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment">
+        app:layout_constraintStart_toStartOf="parent">
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftSongTitleText"
