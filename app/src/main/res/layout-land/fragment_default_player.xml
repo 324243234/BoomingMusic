@@ -51,8 +51,8 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginBottom="2dp"
-        android:layout_marginStart="6dp"    
-        android:layout_marginEnd="6dp"      
+        android:layout_marginStart="2dp"    
+        android:layout_marginEnd="2dp"      
         app:layout_constraintBottom_toTopOf="@+id/leftProgressContainer"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment">
@@ -110,8 +110,8 @@
         android:id="@+id/leftProgressContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
         android:layout_marginBottom="12dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -123,31 +123,24 @@
             android:layout_height="wrap_content"
 			android:gravity="center"
             android:textSize="10sp"
+			android:singleLine="true"
             android:textColor="?android:attr/textColorSecondary"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             tools:text="01:23" />
 
-        <androidx.appcompat.widget.AppCompatSeekBar
+        <com.mardous.booming.ui.component.views.MusicSlider
             android:id="@+id/inlineProgressSlider"
             android:layout_width="0dp"
             android:layout_height="24dp" 
             android:layout_marginStart="2dp"
             android:layout_marginEnd="2dp"
-            android:background="@null"
-            android:stateListAnimator="@null"
-            android:focusable="false"
-            android:splitTrack="false"
-            android:thumb="@null"
-            android:minHeight="6dp"
-            android:maxHeight="6dp"
-			android:progressTint="?attr/colorPrimary"
-			android:progressBackgroundTint="?attr/colorPrimary"
             app:layout_constraintBottom_toBottomOf="parent" 
             app:layout_constraintStart_toEndOf="@+id/leftCurrentTime"
             app:layout_constraintEnd_toStartOf="@+id/leftTotalTime"
-            app:layout_constraintTop_toTopOf="parent" />
+            app:layout_constraintTop_toTopOf="parent"
+            tools:progress="50" />
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftTotalTime"
@@ -155,6 +148,7 @@
             android:layout_height="wrap_content"
 			android:gravity="center"
             android:textSize="10sp"
+			android:singleLine="true"
             android:textColor="?android:attr/textColorSecondary"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
