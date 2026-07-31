@@ -49,13 +49,29 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         setupNavigationController()
 
 		// 🌟 新增：监听 Mini 播放器高度，动态垫高导航栏，防止被遮挡 🌟
+        // 🌟 修复：区分横竖屏（平板与手机）模式，动态应用 Padding 🌟
         libraryViewModel.getMiniPlayerMargin().observe(this) { margin ->
-            // 获取计算好的高度（带入屏幕安全区等计算）
             val bottomMargin = margin.getWithSpace()
+            // 判断当前是否为横屏/平板模式
+            val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             
-            // 直接利用父类定义好的 navigationView（无论它是底部的还是左侧的）
-            // 设置它底部的 Padding，把它强行“顶”上去
-            navigationView.setPadding(0, 0, 0, bottomMargin)
+            if (isLandscape) {
+                // 平板/横屏模式（侧边栏）：底部垫高，防止侧边栏底部的图标被 Mini 播放条遮挡
+                navigationView.setPadding(
+                    navigationView.paddingLeft, 
+                    navigationView.paddingTop, 
+                    navigationView.paddingRight, 
+                    bottomMargin
+                )
+            } else {
+                // 竖屏模式（底部导航栏）：不能加 bottom padding，否则底部导航栏拉高会反向遮盖 Mini 播放条
+                navigationView.setPadding(
+                    navigationView.paddingLeft, 
+                    navigationView.paddingTop, 
+                    navigationView.paddingRight, 
+                    0
+                )
+            }
         }
 		
         val shortcutManager = getSystemService<ShortcutManager>()
