@@ -250,8 +250,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val filter = output.filters.joinToString("-") { it.identifier }
             val abi = filter.ifEmpty { "universal" }
-            //output.outputFileName = "BoomingMusic-${output.versionName.get()}-${variant.flavorName}-$abi.apk"
-			output.outputFileName = "汽水音乐-${output.versionName.get()}-${variant.flavorName}-$abi.apk"
+            output.outputFileName = "汽水音乐-${output.versionName.get()}-${variant.flavorName}-$abi.apk"
         }
     }
 }
