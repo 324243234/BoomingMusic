@@ -350,7 +350,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                            .setConstantBitrateSeekingEnabled(true)
+                             
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -1047,7 +1047,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-    // 🌟 终极修复：通过 MediaSession/MediaMetadata 增量更新，彻底废除 replaceMediaItem，防 FLAC 卡死
+   // 【极速车机数据更新】：安全注入，彻底抛弃致命的 50ms 延迟双重替换
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1071,6 +1071,9 @@ class PlaybackService :
 
         val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
+            // 🌟 核心破局点：加入时间戳，强制让车机认为这是全新的数据，瞬间刷新缓存！不再需要连续替换两次！
+            putLong("carwith_timestamp", System.currentTimeMillis())
+            
             if (targetLrc.isNotEmpty()) {
                 putString(CARWITH_LYRICS_WHOLE, targetLrc)
                 putString(CARWITH_LYRICS_LINE, "")
@@ -1084,20 +1087,20 @@ class PlaybackService :
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
         }
 
-        // 构建新的 Metadata
-        val newMetadata = currentItem.mediaMetadata.buildUpon()
+        val metadataBuilder = currentItem.mediaMetadata.buildUpon()
             .setUserRating(HeartRating(isCurrentSongFavorite))
             .setExtras(newExtras)
-            .build()
+
+        val newItem = currentItem.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
 
         withContext(Main) {
-            // 🌟 关键点 1：仅修改内存中 MediaItem 的 metadata 引用，绝不调用 player.replaceMediaItem()！
-            // 这消除了对 ExoPlayer 解码抽样器（FlacExtractor）的任何干扰！
-            val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
-            
-            // 🌟 关键点 2：直接通知 MediaSession 广播最新的元数据（车机 CarWith 会自动收到更新）
-            mediaSession?.let { session ->
-                session.player.playlistMetadata = newMetadata
+            if (player.currentMediaItem?.mediaId == newItem.mediaId) {
+                try {
+                    // 只进行一次极其平滑的轻量级替换，绝不卡顿
+                    player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+                } catch (e: Exception) {
+                    Log.e("PlaybackService", "CarWith metadata replace failed", e)
+                }
             }
         }
     }
