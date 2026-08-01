@@ -522,21 +522,24 @@ class PlaybackService :
         intent: Intent
     ): Boolean {
         val ke = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-        if (ke != null && (ke.keyCode == KeyEvent.KEYCODE_HEADSETHOOK || ke.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)) {
-            if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                headsetClickCount++
-                uiHandler.removeCallbacks(headsetClickRunnable)
-                if (headsetClickCount >= 3) {
-                    uiHandler.post(headsetClickRunnable)
-                } else {
-                    uiHandler.postDelayed(headsetClickRunnable, 300)
+        
+        if (ke != null) {
+            when (ke.keyCode) {
+                // 原有的线控耳机多击逻辑
+                KeyEvent.KEYCODE_HEADSETHOOK, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        headsetClickCount++
+                        uiHandler.removeCallbacks(headsetClickRunnable)
+                        if (headsetClickCount >= 3) {
+                            uiHandler.post(headsetClickRunnable)
+                        } else {
+                            uiHandler.postDelayed(headsetClickRunnable, 300)
+                        }
+                    }
+                    return true
                 }
-            }
-            return true
-        }
-		
-		// 🌟 核心修复二：直接拦截车机方向盘传来的切歌实体键信号 🌟
-                // 绕过 Media3 内部的状态机阻截，直接指挥底层 Player 执行动作
+                
+                // 🌟 核心修复二：直接拦截车机方向盘传来的切歌实体键信号 🌟
                 KeyEvent.KEYCODE_MEDIA_NEXT -> {
                     if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
                         player.seekToNext()
@@ -552,7 +555,7 @@ class PlaybackService :
                 }
             }
         }
-		
+        
         return super.onMediaButtonEvent(session, controllerInfo, intent)
     }
 
