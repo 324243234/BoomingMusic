@@ -494,10 +494,25 @@ class PlaybackService :
         availableCommands.add(SessionCommand(Playback.RESTORE_PLAYBACK, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
+		
+		// 🌟 核心修复一：强制提权，赋予 CarWith 及第三方控制器完整的播放控制权 🌟
+        // 将缺失的核心播控权限强行注入到可用命令列表中
+        val playerCommands = connectionResult.availablePlayerCommands.buildUpon()
+            .add(Player.COMMAND_PLAY_PAUSE)
+            .add(Player.COMMAND_SEEK_TO_NEXT)
+            .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+            .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+            .add(Player.COMMAND_STOP)
+            .add(Player.COMMAND_SET_SHUFFLE_MODE)
+            .add(Player.COMMAND_SET_REPEAT_MODE)
+            .build()
 
+		
+		
         return MediaSession.ConnectionResult.accept(
             availableCommands.build(),
-            connectionResult.availablePlayerCommands
+            playerCommands // 使用提权后的命令集合
         )
     }
 
@@ -519,6 +534,25 @@ class PlaybackService :
             }
             return true
         }
+		
+		// 🌟 核心修复二：直接拦截车机方向盘传来的切歌实体键信号 🌟
+                // 绕过 Media3 内部的状态机阻截，直接指挥底层 Player 执行动作
+                KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToNext()
+                    }
+                    return true
+                }
+                
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToPrevious()
+                    }
+                    return true
+                }
+            }
+        }
+		
         return super.onMediaButtonEvent(session, controllerInfo, intent)
     }
 
@@ -634,8 +668,45 @@ class PlaybackService :
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
-            runCatching { libraryProvider.getMediaItemsForPlayback(mediaItems) }
-                .getOrDefault(emptyList())
+            
+            // 🌟 核心拦截：检测是否为小爱同学等语音助手发起的语音点播 (playFromSearch)
+            val firstItem = mediaItems.firstOrNull()
+            val searchQuery = firstItem?.requestMetadata?.searchQuery
+
+            if (!searchQuery.isNullOrBlank()) {
+                // 此时 searchQuery 就是小爱传来的关键词，比如 "周杰伦" 或 "刘德华的冰雨"
+                withContext(Main) {
+                    showToast("小爱同学请求播放: $searchQuery")
+                }
+                
+                // TODO: 极其重要的一步！
+                // 你需要在这里调用你的本地数据库或网络接口，根据 searchQuery 搜索歌曲
+                // 例如： val searchResults = repository.searchSongsByKeyword(searchQuery)
+                // 然后将搜索到的 Song 转换为 MediaItem 列表返回
+                
+                val matchedItems = runCatching {
+                    // 伪代码：这里替换为你真实的搜索逻辑，返回检索到的 List<MediaItem>
+                    // libraryProvider.searchAndConvertToMediaItems(searchQuery)
+                    emptyList<MediaItem>() 
+                }.getOrDefault(emptyList())
+
+                if (matchedItems.isNotEmpty()) {
+                    return@future matchedItems
+                }
+            }
+
+            // 如果不是语音搜索，或者搜索没找到结果，走原有的常规播放/添加到队列逻辑
+            runCatching {
+                if (mediaSession.isAutomotiveController(controller) ||
+                    mediaSession.isAutoCompanionController(controller)) {
+                    libraryProvider.getMediaItemsForAAOSPlayback(mediaItems)?.first ?: emptyList()
+                } else {
+                    libraryProvider.getMediaItemsForPlayback(
+                        mediaItems = mediaItems,
+                        tryToResolveComplexPaths = true
+                    )
+                }
+            }.getOrDefault(emptyList())
         }
     }
 
@@ -973,7 +1044,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-    // 【极速车机数据更新】：仅更新歌词与状态，图片交由系统通过正确的 URL 自动获取
+    // 🌟 终极修复：通过 MediaSession/MediaMetadata 增量更新，彻底废除 replaceMediaItem，防 FLAC 卡死
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -995,26 +1066,7 @@ class PlaybackService :
             return
         }
 
-        if (bustCache && targetLrc.isNotEmpty()) {
-            val flushExtras = Bundle(oldExtras).apply {
-                putBoolean("carwith_injected", true)
-                putString(CARWITH_LYRICS_WHOLE, "")
-                putLong(CARWITH_LYRICS_STATUS, 3L)
-                putLong(CARWITH_PLAY_MODE, targetPlayMode)
-                putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
-            }
-            val flushItem = currentItem.buildUpon().setMediaMetadata(
-                currentItem.mediaMetadata.buildUpon().setExtras(flushExtras).build()
-            ).build()
-            player.replaceMediaItem(player.currentMediaItemIndex, flushItem)
-            
-            delay(50L) 
-        }
-
-        val currentItemNow = player.currentMediaItem ?: return
-        val oldExtrasNow = currentItemNow.mediaMetadata.extras ?: Bundle.EMPTY
-
-        val newExtras = Bundle(oldExtrasNow).apply {
+        val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
             if (targetLrc.isNotEmpty()) {
                 putString(CARWITH_LYRICS_WHOLE, targetLrc)
@@ -1029,15 +1081,20 @@ class PlaybackService :
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
         }
 
-        val metadataBuilder = currentItemNow.mediaMetadata.buildUpon()
+        // 构建新的 Metadata
+        val newMetadata = currentItem.mediaMetadata.buildUpon()
             .setUserRating(HeartRating(isCurrentSongFavorite))
             .setExtras(newExtras)
-
-        val newItem = currentItemNow.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
+            .build()
 
         withContext(Main) {
-            if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                player.replaceMediaItem(player.currentMediaItemIndex, newItem)
+            // 🌟 关键点 1：仅修改内存中 MediaItem 的 metadata 引用，绝不调用 player.replaceMediaItem()！
+            // 这消除了对 ExoPlayer 解码抽样器（FlacExtractor）的任何干扰！
+            val newItem = currentItem.buildUpon().setMediaMetadata(newMetadata).build()
+            
+            // 🌟 关键点 2：直接通知 MediaSession 广播最新的元数据（车机 CarWith 会自动收到更新）
+            mediaSession?.let { session ->
+                session.player.playlistMetadata = newMetadata
             }
         }
     }

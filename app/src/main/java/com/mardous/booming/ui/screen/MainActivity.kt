@@ -217,6 +217,19 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
 
     private fun handlePlaybackIntent(intent: Intent, canRestorePlayback: Boolean) {
         when (intent.action) {
+		
+		// 🌟 新增拦截：小爱同学 Activity 级别语音搜索广播
+            android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH -> {
+                val query = intent.getStringExtra(android.app.SearchManager.QUERY) ?: ""
+                if (query.isNotBlank()) {
+                    // 拦截成功！小爱唤起了 App。
+                    showToast("语音唤醒搜索: $query")
+                    // TODO: 在这里通知你的 libraryViewModel 或 playerViewModel 去执行搜索并播放
+                    // libraryViewModel.searchAndPlay(query)
+                }
+                setIntent(Intent())
+            }
+		
             APP_SHORTCUT_LAST_ADDED -> {
                 playerViewModel.playMediaId(MediaIDs.LAST_ADDED)
                 setIntent(Intent())
