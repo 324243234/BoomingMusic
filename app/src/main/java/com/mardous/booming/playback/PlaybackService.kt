@@ -119,7 +119,6 @@ import org.koin.android.ext.android.inject
 import java.io.ByteArrayOutputStream
 import kotlin.random.Random
 
-
 @OptIn(UnstableApi::class)
 class PlaybackService :
     MediaLibraryService(),
@@ -145,11 +144,6 @@ class PlaybackService :
     private var transitionJob: Job? = null
     private var isCurrentSongFavorite = false
     private var currentRawLyricsData: String? = null
-
-    // 🌟 性能优化：小部件内存缓存，杜绝重复压缩 Bitmap 导致 CPU 满载发热
-    private var lastWidgetSongId: Long = -1L
-    private var cachedArtworkData: ByteArray? = null
-    private var cachedWidgetTheme: WidgetTheme? = null
 
     private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
@@ -344,7 +338,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                            .setConstantBitrateSeekingEnabled(true) // 🌟 100% 保留源作者原生 CBR 寻址设置
+                            .setConstantBitrateSeekingEnabled(true)
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -370,7 +364,6 @@ class PlaybackService :
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
             setId(packageName)
             setSessionActivity(createSessionActivityIntent())
-            // 已完全切断手动传给车机的 Bitmap，由车机直接读取 URL，极大降低 IPC 负担
             build()
         }
 
@@ -924,7 +917,6 @@ class PlaybackService :
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
-        // 🌟 性能防抖升级：单任务合并，连按切歌时取消上一次未完成的历史打点和数据库读写
         transitionJob?.cancel()
 
         transitionJob = serviceScope.launch(Dispatchers.IO) {
@@ -989,7 +981,6 @@ class PlaybackService :
 
             currentRawLyricsData = rawLyricsText
             
-            // 🌟 独立并行路由：蓝牙歌词和 CarWith 各不干涉，可同时正常工作
             currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
             
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
@@ -1200,6 +1191,16 @@ class PlaybackService :
                 }
                 stream.toByteArray()
             }
+            // 🌟 100% 还原原作者原汁原味的 WidgetTheme 原生逻辑
+            val widgetTheme = if (preferences.getBoolean(WIDGET_DYNAMIC_COLORS, false)) {
+                val paletteColor = bitmap?.let {
+                    PaletteProcessor.getPaletteColor(this@PlaybackService, bitmap)
+                }
+                if (paletteColor != null) {
+                    WidgetTheme(paletteColor.backgroundColor)
+                } else null
+            } else null
+
             val additionalInfo = MetadataField.getMetadataValue(
                 song = song,
                 fields = Preferences.getExtraInfoContent(
@@ -1218,7 +1219,7 @@ class PlaybackService :
                 currentArtist = song.artistName,
                 additionalInfo = additionalInfo,
                 artworkData = artworkData,
-                widgetTheme = null, // 🌟 传 null，完全避开 WidgetTheme 类，完美解决编译报错！
+                widgetTheme = widgetTheme,
                 imageCornerRadius = preferences.getInt(WIDGET_IMAGE_CORNER_RADIUS, 8).toFloat()
             )
         }
@@ -1227,7 +1228,7 @@ class PlaybackService :
     private fun updateWidgets(force: Boolean = false, isForeground: Boolean = isPlaybackOngoing) {
         widgetUpdateJob?.cancel()
         widgetUpdateJob = serviceScope.launch(Dispatchers.Main) {
-            // 🌟 严谨断流：桌面上没有小部件时，直接退出！绝不白费 CPU 做解图和压缩
+            // 🌟 只要桌面上没小部件，1毫秒内瞬间退出，不浪费 CPU 压图
             if (!hasActiveGlanceWidgets()) return@launch
 
             if (!force) delay(WIDGET_UPDATE_DEBOUNCE)
@@ -1238,7 +1239,7 @@ class PlaybackService :
             }
         }
     }
-	// 严谨检测桌面上是否存在小部件
+
     private suspend fun hasActiveGlanceWidgets(): Boolean = withContext(Dispatchers.IO) {
         try {
             val boomingWidgetIds = glanceManager.getGlanceIds(BoomingGlanceWidget::class.java)
