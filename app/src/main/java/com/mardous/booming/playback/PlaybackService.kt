@@ -348,7 +348,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                            .setConstantBitrateSeekingEnabled(true) // 🌟 核心保留：对抗 FLAC 物理坏帧的终极护盾
+                             .setConstantBitrateSeekingEnabled(true) 
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -1010,7 +1010,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-    // 🌟 最稳定/功耗最低的 CarWith 状态注入法（纯内存篡改 + 静默广播）
+    // 🌟 最安全、最纯净的 CarWith 状态注入法（隔离底层内存，绝对不碰 currentItem.extras）
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1022,7 +1022,7 @@ class PlaybackService :
         val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
         val targetLrc = currentCarWithLrc ?: ""
 
-        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle()
+        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
 
         if (!forceImageLoad && !bustCache &&
             oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
@@ -1032,6 +1032,8 @@ class PlaybackService :
             return
         }
 
+        // 🌟 核心防崩溃黑科技：创建一个完全独立的全新 Bundle 实例
+        // 绝对不能调用 oldExtras.putAll() 去污染原本正在播放中的数据源内存！
         val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
             putLong("carwith_timestamp", System.currentTimeMillis())
@@ -1051,11 +1053,8 @@ class PlaybackService :
 
         withContext(Main) {
             try {
-                // 1. 物理篡改内存，规避了 replaceMediaItem 对底层音频引擎的重载伤害
-                currentItem.mediaMetadata.extras?.putAll(newExtras)
-                
-                // 2. 将包含最新扩展信息的元数据，推入到 MediaSession 的全局通道
-                // 此广播不会惊动 ExoPlayer，但会瞬间唤醒 CarWith 车机端 UI 刷新！
+                // 将带有最新车机扩展信息的元数据，打包为纯粹的数据传递对象，
+                // 仅通过 playlistMetadata 广播给 CarWith 会话通道，彻底保护 ExoPlayer 不被打断！
                 val newMetadata = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
                 mediaSession?.player?.playlistMetadata = newMetadata
             } catch (e: Exception) {
