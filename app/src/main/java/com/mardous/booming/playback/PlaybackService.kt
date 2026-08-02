@@ -118,8 +118,6 @@ import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
@@ -145,7 +143,7 @@ class PlaybackService :
     private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
-    // CarWith 状态记录
+    // 🌟 CarWith 状态记录
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
@@ -328,7 +326,7 @@ class PlaybackService :
 
         playerThread.start()
         
-        // 🌟 完全剥离“影子替身”，使用源作者 100% 原始、最纯净的播放器工厂配置！
+        // 🌟 完全使用源作者的原始播放引擎构建，绝对没有任何影子替身拦截器
         player = AdvancedForwardingPlayer(
             ExoPlayer.Builder(this)
                 .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -481,7 +479,7 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
-        // 🌟 注入 CarWith 所需的扩展指令
+        // 🌟 注入 CarWith 所需的扩展指令，保证车机控制功能生效
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
 
@@ -530,18 +528,13 @@ class PlaybackService :
                     return true
                 }
                 
-                // 拦截车机方向盘切歌指令
+                // 🌟 拦截方向盘切歌指令，保证车机硬按键生效
                 KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                        player.seekToNext()
-                    }
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) player.seekToNext()
                     return true
                 }
-                
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                        player.seekToPrevious()
-                    }
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) player.seekToPrevious()
                     return true
                 }
             }
@@ -661,13 +654,13 @@ class PlaybackService :
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
+            // 🌟 拦截小爱同学等语音点播指令
             val firstItem = mediaItems.firstOrNull()
             val searchQuery = firstItem?.requestMetadata?.searchQuery
 
             if (!searchQuery.isNullOrBlank()) {
-                withContext(Main) { showToast("语音请求播放: $searchQuery") }
-                val matchedItems = runCatching { emptyList<MediaItem>() }.getOrDefault(emptyList())
-                if (matchedItems.isNotEmpty()) return@future matchedItems
+                withContext(Main) { showToast("语音请求: $searchQuery") }
+                return@future emptyList()
             }
 
             runCatching {
@@ -747,12 +740,12 @@ class PlaybackService :
         args: Bundle
     ): ListenableFuture<SessionResult> {
         return when (customCommand.customAction) {
-            
-            CARWITH_ACTION_COLLECT, Playback.TOGGLE_FAVORITE -> {
+
+            // 🌟 承接 CarWith 按键控制，执行后台静默广播，绝不动播放中的歌曲
+            CARWITH_ACTION_COLLECT -> {
                 toggleFavorite()
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
-
             CARWITH_ACTION_PLAY_MODE -> {
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
@@ -764,7 +757,7 @@ class PlaybackService :
                     player.shuffleModeEnabled = true
                     player.repeatMode = Player.REPEAT_MODE_ALL
                 }
-                serviceScope.launch { requestCarWithUpdate() }
+                serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
@@ -775,6 +768,11 @@ class PlaybackService :
 
             Playback.CYCLE_REPEAT -> {
                 cycleRepeat()
+                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+
+            Playback.TOGGLE_FAVORITE -> {
+                toggleFavorite()
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
@@ -893,14 +891,14 @@ class PlaybackService :
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        serviceScope.launch { requestCarWithUpdate() }
+        serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
         persistentStorage.saveState()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        serviceScope.launch { requestCarWithUpdate() }
+        serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
         persistentStorage.saveState()
     }
 
@@ -945,52 +943,50 @@ class PlaybackService :
             }
         }
 
-        // 🌟 防抖抓取歌词，并在启动时推送一次 CarWith
+        // 🌟 核心改进：废除防抖延迟，伴随歌曲播放瞬间，立刻异步抓取并一次性丢给车机！
         carWithUpdateJob?.cancel()
-        carWithUpdateJob = serviceScope.launch(Main) {
-            delay(550) 
+        carWithUpdateJob = serviceScope.launch(IO) {
             
-            val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
-            isCurrentSongFavorite = withContext(IO) {
-                if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
-            }
+            val newSong = repository.songByMediaItem(mediaItem)
+            isCurrentSongFavorite = if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
 
-            val rawLyricsText = withContext(IO) {
-                if (newSong != Song.emptySong) {
-                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                        ?: lyricsRepository.embeddedLyrics(newSong)
-                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                    
-                    var text = rawLyrics?.lyrics
-                    val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
+            var rawLyricsText: String? = null
+            if (newSong != Song.emptySong) {
+                val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                    ?: lyricsRepository.embeddedLyrics(newSong)
+                    ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                
+                var text = rawLyrics?.lyrics
+                val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
 
-                    if (isTtml) {
-                        try {
-                            val audioPath = newSong.data
-                            if (!audioPath.isNullOrBlank()) {
-                                val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
-                                val lrcFile = java.io.File(lrcPath)
-                                if (lrcFile.exists() && lrcFile.isFile) {
-                                    text = lrcFile.readText()
-                                } else {
-                                    text = null
-                                }
+                if (isTtml) {
+                    try {
+                        val audioPath = newSong.data
+                        if (!audioPath.isNullOrBlank()) {
+                            val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
+                            val lrcFile = java.io.File(lrcPath)
+                            if (lrcFile.exists() && lrcFile.isFile) {
+                                text = lrcFile.readText()
+                            } else {
+                                text = null
                             }
-                        } catch (e: Exception) {
-                            text = null
                         }
+                    } catch (e: Exception) {
+                        text = null
                     }
-                    text
-                } else null
+                }
+                rawLyricsText = text
             }
 
             currentRawLyricsData = rawLyricsText
-            currentCarWithLrc = withContext(IO) {
-                if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
+            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
+            
+            withContext(Main) {
+                refreshMediaButtonCustomLayout()
             }
             
-            refreshMediaButtonCustomLayout()
-            requestCarWithUpdate()
+            // 数据抓取完毕，立即通过静默通道一次性推给车机
+            requestCarWithSilentBroadcast(currentCarWithLrc ?: "")
         }
 
         if (player.currentMediaItemIndex == stopIndex) {
@@ -1001,50 +997,38 @@ class PlaybackService :
         updateWidgets(force = true)
     }
 
-    // 🌟 终极安全更新法：官方标准的 replaceMediaItem
-    // 由于 BluetoothLyricManager 已经被彻底干掉，这里只会因为切歌执行 1 次！
-    // 绝对不会在 30 秒中途打断 FLAC 解码，崩溃魔咒彻底终结！
-    private suspend fun requestCarWithUpdate() {
-        val currentItem = player.currentMediaItem ?: return
-
+    // 🌟 终极静默广播通道：完全独立于 ExoPlayer 当前项，100% 避免管线断裂和内存数据竞态
+    private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
         val targetPlayMode = when {
             player.shuffleModeEnabled -> 0L
             player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
             else -> 2L
         }
         val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
-        val targetLrc = currentCarWithLrc ?: ""
 
-        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
-
-        if (oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
-            oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
-            oldExtras.getString(CARWITH_COLLECT_STATUS, "") == targetCollectStatus &&
-            oldExtras.getBoolean("carwith_injected", false)) {
-            return
-        }
-
-        val newExtras = Bundle(oldExtras).apply {
+        // 构建纯粹的状态扩展包
+        val newExtras = Bundle().apply {
             putString(CARWITH_LYRICS_WHOLE, targetLrc)
             putString(CARWITH_LYRICS_LINE, "")
             putLong(CARWITH_LYRICS_STATUS, if (targetLrc.isNotEmpty()) 0L else 3L)
             putLong(CARWITH_PLAY_MODE, targetPlayMode)
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
-            putBoolean("carwith_injected", true)
             putLong("carwith_timestamp", System.currentTimeMillis())
         }
 
-        val newMeta = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
-        val newItem = currentItem.buildUpon().setMediaMetadata(newMeta).build()
-
         withContext(Main) {
             try {
-                // 这是 Media3 官方更新 metadata 最纯净的手段，不再搞替身拦截器
-                if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                    player.replaceMediaItem(player.currentMediaItemIndex, newItem)
-                }
+                // 通道一：直接向车机会话层写入自定义状态（官方推荐的独立于歌曲之外的状态通道）
+                mediaSession?.setSessionExtras(newExtras)
+                
+                // 通道二：通过轻量级的全局播放列表元数据变更触发车机响应。
+                // 这里只传入了一个空壳 Metadata，由于绝不携带原歌曲几十KB/几MB的图片和信息，彻底排除了 1MB IPC 溢出风险！
+                val triggerMetadata = MediaMetadata.Builder().setExtras(newExtras).build()
+                mediaSession?.player?.playlistMetadata = triggerMetadata
+                
+                // ⚠️ 此处再也没有任何一行代码去碰 player.currentMediaItem！
             } catch (e: Exception) {
-                Log.e("PlaybackService", "CarWith update failed", e)
+                Log.e("PlaybackService", "Silent CarWith broadcast failed", e)
             }
         }
     }
@@ -1088,7 +1072,8 @@ class PlaybackService :
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    serviceScope.launch { requestCarWithUpdate() }
+                    // 翻译切换，直接静默广播，不打断歌曲
+                    serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
                 }
             }
 
@@ -1157,7 +1142,8 @@ class PlaybackService :
             Bundle.EMPTY
         )
         
-        requestCarWithUpdate()
+        // 收藏状态变更，直接静默广播，不打断歌曲
+        requestCarWithSilentBroadcast(currentCarWithLrc ?: "")
     }
 
     private suspend fun buildPlaybackState(isForeground: Boolean): PlaybackState {
@@ -1382,6 +1368,7 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1461,6 +1448,7 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
+                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
