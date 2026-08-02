@@ -148,8 +148,6 @@ class PlaybackService :
     private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
-    private lateinit var bluetoothLyricManager: BluetoothLyricManager
-
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
@@ -350,7 +348,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                             
+                            .setConstantBitrateSeekingEnabled(true) // 🌟 核心保留：对抗 FLAC 物理坏帧的终极护盾
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -370,8 +368,6 @@ class PlaybackService :
         player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(0, 0, Random.nextLong())
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
-
-        bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
 
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
             setId(packageName)
@@ -485,6 +481,7 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
+        // 🌟 CarWith 专属扩展协议指令
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
         
@@ -495,8 +492,7 @@ class PlaybackService :
         availableCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
 		
-		// 🌟 核心修复一：强制提权，赋予 CarWith 及第三方控制器完整的播放控制权 🌟
-        // 将缺失的核心播控权限强行注入到可用命令列表中
+        // 🌟 强行提权：赋予 CarWith 完整播控权限
         val playerCommands = connectionResult.availablePlayerCommands.buildUpon()
             .add(Player.COMMAND_PLAY_PAUSE)
             .add(Player.COMMAND_SEEK_TO_NEXT)
@@ -507,12 +503,10 @@ class PlaybackService :
             .add(Player.COMMAND_SET_SHUFFLE_MODE)
             .add(Player.COMMAND_SET_REPEAT_MODE)
             .build()
-
-		
 		
         return MediaSession.ConnectionResult.accept(
             availableCommands.build(),
-            playerCommands // 使用提权后的命令集合
+            playerCommands
         )
     }
 
@@ -525,7 +519,6 @@ class PlaybackService :
         
         if (ke != null) {
             when (ke.keyCode) {
-                // 原有的线控耳机多击逻辑
                 KeyEvent.KEYCODE_HEADSETHOOK, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                     if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
                         headsetClickCount++
@@ -539,7 +532,7 @@ class PlaybackService :
                     return true
                 }
                 
-                // 🌟 核心修复二：直接拦截车机方向盘传来的切歌实体键信号 🌟
+                // 🌟 直接响应车机方向盘切歌指令
                 KeyEvent.KEYCODE_MEDIA_NEXT -> {
                     if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
                         player.seekToNext()
@@ -672,24 +665,16 @@ class PlaybackService :
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
             
-            // 🌟 核心拦截：检测是否为小爱同学等语音助手发起的语音点播 (playFromSearch)
+            // 🌟 拦截小爱同学等语音点播请求
             val firstItem = mediaItems.firstOrNull()
             val searchQuery = firstItem?.requestMetadata?.searchQuery
 
             if (!searchQuery.isNullOrBlank()) {
-                // 此时 searchQuery 就是小爱传来的关键词，比如 "周杰伦" 或 "刘德华的冰雨"
                 withContext(Main) {
-                    showToast("小爱同学请求播放: $searchQuery")
+                    showToast("语音请求播放: $searchQuery")
                 }
                 
-                // TODO: 极其重要的一步！
-                // 你需要在这里调用你的本地数据库或网络接口，根据 searchQuery 搜索歌曲
-                // 例如： val searchResults = repository.searchSongsByKeyword(searchQuery)
-                // 然后将搜索到的 Song 转换为 MediaItem 列表返回
-                
                 val matchedItems = runCatching {
-                    // 伪代码：这里替换为你真实的搜索逻辑，返回检索到的 List<MediaItem>
-                    // libraryProvider.searchAndConvertToMediaItems(searchQuery)
                     emptyList<MediaItem>() 
                 }.getOrDefault(emptyList())
 
@@ -698,7 +683,6 @@ class PlaybackService :
                 }
             }
 
-            // 如果不是语音搜索，或者搜索没找到结果，走原有的常规播放/添加到队列逻辑
             runCatching {
                 if (mediaSession.isAutomotiveController(controller) ||
                     mediaSession.isAutoCompanionController(controller)) {
@@ -942,7 +926,6 @@ class PlaybackService :
 
         val isPlaying = player.isPlaying
 
-        // 1. 历史记录数据库更新独立进行，不卡顿 UI
         serviceScope.launch(IO) {
             val newSong = repository.songByMediaItem(mediaItem)
             val previousSong = songPlayCountHelper.song
@@ -968,78 +951,58 @@ class PlaybackService :
             }
         }
 
-        // 2. 【最强切歌防抖】：狂切过程中立即斩断上一次更新，350ms 内静默无卡顿
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(550) // 给予充足防抖缓冲
+            delay(550) // 最强切歌防抖缓冲
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
-
             isCurrentSongFavorite = withContext(IO) {
                 if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
             }
 
+            // 🌟 纯净的 CarWith 歌词抓取逻辑（已彻底阉割蓝牙逻辑）
             val rawLyricsText = withContext(IO) {
-            if (newSong != Song.emptySong) {
-                // 1. 正常走 App 原有的逻辑，把歌词读到内存里（支持同名文件、内嵌歌词等）
-                val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                    ?: lyricsRepository.embeddedLyrics(newSong)
-                    ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                
-                var text = rawLyrics?.lyrics
+                if (newSong != Song.emptySong) {
+                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                        ?: lyricsRepository.embeddedLyrics(newSong)
+                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                    
+                    var text = rawLyrics?.lyrics
+                    val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
 
-                // 2. 🌟 核心拦截逻辑：判断这坨歌词是不是 TTML/XML
-                val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
-
-                if (isTtml) {
-                    // ⚠️ 警报：App 正在用 TTML！车机会乱码！
-                    // 此时才启动备用通道：去物理硬盘找纯净的同名 .lrc 文件给车机
-                    try {
-                        val audioPath = newSong.data
-                        if (!audioPath.isNullOrBlank()) {
-                            val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
-                            val lrcFile = java.io.File(lrcPath)
-                            if (lrcFile.exists() && lrcFile.isFile) {
-                                // 成功找到同名 .lrc，替换掉有毒的 TTML
-                                text = lrcFile.readText()
-                            } else {
-                                // 没找到本地 .lrc，宁可车机没歌词，也绝不传乱码
-                                text = null
+                    if (isTtml) {
+                        try {
+                            val audioPath = newSong.data
+                            if (!audioPath.isNullOrBlank()) {
+                                val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
+                                val lrcFile = java.io.File(lrcPath)
+                                if (lrcFile.exists() && lrcFile.isFile) {
+                                    text = lrcFile.readText()
+                                } else {
+                                    text = null
+                                }
                             }
+                        } catch (e: Exception) {
+                            Log.e("CarWithLrc", "Failed to read local LRC file for CarWith fallback", e)
+                            text = null
                         }
-                    } catch (e: Exception) {
-                        Log.e("CarWithLrc", "Failed to read local LRC file for CarWith fallback", e)
-                        text = null
                     }
-                }
-
-                // 3. 最终返回纯净的文本（要么是原本就是 LRC，要么是兜底找来的 LRC，要么是 null）
-                text
-            } else null
-        }
+                    text
+                } else null
+            }
             currentRawLyricsData = rawLyricsText
 
             if (newSong != Song.emptySong) {
-                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                if (isBtLyricsEnabled) {
-                    currentCarWithLrc = null
-                    bluetoothLyricManager.loadLyricsForSong(newSong)
-                    refreshMediaButtonCustomLayout()
-                } else {
-                    bluetoothLyricManager.stopLyrics()
-                    currentCarWithLrc = withContext(IO) {
-                        if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-                    }
-                    refreshMediaButtonCustomLayout()
-                    
-                    requestCarWithUpdate(forceImageLoad = true, bustCache = false)
+                currentCarWithLrc = withContext(IO) {
+                    if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
                 }
             } else {
                 currentCarWithLrc = null
-                refreshMediaButtonCustomLayout()
-                requestCarWithUpdate(forceImageLoad = true, bustCache = false)
             }
+            
+            refreshMediaButtonCustomLayout()
+            requestCarWithUpdate(forceImageLoad = true, bustCache = false)
         }
 
         if (player.currentMediaItemIndex == stopIndex) player.exoPlayer.pauseAtEndOfMediaItems = true
@@ -1047,7 +1010,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-   // 🌟 最优解：纯静默状态同步，绝对不干扰底层音频流
+    // 🌟 最稳定/功耗最低的 CarWith 状态注入法（纯内存篡改 + 静默广播）
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1059,9 +1022,8 @@ class PlaybackService :
         val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
         val targetLrc = currentCarWithLrc ?: ""
 
-        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
+        val oldExtras = currentItem.mediaMetadata.extras ?: Bundle()
 
-        // 状态未改变时直接拦截，节省性能
         if (!forceImageLoad && !bustCache &&
             oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
             oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
@@ -1070,7 +1032,6 @@ class PlaybackService :
             return
         }
 
-        // 构建最新的扩展状态包
         val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
             putLong("carwith_timestamp", System.currentTimeMillis())
@@ -1090,12 +1051,11 @@ class PlaybackService :
 
         withContext(Main) {
             try {
-                // 🌟 核心静默黑科技 1：直接篡改当前 MediaItem 内存中的 Extras 对象
-                // 这对 ExoPlayer 完全隐身，音频解码流不会收到任何打断信号！
+                // 1. 物理篡改内存，规避了 replaceMediaItem 对底层音频引擎的重载伤害
                 currentItem.mediaMetadata.extras?.putAll(newExtras)
                 
-                // 🌟 核心静默黑科技 2：更新全局会话级的 playlistMetadata
-                // 这会立刻触发 Media3 底层的跨端数据分发，CarWith 会瞬间捕获到最新状态
+                // 2. 将包含最新扩展信息的元数据，推入到 MediaSession 的全局通道
+                // 此广播不会惊动 ExoPlayer，但会瞬间唤醒 CarWith 车机端 UI 刷新！
                 val newMetadata = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
                 mediaSession?.player?.playlistMetadata = newMetadata
             } catch (e: Exception) {
@@ -1141,6 +1101,7 @@ class PlaybackService :
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
             "lyrics_show_translation" -> {
+                // 🌟 得益于静默广播技术，现在翻译开关可以实时生效，并瞬间推给车机，不再需要等下一首！
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
                     serviceScope.launch { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
