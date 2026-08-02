@@ -932,6 +932,7 @@ class PlaybackService :
             }
         }
 
+        // 🌟 切歌时立刻一次性抓取歌词并通过静默广播推给车机，ExoPlayer 绝对不受任何干扰！
         carWithUpdateJob?.cancel()
         carWithUpdateJob = serviceScope.launch(Dispatchers.IO) {
             val newSong = repository.songByMediaItem(mediaItem)
@@ -984,7 +985,7 @@ class PlaybackService :
     }
 
     private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
-        // 🌟 Safe player state reads on Main thread to fix thread exception!
+        // 🌟 严格切回 Main 主线程安全读取 Player 状态，彻底解决线程违规崩溃
         val (targetPlayMode, targetCollectStatus) = withContext(Dispatchers.Main) {
             val playMode = when {
                 player.shuffleModeEnabled -> 0L
