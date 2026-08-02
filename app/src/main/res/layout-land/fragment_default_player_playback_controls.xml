@@ -126,11 +126,11 @@
         android:id="@+id/playPauseButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
+        android:layout_marginBottom="16dp"
         android:importantForAccessibility="no"
         app:srcCompat="@drawable/ic_pause_24dp"
         app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintBottom_toTopOf="@+id/volumeContainer"
+        app:layout_constraintBottom_toTopOf="@+id/queueInfo"
         app:layout_constraintEnd_toStartOf="@+id/nextButton"
         app:layout_constraintStart_toEndOf="@+id/previousButton" />
 
@@ -156,87 +156,11 @@
         app:layout_constraintStart_toEndOf="@+id/nextButton"
         app:layout_constraintTop_toTopOf="@+id/nextButton"/>
 
-<!-- 【回归经典】：废弃 M3 强制变形的 Slider，换成轻量完美的 AppCompatSeekBar -->
-    <LinearLayout
-        android:id="@+id/volumeContainer"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="8dp"
-		android:layout_marginStart="15dp" 
-        android:layout_marginEnd="15dp" 
-		 
-        android:focusable="false"
-        android:focusableInTouchMode="false"
-        android:descendantFocusability="blocksDescendants" 
-         
-		app:layout_constraintStart_toEndOf="@+id/progressGuideline"
-        app:layout_constraintEnd_toStartOf="@+id/durationGuideline"
-         
-        app:layout_constraintBottom_toTopOf="@+id/songInfo">
-
-        <ImageView
-            android:id="@+id/volumeDownIcon"
-            android:layout_width="14dp"
-            android:layout_height="14dp"
-            android:src="@drawable/ic_volume_down_24dp"
-            app:tint="?android:attr/textColorSecondary" />
-
-        <androidx.appcompat.widget.AppCompatSeekBar
-            android:id="@+id/volumeSlider"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-			android:background="@null"
-			
-            android:stateListAnimator="@null"
-			android:duplicateParentState="false"
-			
-			android:focusable="false"
-            android:focusableInTouchMode="false"
-            android:splitTrack="false"
-            android:maxHeight="3dp"
-            android:minHeight="3dp"
-			
-            android:progressTint="?android:attr/textColorSecondary"
-            android:thumbTint="?android:attr/textColorSecondary" 
-			android:progressBackgroundTint="?android:attr/textColorSecondary" />
-
-        <ImageView
-            android:id="@+id/volumeUpIcon"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:src="@drawable/ic_volume_up_24dp"
-            app:tint="?android:attr/textColorSecondary" />
-    </LinearLayout>
-
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/songInfo"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:layout_marginBottom="8dp"
-        android:gravity="center"
-        android:freezesText="true"
-        android:singleLine="true"
-        android:ellipsize="marquee"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:textAppearance="?textAppearanceLabelMedium"
-        android:textColor="?android:attr/textColorSecondary"
-        app:layout_constraintBottom_toTopOf="@+id/queueInfo"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        tools:text="@tools:sample/lorem/random"/>
-
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/queueInfo"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:paddingTop="8dp"
+        android:paddingTop="16dp"
         android:paddingBottom="16dp"
         android:paddingStart="48dp"
         android:paddingEnd="48dp"

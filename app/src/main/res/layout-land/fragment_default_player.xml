@@ -20,161 +20,24 @@
         android:visibility="gone"
         tools:src="@tools:sample/backgrounds/scenic"/>
 
-    <TextView
-        android:id="@+id/leftCoverInfoText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
-
-    <!-- ================= 左侧区域 (以封面为核心基准) ================= -->
-
-    <!-- 1. 封面：仅靠左，无右约束。高度自适应撑满，1:1 自动算出绝对宽度 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerAlbumCoverFragment"
         android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="0dp"
-        android:layout_marginBottom="0dp"
-        android:layout_marginStart="24dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
         app:layout_constraintDimensionRatio="1:1"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
-        app:layout_constraintStart_toStartOf="parent" 
-        tools:layout="@layout/fragment_album_cover_default"/>
-
-    <!-- 2. 歌名信息：锚定在全屏与右侧面板之间，算出的宽度绝对比封面大 -->
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/leftSongInfoContainer"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="2dp"
-        android:layout_marginStart="2dp"    
-        android:layout_marginEnd="2dp"      
-		app:layout_constraintTop_toBottomOf="@+id/playerAlbumCoverFragment"
-        app:layout_constraintBottom_toTopOf="@+id/leftProgressContainer"
-		app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/leftSongTitleText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:singleLine="true"
-            android:ellipsize="end"
-            android:textSize="18sp"
-            android:textColor="?android:attr/textColorPrimary"
-            android:textStyle="bold"
-            android:includeFontPadding="false" 
-            app:layout_constraintHorizontal_chainStyle="packed"
-            app:layout_constraintHorizontal_bias="0.0" 
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/leftSongArtistText"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/leftSongArtistText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="12dp"
-            android:singleLine="true"
-            android:ellipsize="end"
-            android:textSize="17sp"
-            android:textColor="?android:attr/textColorSecondary"  
-            android:includeFontPadding="false"
-            app:layout_constrainedWidth="true"
-            app:layout_constraintStart_toEndOf="@+id/leftSongTitleText"
-            app:layout_constraintEnd_toStartOf="@+id/leftFavoriteButton"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" />
-
-        <ImageView
-            android:id="@+id/leftFavoriteButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:padding="4dp"
-            android:src="@drawable/ic_favorite_outline_24dp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" />
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <!-- 3. 进度条容器：同样锚定，两端绝对超出封面各 16dp，实现完美悬浮感 -->
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/leftProgressContainer"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="0dp"
-        android:layout_marginEnd="0dp"
-        android:layout_marginBottom="12dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment">
+        tools:layout="@layout/fragment_album_cover_default"/>
 
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/leftCurrentTime"
-            android:layout_width="wrap_content"			
-            android:layout_height="wrap_content"
-			android:minWidth="33dp"
-			android:gravity="center"
-            android:textSize="12sp"
-			android:singleLine="true"
-            android:textColor="?android:attr/textColorSecondary"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            tools:text="01:23" />
-
-        <androidx.appcompat.widget.AppCompatSeekBar
-            android:id="@+id/inlineProgressSlider"
-            android:layout_width="0dp"
-            android:layout_height="24dp" 
-            android:layout_marginStart="0dp"
-            android:layout_marginEnd="0dp"
-            android:background="@null"
-            android:stateListAnimator="@null"
-            android:focusable="false"
-            android:splitTrack="false"
-            android:thumb="@null"
-            android:minHeight="6dp"
-            android:maxHeight="6dp"
-            app:layout_constraintBottom_toBottomOf="parent" 
-            app:layout_constraintStart_toEndOf="@+id/leftCurrentTime"
-            app:layout_constraintEnd_toStartOf="@+id/leftTotalTime"
-            app:layout_constraintTop_toTopOf="parent" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/leftTotalTime"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-			android:minWidth="33dp"
-			android:gravity="center"
-            android:textSize="12sp"
-			android:singleLine="true"
-            android:textColor="?android:attr/textColorSecondary"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            tools:text="03:45" />
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <!-- ================= 右侧区域 (跟着封面的宽度走，绝不互相挤压) ================= -->
-
-    <!-- 右侧控制面板：起始位置紧跟在封面右侧 24dp 处 -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playbackControlsFragment"
         android:name="com.mardous.booming.ui.screen.player.styles.defaultstyle.DefaultPlayerControlsFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginStart="24dp" 
-        android:layout_marginEnd="16dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/toolbar"
         app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
@@ -192,19 +55,5 @@
         app:layout_constraintStart_toStartOf="@+id/playbackControlsFragment"
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:menu="@menu/menu_now_playing"/>
-
-    <!-- 歌词容器：和控制面板保持一样的对齐方式 -->
-    <androidx.fragment.app.FragmentContainerView
-        android:id="@+id/rightLyricsFragment"
-        android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="10dp"        
-        android:visibility="invisible"
-        android:elevation="5dp" 
-        app:layout_constraintTop_toTopOf="parent" 
-        app:layout_constraintBottom_toBottomOf="parent" 
-        app:layout_constraintStart_toStartOf="@+id/playbackControlsFragment"
-        app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
