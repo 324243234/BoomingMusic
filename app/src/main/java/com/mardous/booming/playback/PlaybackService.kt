@@ -1047,7 +1047,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-   // 【极速车机数据更新】：安全注入，彻底抛弃致命的 50ms 延迟双重替换
+   // 🌟 最优解：纯静默状态同步，绝对不干扰底层音频流
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1061,6 +1061,7 @@ class PlaybackService :
 
         val oldExtras = currentItem.mediaMetadata.extras ?: Bundle.EMPTY
 
+        // 状态未改变时直接拦截，节省性能
         if (!forceImageLoad && !bustCache &&
             oldExtras.getString(CARWITH_LYRICS_WHOLE, "") == targetLrc &&
             oldExtras.getLong(CARWITH_PLAY_MODE, -1L) == targetPlayMode &&
@@ -1069,9 +1070,9 @@ class PlaybackService :
             return
         }
 
+        // 构建最新的扩展状态包
         val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
-            // 🌟 核心破局点：加入时间戳，强制让车机认为这是全新的数据，瞬间刷新缓存！不再需要连续替换两次！
             putLong("carwith_timestamp", System.currentTimeMillis())
             
             if (targetLrc.isNotEmpty()) {
@@ -1087,20 +1088,18 @@ class PlaybackService :
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
         }
 
-        val metadataBuilder = currentItem.mediaMetadata.buildUpon()
-            .setUserRating(HeartRating(isCurrentSongFavorite))
-            .setExtras(newExtras)
-
-        val newItem = currentItem.buildUpon().setMediaMetadata(metadataBuilder.build()).build()
-
         withContext(Main) {
-            if (player.currentMediaItem?.mediaId == newItem.mediaId) {
-                try {
-                    // 只进行一次极其平滑的轻量级替换，绝不卡顿
-                    player.replaceMediaItem(player.currentMediaItemIndex, newItem)
-                } catch (e: Exception) {
-                    Log.e("PlaybackService", "CarWith metadata replace failed", e)
-                }
+            try {
+                // 🌟 核心静默黑科技 1：直接篡改当前 MediaItem 内存中的 Extras 对象
+                // 这对 ExoPlayer 完全隐身，音频解码流不会收到任何打断信号！
+                currentItem.mediaMetadata.extras?.putAll(newExtras)
+                
+                // 🌟 核心静默黑科技 2：更新全局会话级的 playlistMetadata
+                // 这会立刻触发 Media3 底层的跨端数据分发，CarWith 会瞬间捕获到最新状态
+                val newMetadata = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
+                mediaSession?.player?.playlistMetadata = newMetadata
+            } catch (e: Exception) {
+                Log.e("PlaybackService", "Silent CarWith update failed", e)
             }
         }
     }

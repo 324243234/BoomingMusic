@@ -89,8 +89,8 @@ android {
 
         //applicationId = namespace
 		
-		applicationId = "com.luna.music"   //改的
-		
+		//applicationId = "com.luna.music"   //改的
+		applicationId = "com.kugou.android"
         versionCode = 1310102
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)
