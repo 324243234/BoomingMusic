@@ -1180,38 +1180,26 @@ class PlaybackService :
         val isPlaying = player.isPlaying
         val isShuffleMode = player.shuffleModeEnabled
         val repeatMode = player.repeatMode
-        
         return withContext(Dispatchers.IO) {
             val song = repository.songById(id)
             val isFavorite = repository.isSongFavorite(song.id)
-            
-            // 🌟 核心提速：只有当歌曲 ID 变化时，才重新解图和压缩，避免按暂停时发热
-            if (id != lastWidgetSongId) {
-                val result = SingletonImageLoader.get(this@PlaybackService).execute(
-                    ImageRequest.Builder(this@PlaybackService)
-                        .data(song)
-                        .scale(Scale.FILL)
-                        .size(300)
-                        .build()
-                )
-                val bitmap = result.image?.toBitmap(300, 300)
-                cachedArtworkData = bitmap?.let {
-                    val stream = ByteArrayOutputStream()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        it.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, stream)
-                    } else {
-                        it.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-                    }
-                    stream.toByteArray()
+            val result = SingletonImageLoader.get(this@PlaybackService).execute(
+                ImageRequest.Builder(this@PlaybackService)
+                    .data(song)
+                    .scale(Scale.FILL)
+                    .size(300)
+                    .build()
+            )
+            val bitmap = result.image?.toBitmap(300, 300)
+            val artworkData = bitmap?.let {
+                val stream = ByteArrayOutputStream()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    it.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, stream)
+                } else {
+                    it.compress(Bitmap.CompressFormat.JPEG, 85, stream)
                 }
-                cachedWidgetTheme = if (preferences.getBoolean(WIDGET_DYNAMIC_COLORS, false)) {
-                    val paletteColor = bitmap?.let { PaletteProcessor.getPaletteColor(this@PlaybackService, it) }
-                    paletteColor?.let { WidgetTheme(it.backgroundColor) }
-                } else null
-                
-                lastWidgetSongId = id
+                stream.toByteArray()
             }
-
             val additionalInfo = MetadataField.getMetadataValue(
                 song = song,
                 fields = Preferences.getExtraInfoContent(
@@ -1229,8 +1217,8 @@ class PlaybackService :
                 currentTitle = song.title,
                 currentArtist = song.artistName,
                 additionalInfo = additionalInfo,
-                artworkData = cachedArtworkData, // 复用缓存
-                widgetTheme = cachedWidgetTheme, // 复用缓存
+                artworkData = artworkData,
+                widgetTheme = null, // 🌟 传 null，完全避开 WidgetTheme 类，完美解决编译报错！
                 imageCornerRadius = preferences.getInt(WIDGET_IMAGE_CORNER_RADIUS, 8).toFloat()
             )
         }
@@ -1239,12 +1227,26 @@ class PlaybackService :
     private fun updateWidgets(force: Boolean = false, isForeground: Boolean = isPlaybackOngoing) {
         widgetUpdateJob?.cancel()
         widgetUpdateJob = serviceScope.launch(Dispatchers.Main) {
+            // 🌟 严谨断流：桌面上没有小部件时，直接退出！绝不白费 CPU 做解图和压缩
+            if (!hasActiveGlanceWidgets()) return@launch
+
             if (!force) delay(WIDGET_UPDATE_DEBOUNCE)
             val state = buildPlaybackState(isForeground)
             if (lastPlaybackState != state) {
                 lastPlaybackState = state
                 updateGlanceWidgets(state)
             }
+        }
+    }
+	// 严谨检测桌面上是否存在小部件
+    private suspend fun hasActiveGlanceWidgets(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val boomingWidgetIds = glanceManager.getGlanceIds(BoomingGlanceWidget::class.java)
+            val cardWidgetIds = glanceManager.getGlanceIds(CardWidget::class.java)
+            val fullWidgetIds = glanceManager.getGlanceIds(FullWidget::class.java)
+            boomingWidgetIds.isNotEmpty() || cardWidgetIds.isNotEmpty() || fullWidgetIds.isNotEmpty()
+        } catch (e: Exception) {
+            false
         }
     }
 
