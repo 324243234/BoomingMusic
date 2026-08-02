@@ -1,31 +1,20 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
 import android.animation.Animator
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.TimeInterpolator
+import android.content.Context
 import android.content.SharedPreferences
+
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
+
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.widget.ImageView
+import android.widget.SeekBar // 引入经典的 SeekBar
 import android.widget.TextView
 import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
@@ -51,13 +40,23 @@ import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import java.util.LinkedList
 
-/**
- * @author Christians M. A. (mardous)
- */
 class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_default_player_playback_controls) {
 
     private var _binding: FragmentDefaultPlayerPlaybackControlsBinding? = null
     private val binding get() = _binding!!
+
+    private lateinit var audioManager: AudioManager
+    private val volumeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val slider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+                if (slider != null && slider.progress != newVolume) {
+                    slider.progress = newVolume
+                }
+            }
+        }
+    }
 
     override val playPauseFab: FloatingActionButton
         get() = binding.playPauseButton
@@ -97,6 +96,36 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         binding.previousButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_PREVIOUS))
 
         setupQueueInfoView()
+        setupVolumeSlider()
+    }
+
+    private fun setupVolumeSlider() {
+        audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider) ?: return
+
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+        volumeSlider.max = maxVolume
+        volumeSlider.progress = currentVolume
+
+        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        
+        androidx.core.content.ContextCompat.registerReceiver(
+    requireContext(),
+    volumeReceiver,
+    android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+    androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+     )
     }
 
     override fun onCreatePlayerAnimator(): PlayerAnimator {
@@ -158,25 +187,27 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
         super.onSharedPreferenceChanged(sharedPreferences, key)
         when(key) {
-            DISPLAY_NEXT_SONG -> {
-                setupQueueInfoView()
-            }
+            DISPLAY_NEXT_SONG -> setupQueueInfoView()
         }
     }
 
     override fun onDestroyView() {
+	    runCatching { requireContext().unregisterReceiver(volumeReceiver) }
         super.onDestroyView()
         _binding = null
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor
-            ?: Color.TRANSPARENT
-
+        val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldControlColor = binding.nextButton.iconTint.defaultColor
         val oldSliderColor = binding.progressSlider.currentColor
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
+        
+        val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
+        val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
             scheme.onSurfaceColor
@@ -184,17 +215,31 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             scheme.primaryColor
         }
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
-        val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newShuffleColor = getPlaybackControlsColor(isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
-        val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newRepeatColor = getPlaybackControlsColor(isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
+        
+        volumeSlider?.let { slider ->
+            val activeList = android.content.res.ColorStateList.valueOf(newEmphasisColor)
+            // 🛡️ 增加拦截护盾：如果颜色没变，绝对不允许重复赋值！
+            if (slider.progressTintList?.defaultColor != newEmphasisColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
+        }
+		// ✅ 使用这个方案：蹭主进度条的 newEmphasisColor 色值，绝对零开销！
+        val inlineSlider = view?.rootView?.findViewById<SeekBar>(R.id.inlineProgressSlider)
+        inlineSlider?.let { slider ->
+            val activeList = android.content.res.ColorStateList.valueOf(newEmphasisColor)
+            if (slider.progressTintList?.defaultColor != newEmphasisColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
+        }
+		// ✅ 3. 左侧歌名文字：抓取左侧文本，准备镜像
+        val leftInfoText = view?.rootView?.findViewById<TextView>(R.id.leftCoverInfoText)
+        val oldLeftTextColor = leftInfoText?.currentTextColor ?: oldPrimaryTextColor
+
         return listOfNotNull(
             binding.playPauseButton.tintTarget(oldPlayPauseColor, newEmphasisColor),
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
@@ -206,8 +251,12 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songInfo?.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.queueInfo.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+			// 🔑 终极镜像：左侧歌名完美复刻右侧歌名的变色逻辑 (scheme.onSurfaceColor)
+            leftInfoText?.tintTarget(oldLeftTextColor, scheme.onSurfaceColor),
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
+            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
+            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
         )
     }
 
@@ -222,9 +271,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
                     PropertyValuesHolder.ofFloat(View.SCALE_X, 1f),
                     PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f),
                     PropertyValuesHolder.ofFloat(View.ROTATION, 360f)
-                ).apply {
-                    setInterpolator(DecelerateInterpolator())
-                }
+                ).apply { setInterpolator(DecelerateInterpolator()) }
             )
             addScaleAnimation(animators, binding.shuffleButton, interpolator, 100)
             addScaleAnimation(animators, binding.repeatButton, interpolator, 100)
@@ -235,11 +282,7 @@ class DefaultPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragmen
         }
 
         override fun onPrepareForAnimation() {
-            binding.playPauseButton.apply {
-                scaleX = 0f
-                scaleY = 0f
-                rotation = 0f
-            }
+            binding.playPauseButton.apply { scaleX = 0f; scaleY = 0f; rotation = 0f }
             prepareForScaleAnimation(binding.previousButton)
             prepareForScaleAnimation(binding.nextButton)
             prepareForScaleAnimation(binding.shuffleButton)
