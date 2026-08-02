@@ -141,9 +141,14 @@ class PlaybackService :
     private lateinit var bluetoothLyricManager: BluetoothLyricManager
 
     private var currentCarWithLrc: String? = null
-    private var carWithUpdateJob: Job? = null
+    private var transitionJob: Job? = null
     private var isCurrentSongFavorite = false
     private var currentRawLyricsData: String? = null
+
+    // 🌟 性能优化：小部件内存缓存，杜绝重复压缩 Bitmap 导致 CPU 满载发热
+    private var lastWidgetSongId: Long = -1L
+    private var cachedArtworkData: ByteArray? = null
+    private var cachedWidgetTheme: WidgetTheme? = null
 
     private fun processLrcAndInterlude(lrc: String?): String {
         if (lrc.isNullOrBlank()) return ""
@@ -159,7 +164,6 @@ class PlaybackService :
             val textPart = line.substringAfter("]").trim()
             if (textPart.isEmpty()) continue
 
-            // 🌟 移除了 50ms 延迟，做到原汁原味的 0 毫秒绝对对齐
             val adjustedTime = parseLrcTimeMsSafe(line)
             if (adjustedTime <= 0L && !line.startsWith("[00:00")) continue
 
@@ -339,7 +343,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                            .setConstantBitrateSeekingEnabled(true)
+                            .setConstantBitrateSeekingEnabled(true) // 🌟 100% 保留源作者原生 CBR 寻址设置
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -360,13 +364,12 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        // 初始化蓝牙歌词组件，内部逻辑依据开关自动控制
         bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
 
         mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
             setId(packageName)
             setSessionActivity(createSessionActivityIntent())
-            setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this@PlaybackService)))
+            // 已完全切断手动传给车机的 Bitmap，由车机直接读取 URL，极大降低 IPC 负担
             build()
         }
 
@@ -920,7 +923,10 @@ class PlaybackService :
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
-        serviceScope.launch(Dispatchers.IO) {
+        // 🌟 性能防抖升级：单任务合并，连按切歌时取消上一次未完成的历史打点和数据库读写
+        transitionJob?.cancel()
+
+        transitionJob = serviceScope.launch(Dispatchers.IO) {
             val newSong = repository.songByMediaItem(mediaItem)
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
@@ -932,36 +938,24 @@ class PlaybackService :
                     repository.upsertSongInHistory(newSong)
                 }
                 if (NetworkFeature.Lastfm.NowPlaying.isAvailable) {
-                    launch { repository.updateNowPlaying(ScrobblingService.Lastfm, newSong) }
+                    repository.updateNowPlaying(ScrobblingService.Lastfm, newSong)
                 }
                 if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) {
-                    launch { repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong) }
+                    repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong)
                 }
             }
             if (previousSong != Song.emptySong) {
                 val timestampMillis = System.currentTimeMillis()
                 val timestampSeconds = (timestampMillis / 1000)
                 if (shouldBumpPlayCount) {
-                    repository.insertOrIncrementPlayCount(
-                        song = previousSong,
-                        timePlayed = timestampMillis
-                    )
-                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) {
-                        launch { repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds) }
-                    }
-                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) {
-                        launch { repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds) }
-                    }
+                    repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
+                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds)
+                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds)
                 } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
                     repository.insertOrIncrementSkipCount(previousSong)
                 }
             }
-        }
 
-        // 🌟 移除了 delay(550)，一秒不耽误，切歌瞬间同步拉取歌词！
-        carWithUpdateJob?.cancel()
-        carWithUpdateJob = serviceScope.launch(Dispatchers.IO) {
-            val newSong = repository.songByMediaItem(mediaItem)
             isCurrentSongFavorite = if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
 
             var rawLyricsText: String? = null
@@ -994,22 +988,19 @@ class PlaybackService :
 
             currentRawLyricsData = rawLyricsText
             
-            // 🌟 核心控制：蓝牙歌词完全受控于你的 Preference 开关
+            // 🌟 独立并行路由：蓝牙歌词和 CarWith 各不干涉，可同时正常工作
+            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
+            
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-            if (isBtLyricsEnabled) {
-                currentCarWithLrc = null // 关闭 CarWith 歌词避免互相抢占
-                withContext(Dispatchers.Main) {
+            withContext(Dispatchers.Main) {
+                if (isBtLyricsEnabled) {
                     bluetoothLyricManager.loadLyricsForSong(newSong)
-                    refreshMediaButtonCustomLayout()
-                    requestCarWithSilentBroadcast("") // 车机发空歌词
+                } else {
+                    bluetoothLyricManager.stopLyrics()
                 }
-            } else {
-                currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-                withContext(Dispatchers.Main) {
-                    bluetoothLyricManager.stopLyrics() // 物理休眠所有蓝牙后台任务
-                    refreshMediaButtonCustomLayout()
-                    requestCarWithSilentBroadcast(currentCarWithLrc ?: "") // 车机发完整歌词
-                }
+                
+                refreshMediaButtonCustomLayout()
+                requestCarWithSilentBroadcast(currentCarWithLrc ?: "") 
             }
         }
 
@@ -1095,26 +1086,21 @@ class PlaybackService :
                 }
             }
             
-            // 🌟 监听蓝牙歌词开关，实时切断/启动后台服务
             "enable_bluetooth_lyrics" -> {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
                 
-                // 🌟 必须先在 Main 线程获取当前播放项，防止触发线程崩溃
-                val currentItem = player.currentMediaItem
-                
-                if (isBtLyricsEnabled) {
-                    serviceScope.launch(Dispatchers.IO) {
-                        val song = repository.songByMediaItem(currentItem)
-                        withContext(Dispatchers.Main) {
-                            bluetoothLyricManager.loadLyricsForSong(song)
-                            currentCarWithLrc = null
-                            requestCarWithSilentBroadcast("")
+                serviceScope.launch(Dispatchers.Main) {
+                    val currentItem = player.currentMediaItem
+                    if (isBtLyricsEnabled) {
+                        withContext(Dispatchers.IO) {
+                            val song = repository.songByMediaItem(currentItem)
+                            withContext(Dispatchers.Main) {
+                                bluetoothLyricManager.loadLyricsForSong(song)
+                            }
                         }
+                    } else {
+                        bluetoothLyricManager.stopLyrics()
                     }
-                } else {
-                    bluetoothLyricManager.stopLyrics()
-                    currentCarWithLrc = if (!currentRawLyricsData.isNullOrBlank()) processLrcAndInterlude(currentRawLyricsData) else null
-                    serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
                 }
             }
 
@@ -1165,9 +1151,8 @@ class PlaybackService :
         }
     }
 
-    private fun toggleFavorite() = serviceScope.launch {
-        val currentMediaItem = player.currentMediaItem
-            ?: return@launch
+    private fun toggleFavorite() = serviceScope.launch(Dispatchers.Main) {
+        val currentMediaItem = player.currentMediaItem ?: return@launch
 
         withContext(Dispatchers.IO) {
             val song = repository.songByMediaItem(currentMediaItem)
@@ -1194,34 +1179,38 @@ class PlaybackService :
         val isPlaying = player.isPlaying
         val isShuffleMode = player.shuffleModeEnabled
         val repeatMode = player.repeatMode
+        
         return withContext(Dispatchers.IO) {
             val song = repository.songById(id)
             val isFavorite = repository.isSongFavorite(song.id)
-            val result = SingletonImageLoader.get(this@PlaybackService).execute(
-                ImageRequest.Builder(this@PlaybackService)
-                    .data(song)
-                    .scale(Scale.FILL)
-                    .size(300)
-                    .build()
-            )
-            val bitmap = result.image?.toBitmap(300, 300)
-            val artworkData = bitmap?.let {
-                val stream = ByteArrayOutputStream()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    it.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, stream)
-                } else {
-                    it.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            
+            // 🌟 核心提速：只有当歌曲 ID 变化时，才重新解图和压缩，避免按暂停时发热
+            if (id != lastWidgetSongId) {
+                val result = SingletonImageLoader.get(this@PlaybackService).execute(
+                    ImageRequest.Builder(this@PlaybackService)
+                        .data(song)
+                        .scale(Scale.FILL)
+                        .size(300)
+                        .build()
+                )
+                val bitmap = result.image?.toBitmap(300, 300)
+                cachedArtworkData = bitmap?.let {
+                    val stream = ByteArrayOutputStream()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        it.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, stream)
+                    } else {
+                        it.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                    }
+                    stream.toByteArray()
                 }
-                stream.toByteArray()
-            }
-            val widgetTheme = if (preferences.getBoolean(WIDGET_DYNAMIC_COLORS, false)) {
-                val paletteColor = bitmap?.let {
-                    PaletteProcessor.getPaletteColor(this@PlaybackService, bitmap)
-                }
-                if (paletteColor != null) {
-                    WidgetTheme(paletteColor.backgroundColor)
+                cachedWidgetTheme = if (preferences.getBoolean(WIDGET_DYNAMIC_COLORS, false)) {
+                    val paletteColor = bitmap?.let { PaletteProcessor.getPaletteColor(this@PlaybackService, it) }
+                    paletteColor?.let { WidgetTheme(it.backgroundColor) }
                 } else null
-            } else null
+                
+                lastWidgetSongId = id
+            }
+
             val additionalInfo = MetadataField.getMetadataValue(
                 song = song,
                 fields = Preferences.getExtraInfoContent(
@@ -1239,8 +1228,8 @@ class PlaybackService :
                 currentTitle = song.title,
                 currentArtist = song.artistName,
                 additionalInfo = additionalInfo,
-                artworkData = artworkData,
-                widgetTheme = widgetTheme,
+                artworkData = cachedArtworkData, // 复用缓存
+                widgetTheme = cachedWidgetTheme, // 复用缓存
                 imageCornerRadius = preferences.getInt(WIDGET_IMAGE_CORNER_RADIUS, 8).toFloat()
             )
         }
@@ -1248,8 +1237,8 @@ class PlaybackService :
 
     private fun updateWidgets(force: Boolean = false, isForeground: Boolean = isPlaybackOngoing) {
         widgetUpdateJob?.cancel()
-        widgetUpdateJob = serviceScope.launch {
-            // 🌟 移除了桌面小部件（封面/卡片）的 300 毫秒更新延迟，确保一切瞬发
+        widgetUpdateJob = serviceScope.launch(Dispatchers.Main) {
+            if (!force) delay(WIDGET_UPDATE_DEBOUNCE)
             val state = buildPlaybackState(isForeground)
             if (lastPlaybackState != state) {
                 lastPlaybackState = state
