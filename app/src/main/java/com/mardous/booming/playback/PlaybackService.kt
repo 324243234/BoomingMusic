@@ -1098,9 +1098,13 @@ class PlaybackService :
             // 🌟 监听蓝牙歌词开关，实时切断/启动后台服务
             "enable_bluetooth_lyrics" -> {
                 val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                
+                // 🌟 必须先在 Main 线程获取当前播放项，防止触发线程崩溃
+                val currentItem = player.currentMediaItem
+                
                 if (isBtLyricsEnabled) {
                     serviceScope.launch(Dispatchers.IO) {
-                        val song = repository.songByMediaItem(player.currentMediaItem)
+                        val song = repository.songByMediaItem(currentItem)
                         withContext(Dispatchers.Main) {
                             bluetoothLyricManager.loadLyricsForSong(song)
                             currentCarWithLrc = null
