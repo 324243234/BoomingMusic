@@ -113,13 +113,8 @@ import com.mardous.booming.util.WIDGET_DYNAMIC_COLORS
 import com.mardous.booming.util.WIDGET_IMAGE_CORNER_RADIUS
 import com.mardous.booming.util.WIDGET_SMALL_LAYOUT_STYLE
 import com.mardous.booming.util.WIDGET_THIRD_LINE_CONTENT
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers.IO
-import kotlinx.coroutines.Dispatchers.Main
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.guava.future
 import org.koin.android.ext.android.inject
 import java.io.ByteArrayOutputStream
 import kotlin.random.Random
@@ -131,7 +126,7 @@ class PlaybackService :
     Player.Listener,
     SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private val serviceScope = CoroutineScope(Job() + Main)
+    private val serviceScope = CoroutineScope(Job() + Dispatchers.Main)
     private val uiHandler = Handler(Looper.getMainLooper())
 
     private val glanceManager by lazy { GlanceAppWidgetManager(applicationContext) }
@@ -143,7 +138,6 @@ class PlaybackService :
     private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
-    // 🌟 CarWith 状态记录
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
@@ -216,6 +210,13 @@ class PlaybackService :
         return String.format("%02d:%02d.%02d", min, sec, millis)
     }
 
+    private val favoriteCommand: CommandButton
+        get() = CommandButton.Builder()
+            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
+            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+            .setDisplayName(getString(R.string.toggle_favorite))
+            .build()
+
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
     private val mediaStoreObserver = MediaStoreObserver(uiHandler) {
@@ -278,13 +279,6 @@ class PlaybackService :
             else -> customCommands[2]
         }
 
-    private val favoriteCommand: CommandButton
-        get() = CommandButton.Builder()
-            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
-            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
-            .setDisplayName(getString(R.string.toggle_favorite))
-            .build()
-
     private val pauseOnZeroVolume: Boolean
         get() = preferences.getBoolean(PAUSE_ON_ZERO_VOLUME, false)
     private val sequentialTimeline: Boolean
@@ -325,8 +319,6 @@ class PlaybackService :
         )
 
         playerThread.start()
-        
-        // 🌟 完全使用源作者的原始播放引擎构建，绝对没有任何影子替身拦截器
         player = AdvancedForwardingPlayer(
             ExoPlayer.Builder(this)
                 .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -479,10 +471,8 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
-        // 🌟 注入 CarWith 所需的扩展指令，保证车机控制功能生效
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
-
         availableCommands.add(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.TOGGLE_SHUFFLE, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
@@ -527,14 +517,16 @@ class PlaybackService :
                     }
                     return true
                 }
-                
-                // 🌟 拦截方向盘切歌指令，保证车机硬按键生效
                 KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) player.seekToNext()
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToNext()
+                    }
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) player.seekToPrevious()
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToPrevious()
+                    }
                     return true
                 }
             }
@@ -593,7 +585,7 @@ class PlaybackService :
         pageSize: Int,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-        return serviceScope.future(IO) {
+        return serviceScope.future(Dispatchers.IO) {
             val result = runCatching {
                 libraryProvider.getChildren(this@PlaybackService, parentId)
             }
@@ -610,7 +602,7 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         mediaId: String
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        return serviceScope.future(IO) {
+        return serviceScope.future(Dispatchers.IO) {
             val mediaItem = runCatching { libraryProvider.getItem(mediaId) }
                 .getOrDefault(MediaItem.EMPTY)
             if (mediaItem != MediaItem.EMPTY) {
@@ -627,7 +619,7 @@ class PlaybackService :
         query: String,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
-        return serviceScope.future(IO) {
+        return serviceScope.future(Dispatchers.IO) {
             runCatching { libraryProvider.search(query) }
                 .onSuccess { session.notifySearchResultChanged(browser, query, it.size, params) }
 
@@ -653,13 +645,12 @@ class PlaybackService :
         controller: MediaSession.ControllerInfo,
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
-        return serviceScope.future(IO) {
-            // 🌟 拦截小爱同学等语音点播指令
+        return serviceScope.future(Dispatchers.IO) {
             val firstItem = mediaItems.firstOrNull()
             val searchQuery = firstItem?.requestMetadata?.searchQuery
 
             if (!searchQuery.isNullOrBlank()) {
-                withContext(Main) { showToast("语音请求: $searchQuery") }
+                withContext(Dispatchers.Main) { showToast("语音请求: $searchQuery") }
                 return@future emptyList()
             }
 
@@ -698,7 +689,7 @@ class PlaybackService :
 
             hasSetUnshuffledOrder = false
         }
-        return serviceScope.future(IO) {
+        return serviceScope.future(Dispatchers.IO) {
             if (mediaSession.isAutomotiveController(controller) ||
                 mediaSession.isAutoCompanionController(controller)) {
                 runCatching { libraryProvider.getMediaItemsForAAOSPlayback(mediaItems) }
@@ -740,8 +731,6 @@ class PlaybackService :
         args: Bundle
     ): ListenableFuture<SessionResult> {
         return when (customCommand.customAction) {
-
-            // 🌟 承接 CarWith 按键控制，执行后台静默广播，绝不动播放中的歌曲
             CARWITH_ACTION_COLLECT -> {
                 toggleFavorite()
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -905,7 +894,7 @@ class PlaybackService :
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
-        serviceScope.launch(IO) {
+        serviceScope.launch(Dispatchers.IO) {
             val newSong = repository.songByMediaItem(mediaItem)
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
@@ -943,10 +932,9 @@ class PlaybackService :
             }
         }
 
-        // 🌟 核心改进：废除防抖延迟，伴随歌曲播放瞬间，立刻异步抓取并一次性丢给车机！
+        // 🌟 Fetch lyrics and send via session metadata broadcast on track change, keeping ExoPlayer 100% untouched
         carWithUpdateJob?.cancel()
-        carWithUpdateJob = serviceScope.launch(IO) {
-            
+        carWithUpdateJob = serviceScope.launch(Dispatchers.IO) {
             val newSong = repository.songByMediaItem(mediaItem)
             isCurrentSongFavorite = if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
 
@@ -981,11 +969,10 @@ class PlaybackService :
             currentRawLyricsData = rawLyricsText
             currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
             
-            withContext(Main) {
+            withContext(Dispatchers.Main) {
                 refreshMediaButtonCustomLayout()
             }
             
-            // 数据抓取完毕，立即通过静默通道一次性推给车机
             requestCarWithSilentBroadcast(currentCarWithLrc ?: "")
         }
 
@@ -997,7 +984,6 @@ class PlaybackService :
         updateWidgets(force = true)
     }
 
-    // 🌟 终极静默广播通道：完全独立于 ExoPlayer 当前项，100% 避免管线断裂和内存数据竞态
     private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
         val targetPlayMode = when {
             player.shuffleModeEnabled -> 0L
@@ -1006,7 +992,6 @@ class PlaybackService :
         }
         val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
 
-        // 构建纯粹的状态扩展包
         val newExtras = Bundle().apply {
             putString(CARWITH_LYRICS_WHOLE, targetLrc)
             putString(CARWITH_LYRICS_LINE, "")
@@ -1016,17 +1001,11 @@ class PlaybackService :
             putLong("carwith_timestamp", System.currentTimeMillis())
         }
 
-        withContext(Main) {
+        withContext(Dispatchers.Main) {
             try {
-                // 通道一：直接向车机会话层写入自定义状态（官方推荐的独立于歌曲之外的状态通道）
                 mediaSession?.setSessionExtras(newExtras)
-                
-                // 通道二：通过轻量级的全局播放列表元数据变更触发车机响应。
-                // 这里只传入了一个空壳 Metadata，由于绝不携带原歌曲几十KB/几MB的图片和信息，彻底排除了 1MB IPC 溢出风险！
                 val triggerMetadata = MediaMetadata.Builder().setExtras(newExtras).build()
                 mediaSession?.player?.playlistMetadata = triggerMetadata
-                
-                // ⚠️ 此处再也没有任何一行代码去碰 player.currentMediaItem！
             } catch (e: Exception) {
                 Log.e("PlaybackService", "Silent CarWith broadcast failed", e)
             }
@@ -1072,7 +1051,6 @@ class PlaybackService :
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    // 翻译切换，直接静默广播，不打断歌曲
                     serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
                 }
             }
@@ -1083,7 +1061,7 @@ class PlaybackService :
 
             ENABLE_HISTORY -> {
                 if (!preferences.getBoolean(key, true)) {
-                    serviceScope.launch(IO) {
+                    serviceScope.launch(Dispatchers.IO) {
                         repository.clearSongHistory()
                     }
                 }
@@ -1128,7 +1106,7 @@ class PlaybackService :
         val currentMediaItem = player.currentMediaItem
             ?: return@launch
 
-        withContext(IO) {
+        withContext(Dispatchers.IO) {
             val song = repository.songByMediaItem(currentMediaItem)
             repository.toggleFavorite(song)
             isCurrentSongFavorite = repository.isSongFavorite(song.id)
@@ -1142,7 +1120,6 @@ class PlaybackService :
             Bundle.EMPTY
         )
         
-        // 收藏状态变更，直接静默广播，不打断歌曲
         requestCarWithSilentBroadcast(currentCarWithLrc ?: "")
     }
 
@@ -1154,7 +1131,7 @@ class PlaybackService :
         val isPlaying = player.isPlaying
         val isShuffleMode = player.shuffleModeEnabled
         val repeatMode = player.repeatMode
-        return withContext(IO) {
+        return withContext(Dispatchers.IO) {
             val song = repository.songById(id)
             val isFavorite = repository.isSongFavorite(song.id)
             val result = SingletonImageLoader.get(this@PlaybackService).execute(
@@ -1219,7 +1196,7 @@ class PlaybackService :
         }
     }
 
-    private suspend fun updateGlanceWidgets(playbackState: PlaybackState) = withContext(IO) {
+    private suspend fun updateGlanceWidgets(playbackState: PlaybackState) = withContext(Dispatchers.IO) {
         try {
             val boomingWidget = BoomingGlanceWidget()
             val boomingWidgetIds = glanceManager.getGlanceIds(boomingWidget.javaClass)
@@ -1368,7 +1345,6 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
-                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1448,7 +1424,6 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
-                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
