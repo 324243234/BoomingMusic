@@ -33,7 +33,6 @@ import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.HeartRating
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -118,11 +117,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
@@ -148,6 +145,9 @@ class PlaybackService :
     private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
+    // 🌟 CarWith 注入替身缓存，绝对隔离底层内存
+    private var carwithInjectedMediaItem: MediaItem? = null
+    
     private var currentCarWithLrc: String? = null
     private var carWithUpdateJob: Job? = null
     private var isCurrentSongFavorite = false
@@ -348,7 +348,7 @@ class PlaybackService :
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(
                         this, DefaultExtractorsFactory()
-                             .setConstantBitrateSeekingEnabled(true) 
+                            .setConstantBitrateSeekingEnabled(true) // 核心保留：强抗坏帧
                             .also {
                                 if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
                                     it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -369,7 +369,29 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
+        // 🌟 核心破局黑科技：防弹影子播放器！
+        // 专门应付车机的各种查询，绝不让底层 ExoPlayer 暴露在任何危险之中
+        val shadowSessionPlayer = object : androidx.media3.common.ForwardingPlayer(player) {
+            override fun getCurrentMediaItem(): MediaItem? {
+                val baseItem = super.getCurrentMediaItem() ?: return null
+                // 只有当查询的正是我们缓存加工好的 CarWith Item 时，才拦截返回给车机
+                if (carwithInjectedMediaItem?.mediaId == baseItem.mediaId) {
+                    return carwithInjectedMediaItem
+                }
+                return baseItem
+            }
+
+            override fun getMediaMetadata(): MediaMetadata {
+                val baseItem = super.getCurrentMediaItem() ?: return super.getMediaMetadata()
+                if (carwithInjectedMediaItem?.mediaId == baseItem.mediaId) {
+                    return carwithInjectedMediaItem!!.mediaMetadata
+                }
+                return super.getMediaMetadata()
+            }
+        }
+
+        // 把安全的 shadowSessionPlayer 交给 MediaSession
+        mediaSession = with(MediaLibrarySession.Builder(this, shadowSessionPlayer, this)) {
             setId(packageName)
             setSessionActivity(createSessionActivityIntent())
             setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this@PlaybackService)))
@@ -481,7 +503,7 @@ class PlaybackService :
         val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
             .buildUpon()
 
-        // 🌟 CarWith 专属扩展协议指令
+        // CarWith 专属扩展协议指令
         availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
         
@@ -492,7 +514,6 @@ class PlaybackService :
         availableCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
         availableCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
 		
-        // 🌟 强行提权：赋予 CarWith 完整播控权限
         val playerCommands = connectionResult.availablePlayerCommands.buildUpon()
             .add(Player.COMMAND_PLAY_PAUSE)
             .add(Player.COMMAND_SEEK_TO_NEXT)
@@ -532,7 +553,6 @@ class PlaybackService :
                     return true
                 }
                 
-                // 🌟 直接响应车机方向盘切歌指令
                 KeyEvent.KEYCODE_MEDIA_NEXT -> {
                     if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
                         player.seekToNext()
@@ -665,7 +685,6 @@ class PlaybackService :
     ): ListenableFuture<List<MediaItem>> {
         return serviceScope.future(IO) {
             
-            // 🌟 拦截小爱同学等语音点播请求
             val firstItem = mediaItems.firstOrNull()
             val searchQuery = firstItem?.requestMetadata?.searchQuery
 
@@ -919,10 +938,8 @@ class PlaybackService :
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
-            mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
-            return
-        }
+        // 🌟 1. 每次切歌，果断清空影子替身的缓存，防止错乱
+        carwithInjectedMediaItem = null
 
         val isPlaying = player.isPlaying
 
@@ -954,14 +971,13 @@ class PlaybackService :
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(550) // 最强切歌防抖缓冲
+            delay(550) 
 
             val newSong = withContext(IO) { repository.songByMediaItem(mediaItem) }
             isCurrentSongFavorite = withContext(IO) {
                 if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
             }
 
-            // 🌟 纯净的 CarWith 歌词抓取逻辑（已彻底阉割蓝牙逻辑）
             val rawLyricsText = withContext(IO) {
                 if (newSong != Song.emptySong) {
                     val rawLyrics = lyricsRepository.fileLyrics(newSong)
@@ -984,7 +1000,7 @@ class PlaybackService :
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e("CarWithLrc", "Failed to read local LRC file for CarWith fallback", e)
+                            Log.e("CarWithLrc", "Failed to read local LRC file", e)
                             text = null
                         }
                     }
@@ -1010,7 +1026,7 @@ class PlaybackService :
         updateWidgets(force = false)
     }
 
-    // 🌟 最安全、最纯净的 CarWith 状态注入法（隔离底层内存，绝对不碰 currentItem.extras）
+    // 🌟 终极防崩溃：全隔离内存分配 + 避免 1MB IPC 限制
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1032,8 +1048,6 @@ class PlaybackService :
             return
         }
 
-        // 🌟 核心防崩溃黑科技：创建一个完全独立的全新 Bundle 实例
-        // 绝对不能调用 oldExtras.putAll() 去污染原本正在播放中的数据源内存！
         val newExtras = Bundle(oldExtras).apply {
             putBoolean("carwith_injected", true)
             putLong("carwith_timestamp", System.currentTimeMillis())
@@ -1051,14 +1065,25 @@ class PlaybackService :
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
         }
 
+        // 把加工好的信息构建成一个全新的 MediaItem 替身
+        val newMeta = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
+        val injectedItem = currentItem.buildUpon().setMediaMetadata(newMeta).build()
+
         withContext(Main) {
             try {
-                // 将带有最新车机扩展信息的元数据，打包为纯粹的数据传递对象，
-                // 仅通过 playlistMetadata 广播给 CarWith 会话通道，彻底保护 ExoPlayer 不被打断！
-                val newMetadata = currentItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
-                mediaSession?.player?.playlistMetadata = newMetadata
+                // 1. 将替身暂存在内存中，等 CarWith 请求时由 shadowSessionPlayer 安全交出，绝不碰 ExoPlayer。
+                carwithInjectedMediaItem = injectedItem
+                
+                // 2. 🌟 拔雷重点：绝对不把带有 2MB FLAC 封面的 newMeta 塞给 playlistMetadata，否则会引发 1MB Binder 限制爆炸！
+                // 只构建一个几字节的“空包触发器”，轻巧地敲一下门，告诉全网“数据更新了，快来取”。
+                val triggerExtras = Bundle().apply { 
+                    putLong("carwith_trigger", System.currentTimeMillis()) 
+                }
+                val emptyTriggerMetadata = MediaMetadata.Builder().setExtras(triggerExtras).build()
+                
+                mediaSession?.player?.playlistMetadata = emptyTriggerMetadata
             } catch (e: Exception) {
-                Log.e("PlaybackService", "Silent CarWith update failed", e)
+                Log.e("PlaybackService", "Silent CarWith trigger failed", e)
             }
         }
     }
@@ -1100,7 +1125,6 @@ class PlaybackService :
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
             "lyrics_show_translation" -> {
-                // 🌟 得益于静默广播技术，现在翻译开关可以实时生效，并瞬间推给车机，不再需要等下一首！
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
                     serviceScope.launch { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
