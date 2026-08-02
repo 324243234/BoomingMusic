@@ -932,7 +932,6 @@ class PlaybackService :
             }
         }
 
-        // 🌟 Fetch lyrics and send via session metadata broadcast on track change, keeping ExoPlayer 100% untouched
         carWithUpdateJob?.cancel()
         carWithUpdateJob = serviceScope.launch(Dispatchers.IO) {
             val newSong = repository.songByMediaItem(mediaItem)
@@ -985,12 +984,16 @@ class PlaybackService :
     }
 
     private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
-        val targetPlayMode = when {
-            player.shuffleModeEnabled -> 0L
-            player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
-            else -> 2L
+        // 🌟 Safe player state reads on Main thread to fix thread exception!
+        val (targetPlayMode, targetCollectStatus) = withContext(Dispatchers.Main) {
+            val playMode = when {
+                player.shuffleModeEnabled -> 0L
+                player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
+                else -> 2L
+            }
+            val collectStatus = if (isCurrentSongFavorite) "1" else "0"
+            Pair(playMode, collectStatus)
         }
-        val targetCollectStatus = if (isCurrentSongFavorite) "1" else "0"
 
         val newExtras = Bundle().apply {
             putString(CARWITH_LYRICS_WHOLE, targetLrc)
