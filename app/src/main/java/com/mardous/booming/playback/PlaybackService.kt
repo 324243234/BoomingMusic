@@ -118,6 +118,7 @@ import kotlinx.coroutines.guava.future
 import org.koin.android.ext.android.inject
 import java.io.ByteArrayOutputStream
 import kotlin.random.Random
+import com.mardous.booming.core.appwidgets.WidgetTheme
 
 @OptIn(UnstableApi::class)
 class PlaybackService :
