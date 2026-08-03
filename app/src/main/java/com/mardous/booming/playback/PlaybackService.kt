@@ -332,7 +332,23 @@ class PlaybackService :
                     BoomingMusicRenderersFactory(this, balanceProcessor, replayGainProcessor)
                         .setEnableAudioFloatOutput(equalizerManager.audioFloatOutput.value)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                        .setMediaCodecSelector(AlacWorkaroundCodecSelector())
+                        // 2. 🌟 终极优化：添加精准拦截器
+                        .setMediaCodecSelector(object : androidx.media3.exoplayer.mediacodec.MediaCodecSelector {
+                            val originalSelector = AlacWorkaroundCodecSelector()
+                            override fun getDecoderInfos(
+                                mimeType: String,
+                                requiresSecureDecoder: Boolean,
+                                requiresTunnelingDecoder: Boolean
+                            ): MutableList<androidx.media3.exoplayer.mediacodec.MediaCodecInfo> {
+                                // 当识别到是 FLAC 格式时，返回空列表，强迫系统放弃硬解，流转给 FFmpeg 软解容错！
+                                if (mimeType == androidx.media3.common.MimeTypes.AUDIO_FLAC) {
+                                    return mutableListOf() 
+                                }
+                                // 其他格式（MP3/AAC等）原路放行，正常使用低功耗硬解
+                                return originalSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                            }
+                        })
+						 
                         .setEnableDecoderFallback(true)
                 )
                 .setMediaSourceFactory(
