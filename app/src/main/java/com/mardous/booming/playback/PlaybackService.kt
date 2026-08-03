@@ -345,7 +345,8 @@ class PlaybackService :
                                     return mutableListOf() 
                                 }
                                 // 其他格式（MP3/AAC等）原路放行，正常使用低功耗硬解
-                                return originalSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                                return originalSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder).toMutableList()
+                            }
                             }
                         })
 						 
