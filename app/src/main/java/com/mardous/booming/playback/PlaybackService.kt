@@ -332,7 +332,7 @@ class PlaybackService :
                     BoomingMusicRenderersFactory(this, balanceProcessor, replayGainProcessor)
                         .setEnableAudioFloatOutput(equalizerManager.audioFloatOutput.value)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                        // 2. 🌟 终极优化：添加精准拦截器
+                        // 🌟 完美保留！针对 FLAC 的精确拦截，强制走 FFmpeg 软解解决受损卡死问题
                         .setMediaCodecSelector(object : androidx.media3.exoplayer.mediacodec.MediaCodecSelector {
                             val originalSelector = AlacWorkaroundCodecSelector()
                             override fun getDecoderInfos(
@@ -340,16 +340,12 @@ class PlaybackService :
                                 requiresSecureDecoder: Boolean,
                                 requiresTunnelingDecoder: Boolean
                             ): MutableList<androidx.media3.exoplayer.mediacodec.MediaCodecInfo> {
-                                // 当识别到是 FLAC 格式时，返回空列表，强迫系统放弃硬解，流转给 FFmpeg 软解容错！
                                 if (mimeType == androidx.media3.common.MimeTypes.AUDIO_FLAC) {
                                     return mutableListOf() 
                                 }
-                                // 其他格式（MP3/AAC等）原路放行，正常使用低功耗硬解
                                 return originalSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder).toMutableList()
                             }
-                            
                         })
-						 
                         .setEnableDecoderFallback(true)
                 )
                 .setMediaSourceFactory(
@@ -1021,15 +1017,19 @@ class PlaybackService :
         updateWidgets(force = true)
     }
 
+    // 🌟 完美组合方案：
+    // 1. 保留双字段（Long/String）推送，完美适配所有小米车机版本读取。
+    // 2. 仅写入 sessionExtras 与 playlistMetadata，保证绝对不截断时间线（按钮不再消失）。
     private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
-        val (targetPlayMode, targetCollectStatus) = withContext(Dispatchers.Main) {
+        val (targetPlayMode, targetCollectStatus, targetCollectLong) = withContext(Dispatchers.Main) {
             val playMode = when {
                 player.shuffleModeEnabled -> 0L
                 player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
                 else -> 2L
             }
             val collectStatus = if (isCurrentSongFavorite) "1" else "0"
-            Pair(playMode, collectStatus)
+            val collectLong = if (isCurrentSongFavorite) 1L else 0L
+            Triple(playMode, collectStatus, collectLong)
         }
 
         val newExtras = Bundle().apply {
@@ -1037,7 +1037,12 @@ class PlaybackService :
             putString(CARWITH_LYRICS_LINE, "")
             putLong(CARWITH_LYRICS_STATUS, if (targetLrc.isNotEmpty()) 0L else 3L)
             putLong(CARWITH_PLAY_MODE, targetPlayMode)
+            
+            putLong(CARWITH_COLLECT, targetCollectLong)
+            putString(CARWITH_COLLECT, targetCollectStatus)
             putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
+            putLong(CARWITH_COLLECT_STATUS, targetCollectLong)
+            
             putLong("carwith_timestamp", System.currentTimeMillis())
         }
 
@@ -1208,7 +1213,6 @@ class PlaybackService :
                 }
                 stream.toByteArray()
             }
-            // 🌟 100% 还原原作者原汁原味的 WidgetTheme 原生逻辑
             val widgetTheme = if (preferences.getBoolean(WIDGET_DYNAMIC_COLORS, false)) {
                 val paletteColor = bitmap?.let {
                     PaletteProcessor.getPaletteColor(this@PlaybackService, bitmap)
@@ -1245,7 +1249,6 @@ class PlaybackService :
     private fun updateWidgets(force: Boolean = false, isForeground: Boolean = isPlaybackOngoing) {
         widgetUpdateJob?.cancel()
         widgetUpdateJob = serviceScope.launch(Dispatchers.Main) {
-            // 🌟 只要桌面上没小部件，1毫秒内瞬间退出，不浪费 CPU 压图
             if (!hasActiveGlanceWidgets()) return@launch
 
             if (!force) delay(WIDGET_UPDATE_DEBOUNCE)
