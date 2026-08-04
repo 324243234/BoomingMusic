@@ -448,25 +448,40 @@ fun LyricsLineContentView(
         )
     }
 
+    // ... 前面正文和音译的代码保持原样不变 ...
+
+    // 🍎 针对翻译歌词的 Apple Music 深度优化逻辑
     if (translatedContent != null && !translatedContent.isEmpty) {
+        // 原有逻辑：音译存在时缩放 1.6倍，否则 1.4倍 (~71%)，完美契合 Apple Music 字号比例
         val fontSizeDivider =
             if (transliterationContent != null && !transliterationContent.isEmpty) 1.60f else 1.40f
+            
+        // 🌟 核心修改 1：建立色彩层级。将翻译歌词的基准透明度强行压制到 75%
+        // 这样在 LineSyncedView 中计算时：激活时为 75% 透明度，未激活时为 75% * 40% = 30% 透明度
+        val translationColor = contentColor.copy(alpha = contentColor.alpha * 0.75f)
 
         LineTextView(
             plainText = translatedContent.getText(backgroundContent),
             syllables = translatedContent.getSyllables(backgroundContent),
-            enableSyllable = enableSyllable,
-            enableKaraokeStyle = enableKaraokeStyle,
+            
+            // 🌟 核心修改 2：强行关闭翻译歌词的逐字/KTV动效
+            // Apple Music 的翻译永远是安静的整行淡入淡出，绝对不能跟着主歌词乱跳
+            enableSyllable = false, 
+            enableKaraokeStyle = false, 
+            
             enableShadowEffect = enableShadowEffect,
-            progressiveColoring = progressiveColoring && mainSyllables.isEmpty(),
+            
+            // 🌟 核心修改 3：保留整行渐变染色（Line fill），但仅在主歌词没有逐字时间轴时生效
+            progressiveColoring = progressiveColoring && mainSyllables.isEmpty(), 
+            
             selectedLine = selectedLine,
-            contentColor = contentColor,
+            contentColor = translationColor, // 传入降级后的颜色
             effectDuration = effectDuration,
             progressFraction = progressFraction,
             progressMillis = progressMillis,
             style = style.copy(
                 fontSize = style.fontSize / fontSizeDivider,
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Normal // 强制常规字重，拉开主次粗细对比
             ),
             align = align,
             modifier = modifier.graphicsLayer {
@@ -474,7 +489,7 @@ fun LyricsLineContentView(
             }
         )
     }
-}
+} // LyricsLineContentView 方法结束
 
 @Composable
 private fun LineTextView(
