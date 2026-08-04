@@ -587,7 +587,7 @@ private fun LineSyncedView(
                     )
                 )
             } else {
-                style.copy(color = color.copy(alpha = animatedAlpha))
+                style.copy(color = color.copy(alpha = color.alpha * animatedAlpha))
             }
         }
     }
