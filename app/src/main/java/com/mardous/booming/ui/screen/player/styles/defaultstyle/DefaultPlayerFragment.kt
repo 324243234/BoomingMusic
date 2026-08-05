@@ -304,6 +304,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         menu.removeItem(R.id.action_sound_settings)
         menu.setShowAsAction(R.id.action_favorite)
         menu.setShowAsAction(R.id.action_show_lyrics)
+		
+		// 🌟 新增逻辑：强制让“专辑”和“艺人”显示在 Toolbar 面板上
+        menu.setShowAsAction(R.id.action_go_to_album)
+        menu.setShowAsAction(R.id.action_go_to_artist)
+		
         setupQueueMenuItem(menu)
     }
 

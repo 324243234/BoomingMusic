@@ -1,10 +1,24 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
 	xmlns:app="http://schemas.android.com/apk/res-auto">
+    <!-- 🌟 1. 新增：将“专辑”提出来，并添加图标 -->
     <item
+        android:id="@+id/action_go_to_album"
+        android:title="@string/album"
+        android:icon="@drawable/ic_album_24dp" 
+        app:showAsAction="always"/>
+
+    <!-- 🌟 2. 新增：将“艺人”提出来，并添加图标 -->
+    <item
+        android:id="@+id/action_go_to_artist"
+        android:title="@string/artist"
+        android:icon="@drawable/ic_artist_24dp" 
+        app:showAsAction="always"/>	
+	<item
         android:id="@+id/action_favorite"
         android:title="@string/action_add_to_favorites"
         android:icon="@drawable/ic_favorite_outline_24dp"
         app:showAsAction="never"/>
+	
 	<item
 		android:id="@+id/action_playing_queue"
 		android:title="@string/playing_queue_label"
