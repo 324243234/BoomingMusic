@@ -302,7 +302,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         menu.removeItem(R.id.action_sound_settings)
-        menu.setShowAsAction(R.id.action_favorite)
+        //menu.setShowAsAction(R.id.action_favorite)
         menu.setShowAsAction(R.id.action_show_lyrics)
 		
 		// 🌟 新增逻辑：检测是否为横屏或平板模式
@@ -310,10 +310,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
+		    menu.findItem(R.id.action_equalizer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+			menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             // 横屏/平板：空间足够，将专辑和艺人显示在外面
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         } else {
+		    menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             // 手机竖屏：空间狭窄，把专辑和艺人收纳进三点菜单，防止把前面的按钮挤掉
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
