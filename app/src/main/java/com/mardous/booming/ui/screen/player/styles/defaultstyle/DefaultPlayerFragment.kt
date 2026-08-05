@@ -94,6 +94,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 requireContext().startService(intent)
             } catch (e: Exception) { e.printStackTrace() }
         }
+		
+		// 绑定左侧迷你下一首按钮的点击事件
+        binding.leftNextButton?.setOnClickListener {
+            playerViewModel.seekToNext()
+        }
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             
@@ -293,6 +298,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
         binding.leftFavoriteButton?.let { favBtn ->
             targets.add(favBtn.tintTarget(favBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
+        }
+		
+		// 🌟 新增：让迷你切歌按钮也跟随封面动态提取的颜色变色
+        binding.leftNextButton?.let { nextBtn ->
+            targets.add(nextBtn.tintTarget(nextBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
         }
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))

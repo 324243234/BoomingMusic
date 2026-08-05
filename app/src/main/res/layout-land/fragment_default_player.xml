@@ -45,7 +45,7 @@
         app:layout_constraintStart_toStartOf="parent" 
         tools:layout="@layout/fragment_album_cover_default"/>
 
-    <!-- 2. 歌名信息：锚定在全屏与右侧面板之间，算出的宽度绝对比封面大 -->
+    <!-- 2. 歌名信息：打破链条，实现“歌名绝对优先，歌手见缝插针”的智能排版 -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/leftSongInfoContainer"
         android:layout_width="0dp"
@@ -53,28 +53,31 @@
         android:layout_marginBottom="0dp"
         android:layout_marginStart="2dp"    
         android:layout_marginEnd="2dp"      
-		app:layout_constraintTop_toBottomOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintTop_toBottomOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintBottom_toTopOf="@+id/leftProgressContainer"
-		app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment"
+        app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment"
         app:layout_constraintStart_toStartOf="parent">
 
+        <!-- 🌟 歌名：右侧直接锚定按钮，拥有100%空间支配权 -->
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftSongTitleText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp" 
             android:singleLine="true"
             android:ellipsize="end"
             android:textSize="18sp"
             android:textColor="?android:attr/textColorPrimary"
             android:textStyle="bold"
-            android:includeFontPadding="false" 
-            app:layout_constraintHorizontal_chainStyle="packed"
+            android:includeFontPadding="false"
+            app:layout_constrainedWidth="true"
             app:layout_constraintHorizontal_bias="0.0" 
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/leftSongArtistText"
+            app:layout_constraintEnd_toStartOf="@+id/leftNextButton" 
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
+        <!-- 🌟 歌手：捡漏模式，生存在“歌名结尾”和“按钮开头”的夹缝中 -->
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftSongArtistText"
             android:layout_width="wrap_content"
@@ -87,11 +90,26 @@
             android:textColor="?android:attr/textColorSecondary"  
             android:includeFontPadding="false"
             app:layout_constrainedWidth="true"
+            app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toEndOf="@+id/leftSongTitleText"
+            app:layout_constraintEnd_toStartOf="@+id/leftNextButton" 
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
+
+        <!-- 迷你下一首按钮 (紧贴收藏按钮) -->
+        <ImageView
+            android:id="@+id/leftNextButton"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="0dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="4dp"
+            android:src="@drawable/ic_next_24dp"
             app:layout_constraintEnd_toStartOf="@+id/leftFavoriteButton"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
+        <!-- 收藏按钮 -->
         <ImageView
             android:id="@+id/leftFavoriteButton"
             android:layout_width="32dp"
