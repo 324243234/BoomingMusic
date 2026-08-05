@@ -58,12 +58,12 @@
         app:layout_constraintEnd_toStartOf="@+id/playbackControlsFragment"
         app:layout_constraintStart_toStartOf="parent">
 
-        <!-- 🌟 歌名：右侧直接锚定按钮，拥有100%空间支配权 -->
+        <!-- 🌟 歌名：右侧直接锚定收藏按钮，拥有100%空间支配权 -->
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftSongTitleText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp" 
+            android:layout_marginEnd="12dp" 
             android:singleLine="true"
             android:ellipsize="end"
             android:textSize="18sp"
@@ -73,11 +73,11 @@
             app:layout_constrainedWidth="true"
             app:layout_constraintHorizontal_bias="0.0" 
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/leftNextButton" 
+            app:layout_constraintEnd_toStartOf="@+id/leftFavoriteButton" 
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
-        <!-- 🌟 歌手：捡漏模式，生存在“歌名结尾”和“按钮开头”的夹缝中 -->
+        <!-- 🌟 歌手：捡漏模式，生存在“歌名结尾”和“收藏按钮开头”的夹缝中 -->
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/leftSongArtistText"
             android:layout_width="wrap_content"
@@ -92,31 +92,31 @@
             app:layout_constrainedWidth="true"
             app:layout_constraintHorizontal_bias="0.0"
             app:layout_constraintStart_toEndOf="@+id/leftSongTitleText"
-            app:layout_constraintEnd_toStartOf="@+id/leftNextButton" 
+            app:layout_constraintEnd_toStartOf="@+id/leftFavoriteButton" 
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
-        <!-- 迷你下一首按钮 (紧贴收藏按钮) -->
-        <ImageView
-            android:id="@+id/leftNextButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginEnd="0dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:padding="2dp"
-            android:src="@drawable/ic_next_24dp"
-            app:layout_constraintEnd_toStartOf="@+id/leftFavoriteButton"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" />
-
-        <!-- 收藏按钮 -->
+        <!-- 收藏按钮 (移动到了左边，紧贴下一首按钮) -->
         <ImageView
             android:id="@+id/leftFavoriteButton"
             android:layout_width="32dp"
             android:layout_height="32dp"
+            android:layout_marginEnd="0dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:padding="4dp"
             android:src="@drawable/ic_favorite_outline_24dp"
+            app:layout_constraintEnd_toStartOf="@+id/leftNextButton"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
+
+        <!-- 迷你下一首按钮 (移动到了最右侧边缘) -->
+        <ImageView
+            android:id="@+id/leftNextButton"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="2dp" 
+            android:src="@drawable/ic_next_24dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
