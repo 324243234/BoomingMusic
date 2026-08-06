@@ -44,6 +44,10 @@ interface LyricsRepository {
 
     suspend fun writableUris(song: Song): List<Uri>
     suspend fun deleteAllLyrics()
+	
+	fun clearMemoryCache() {
+        memoryCache.evictAll()
+    }
 }
 
 class RealLyricsRepository(
@@ -99,18 +103,26 @@ class RealLyricsRepository(
     override suspend fun fileLyrics(song: Song): RawLyrics.File? {
         getCachedLyrics<RawLyrics.File>(LyricsSource.File, song.id)?.let { return it }
         try {
-            val preferredFormatValue =
-                preferences.requireString("preferred_lyrics_file_format", "ttml")
-            val preferredFormat =
-                LyricsFile.Format.entries.firstOrNull { it.value == preferredFormatValue }
+            val preferredFormatValue = preferences.requireString("preferred_lyrics_file_format", "ttml").trim()
+            
+            // 🌟 1. 宽泛匹配：支持小写、大写以及 ListPreference 的 index 序号
+            val preferredFormat = when {
+                preferredFormatValue.equals("ttml", ignoreCase = true) || preferredFormatValue == "0" -> LyricsFile.Format.TTML
+                preferredFormatValue.equals("lrc", ignoreCase = true) || preferredFormatValue == "1" -> LyricsFile.Format.LRC
+                else -> LyricsFile.Format.entries.firstOrNull { it.value.equals(preferredFormatValue, ignoreCase = true) }
+            } ?: LyricsFile.Format.TTML // 兜底默认 TTML
 
             val rawLyricsList = mutableListOf<RawLyrics.File>()
-            for (file in findLyricsFiles(song)) {
+            val lyricsFiles = findLyricsFiles(song)
+
+            // 🌟 2. 强行重排序：如果偏好是 TTML，将列表中的 TTML 文件排到最前面，防止按字母序优先选中 LRC
+            val sortedFiles = lyricsFiles.sortedByDescending { it.format == preferredFormat }
+
+            for (file in sortedFiles) {
                 val actualFile = File(file.path)
                 val lyrics = runCatching {
                     actualFile.inputStream().buffered().use { stream ->
                         val charset = detectEncoding(stream)
-                        // 🌟 终极修复：清理 UTF-8 BOM 隐形字符 \uFEFF
                         stream.reader(charset).use { it.readText() }.replace("\uFEFF", "").trim()
                     }
                 }.getOrNull() ?: continue

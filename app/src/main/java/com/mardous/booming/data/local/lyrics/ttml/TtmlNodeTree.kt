@@ -469,7 +469,6 @@ internal class TtmlNodeTree {
             val lastWordIndex = wordNodes.lastIndex
             for (j in wordNodes.indices) {
                 val word = wordNodes[j]
-                // Resolve word end time based on the next word's start time
                 if (word.end == -1L) {
                     word.end = (if (j < lastWordIndex) wordNodes[j + 1].begin else line.end)
                 }
@@ -477,10 +476,13 @@ internal class TtmlNodeTree {
                     word.dur = (word.end - word.begin)
                 }
                 val text = word.text.orEmpty()
-                // Calculate character indices for highlighting during playback
+                
+                // 🌟 核心修复：防止 text.length == 0 时 (text.length - 1) 变成 -1 导致 Compose 绘制崩溃
+                val textLength = text.length.coerceAtLeast(1)
                 val startIndex = words.filter { it.isBackground == word.background }
                     .sumOf { it.content.length }
-                val endIndex = startIndex + (text.length - 1)
+                val endIndex = (startIndex + textLength - 1).coerceAtLeast(startIndex)
+
                 words.add(
                     SyncedLyrics.Word(
                         content = text,

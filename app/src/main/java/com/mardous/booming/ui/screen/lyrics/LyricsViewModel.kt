@@ -410,6 +410,17 @@ class LyricsViewModel(
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         when (key) {
+            // 🌟 1. 增加首选歌词格式监听，改动时立刻清缓存并重新重新加载歌词
+            "preferred_lyrics_file_format" -> {
+                (repository as? RealLyricsRepository)?.clearMemoryCache()
+                val currentSongId = _lyricsUiState.value.id
+                if (currentSongId != -1L) {
+                    // 重新刷新当前歌曲的歌词
+                    _playerLyricsViewSettings.value = createViewSettings(LyricsViewMode.Player)
+                    _fullLyricsViewSettings.value = createViewSettings(LyricsViewMode.Full)
+                }
+            }
+
             Key.ENABLE_SYLLABLE_LYRICS,
             Key.ENABLE_KARAOKE_STYLE,
             Key.CENTER_CURRENT_LINE,
