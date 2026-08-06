@@ -1550,7 +1550,7 @@ class PlaybackService :
         }
         return true
     }
-	
+	 
 
     companion object {
         private const val PACKAGE_NAME = "com.mardous.booming"
