@@ -303,7 +303,12 @@ internal class TtmlNodeTree {
         val sectionNodes = rootNode!!.getChildren(TtmlNode.NODE_SECTION)
 
         // Flatten the hierarchy to get all lines across all sections
-        val lineNodes = sectionNodes.flatMap { it.getChildren(TtmlNode.NODE_LINE) }.sortedBy { it.begin }
+        // 🌟 终极修复：兼顾 <div> 内部的 <p> 以及直接挂在 <body> 下的 <p>
+        val linesInSections = sectionNodes.flatMap { it.getChildren(TtmlNode.NODE_LINE) }
+        val linesInBody = rootNode!!.getChildren(TtmlNode.NODE_LINE)
+        val lineNodes = (linesInSections + linesInBody)
+            .distinctBy { System.identityHashCode(it) }
+            .sortedBy { it.begin }
         val translation = getClosedTranslation()
         val transliteration = getClosedTransliteration()
 

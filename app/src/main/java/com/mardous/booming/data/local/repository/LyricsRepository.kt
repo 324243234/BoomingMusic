@@ -110,7 +110,8 @@ class RealLyricsRepository(
                 val lyrics = runCatching {
                     actualFile.inputStream().buffered().use { stream ->
                         val charset = detectEncoding(stream)
-                        stream.reader(charset).use { it.readText() }
+                        // 🌟 终极修复：清理 UTF-8 BOM 隐形字符 \uFEFF
+                        stream.reader(charset).use { it.readText() }.replace("\uFEFF", "").trim()
                     }
                 }.getOrNull() ?: continue
 
