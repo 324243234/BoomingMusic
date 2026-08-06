@@ -2,7 +2,8 @@ name: Build Release APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - my-v1-custom
   workflow_dispatch:
 
 jobs:
