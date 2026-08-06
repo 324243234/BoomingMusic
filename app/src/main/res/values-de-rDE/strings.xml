@@ -213,7 +213,6 @@
     <string name="action_grid_size">Rastergröße</string>
     <string name="action_grid_size_land">Rastergröße (Querformat)</string>
     <string name="action_sort_order">Sortieren nach</string>
-    <string name="sort_order_az">A-Z</string>
     <string name="sort_order_artist">Interpret</string>
     <string name="sort_order_album">Album</string>
     <string name="sort_order_year">Jahr</string>
@@ -959,4 +958,18 @@
     <string name="contributor_alex_description">Langjähriger Freund des Projekts, der uns Zugang zu wichtigen APIs verschafft hat.</string>
     <string name="play_all_songs_when_searching_title">Bei der Suche alle Titel abspielen</string>
     <string name="play_all_songs_when_searching_summary">Wenn aktiviert, wird durch die Auswahl eines gesuchten Titels die gesamte Bibliothek in die Warteschlange gestellt. Betrifft die Einstellung Bei Auswahl eines Titels.</string>
+    <string name="up_next">Als Nächstes</string>
+    <string name="reorder_action">Erneut bestellen</string>
+    <string name="go_to_current_track">Zum aktuellen Titel</string>
+    <string name="action_auto_fill_from_musicbrainz">Automatisch über MusicBrainz ausfüllen</string>
+    <string name="searching">Suchen…</string>
+    <string name="musicbrainz_search_title">MusicBrainz Suche</string>
+    <string name="musicbrainz_search_message">Lied-Metadaten auf MusicBrainz mit Titel und Künstler suchen.</string>
+    <string name="musicbrainz_no_results">Keine Ergebnisse auf MusicBrainz gefunden.</string>
+    <string name="musicbrainz_select_recording">Wähle eine Aufnahme</string>
+    <string name="sort_order_name">Name</string>
+    <string name="website">Webseite</string>
+    <string name="legal">Legal</string>
+    <string name="terms_of_service">Nutzungsbedingungen</string>
+    <string name="privacy_policy">Datenschutzerklärung</string>
 </resources>

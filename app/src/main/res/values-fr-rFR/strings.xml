@@ -213,7 +213,6 @@
     <string name="action_grid_size">Taille de la grille</string>
     <string name="action_grid_size_land">Taille de la grille (paysage)</string>
     <string name="action_sort_order">Trier par</string>
-    <string name="sort_order_az">A à Z</string>
     <string name="sort_order_artist">Artiste</string>
     <string name="sort_order_album">Album</string>
     <string name="sort_order_year">Année</string>
@@ -968,4 +967,18 @@
     <string name="contributor_ttop_description">Le tout premier contributeur et testeur du projet.</string>
     <string name="contributor_lenard_description">Développeur du site web de l\'application et contributeur.</string>
     <string name="contributor_alex_description">Un ami de longue date du projet qui nous a permis d\'accéder à des API essentielles.</string>
+    <string name="up_next">À suivre</string>
+    <string name="reorder_action">Réorganiser</string>
+    <string name="go_to_current_track">Aller à la piste en cours</string>
+    <string name="action_auto_fill_from_musicbrainz">Remplissage automatique à partir de MusicBrainz</string>
+    <string name="searching">Recherche en cours…</string>
+    <string name="musicbrainz_search_title">Recherche sur MusicBrainz</string>
+    <string name="musicbrainz_search_message">Recherchez les métadonnées d\'un morceau sur MusicBrainz à l\'aide du titre et du nom de l\'artiste.</string>
+    <string name="musicbrainz_no_results">Aucun résultat trouvé sur MusicBrainz.</string>
+    <string name="musicbrainz_select_recording">Sélectionnez un enregistrement</string>
+    <string name="sort_order_name">Nom</string>
+    <string name="website">Site web</string>
+    <string name="legal">Mentions légales</string>
+    <string name="terms_of_service">Conditions d\'utilisation</string>
+    <string name="privacy_policy">Politique de confidentialité</string>
 </resources>

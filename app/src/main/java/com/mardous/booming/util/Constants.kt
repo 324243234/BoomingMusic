@@ -21,7 +21,7 @@ import com.mardous.booming.BuildConfig
 
 object Constants {
     // Support Email
-    const val SUPPORT_EMAIL = "mardous.contact@gmail.com"
+    const val SUPPORT_EMAIL = "support@boomingmusic.org"
 
     // App-related URLs
     const val AUTHOR_GITHUB_URL = "https://www.github.com/mardous"
@@ -32,6 +32,9 @@ object Constants {
     const val FAQ_LINK = "$APP_GITHUB_URL/wiki/FAQ"
     const val TRANSLATIONS_LINK = "https://hosted.weblate.org/engage/booming-music/"
     const val TELEGRAM_LINK = "https://t.me/mardousdev"
+    const val WEBSITE_LINK = "https://www.boomingmusic.org"
+    const val TERMS_OF_SERVICE_LINK = "$WEBSITE_LINK/terms-of-service"
+    const val PRIVACY_POLICY_LINK = "$WEBSITE_LINK/privacy-policy"
 
     // External Links
     const val DOWNLOAD_URL = BuildConfig.DOWNLOAD_URL

@@ -213,7 +213,6 @@
     <string name="action_grid_size">網格大小</string>
     <string name="action_grid_size_land">網格大小（橫向）</string>
     <string name="action_sort_order">排序方式</string>
-    <string name="sort_order_az">A-Z</string>
     <string name="sort_order_artist">藝人</string>
     <string name="sort_order_album">專輯</string>
     <string name="sort_order_year">年份</string>
@@ -230,7 +229,7 @@
     <string name="action_details">詳細資訊</string>
     <string name="action_set_as_start_directory">設定為起始目錄</string>
     <string name="start_directory_set">起始目錄已設定為 %s</string>
-    <string name="action_go_to_start_directory">轉到起始目錄</string>
+    <string name="action_go_to_start_directory">轉至起始目錄</string>
     <string name="action_hierarchy_view">階層檢視</string>
     <string name="new_start_directory">新建起始目錄：%s</string>
     <string name="action_scan">掃描</string>
@@ -545,7 +544,7 @@
     <string name="library_categories_title">曲庫分類</string>
     <string name="library_categories_summary">設定曲庫分類的顯示與順序。</string>
     <string name="remember_last_page_title">記住最後一個頁面</string>
-    <string name="remember_last_page_summary">啟動時前往最後開啟的頁面。</string>
+    <string name="remember_last_page_summary">啟動轉至往最後開啟的頁面。</string>
     <string name="start_page_title">開始頁面</string>
     <string name="tab_mode_title">標籤標題模式</string>
     <string name="hold_tab_to_search_title">長按標籤以搜尋</string>
@@ -569,7 +568,7 @@
     <string name="lyrics_shadow_effect_summary">為目前歌詞行新增陰影，以提升可讀性。</string>
     <string name="lyrics_progressive_coloring_title">漸層歌詞動畫</string>
     <string name="lyrics_progressive_coloring_summary">使用漸層文字顏色轉換，為目前歌詞行新增動畫效果。</string>
-    <string name="lyrics_bold_unsynced_title">粗體顯示非同步歌詞</string>
+    <string name="lyrics_bold_unsynced_title">粗體非同步歌詞</string>
     <string name="lyrics_bold_unsynced_summary">以粗體顯示非同步歌詞。</string>
     <string name="lyrics_line_spacing_title">行距</string>
     <string name="lyrics_line_spacing_summary">調整歌詞的行間距。</string>
@@ -919,7 +918,7 @@
     <string name="lyrics_show_translation_summary">如有翻譯歌詞則顯示。</string>
     <string name="lyrics_show_transliteration_title">顯示音譯</string>
     <string name="lyrics_show_transliteration_summary">如有音譯歌詞則顯示。</string>
-    <string name="lyrics_bold_synced_title">同步歌詞使用粗體</string>
+    <string name="lyrics_bold_synced_title">粗體同步歌詞</string>
     <string name="lyrics_bold_synced_summary">以粗體顯示同步歌詞。</string>
     <string name="lyrics_resume_on_seek_title">跳轉後繼續播放</string>
     <string name="lyrics_resume_on_seek_summary">點按某行歌詞時自動恢復播放。</string>
@@ -950,4 +949,18 @@
     <string name="use_betterlyrics_provider_summary">逐字同步歌詞服務。</string>
     <string name="use_lyrically_provider_title">使用 Lyrically 歌詞來源</string>
     <string name="use_lyrically_provider_summary">功能豐富的歌詞 API，支援卡拉 OK 與多人聲部。</string>
+    <string name="up_next">接下來播放</string>
+    <string name="reorder_action">重新排序</string>
+    <string name="go_to_current_track">轉至當前曲目</string>
+    <string name="action_auto_fill_from_musicbrainz">從 MusicBrainz 自動填充</string>
+    <string name="searching">正在搜尋…</string>
+    <string name="musicbrainz_search_title">MusicBrainz 搜尋</string>
+    <string name="musicbrainz_search_message">使用標題和藝人在 MusicBrainz 上搜尋歌曲中繼資料。</string>
+    <string name="musicbrainz_no_results">在 MusicBrainz 上找不到結果。</string>
+    <string name="musicbrainz_select_recording">選擇紀錄</string>
+    <string name="sort_order_name">標題</string>
+    <string name="website">網站</string>
+    <string name="legal">法律資訊</string>
+    <string name="terms_of_service">服務條款</string>
+    <string name="privacy_policy">隱私權政策</string>
 </resources>

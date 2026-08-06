@@ -72,26 +72,22 @@ sealed class Version(
 
 val currentVersion: Version = Version.Beta(
     versionMajor = 1,
-    versionMinor = 3,
-    versionPatch = 1,
-    versionBuild = 2
+    versionMinor = 4,
+    versionPatch = 0,
+    versionBuild = 3
 )
 val currentVersionCode = currentVersion.code
 
 android {
     compileSdk = 37
     namespace = "com.mardous.booming"
-    //namespace = "com.luna.music"
 
     defaultConfig {
         minSdk = 26
         targetSdk = 36
 
-        //applicationId = namespace
-		
-		applicationId = "com.luna.music"   
-		//applicationId = "com.kugou.android"
-        versionCode = 1310102
+        applicationId = namespace
+        versionCode = 1400103
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)
     }
@@ -144,7 +140,6 @@ android {
     }
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -180,8 +175,8 @@ android {
             isEnable = !isCI && !isBuildingBundle
 
             reset()
-            include("arm64-v8a")
-            isUniversalApk = false // 【修改点】：改成 false，彻底关掉它
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = true
         }
     }
     packaging {
