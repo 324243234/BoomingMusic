@@ -448,25 +448,35 @@ fun LyricsLineContentView(
         )
     }
 
+    // 🍎 针对翻译歌词的 Apple Music 深度优化逻辑
     if (translatedContent != null && !translatedContent.isEmpty) {
         val fontSizeDivider =
             if (transliterationContent != null && !transliterationContent.isEmpty) 1.60f else 1.40f
 
+        // 🌟 核心修改 1：建立色彩层级。将翻译歌词的基准透明度强行压制到 75%
+        val translationColor = contentColor.copy(alpha = contentColor.alpha * 0.75f)
+
         LineTextView(
             plainText = translatedContent.getText(backgroundContent),
             syllables = translatedContent.getSyllables(backgroundContent),
-            enableSyllable = enableSyllable,
-            enableKaraokeStyle = enableKaraokeStyle,
+
+            // 🌟 核心修改 2：强行关闭翻译歌词的逐字/KTV动效
+            enableSyllable = false,
+            enableKaraokeStyle = false,
+
             enableShadowEffect = enableShadowEffect,
+
+            // 🌟 核心修改 3：保留整行渐变染色（Line fill），但仅在主歌词没有逐字时间轴时生效
             progressiveColoring = progressiveColoring && mainSyllables.isEmpty(),
+
             selectedLine = selectedLine,
-            contentColor = contentColor,
+            contentColor = translationColor, // 传入降级后的颜色
             effectDuration = effectDuration,
             progressFraction = progressFraction,
             progressMillis = progressMillis,
             style = style.copy(
                 fontSize = style.fontSize / fontSizeDivider,
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Normal // 强制常规字重，拉开主次粗细对比
             ),
             align = align,
             modifier = modifier.graphicsLayer {
@@ -572,7 +582,8 @@ private fun LineSyncedView(
                     )
                 )
             } else {
-                style.copy(color = color.copy(alpha = animatedAlpha))
+                // 🌟 这里必须是 color.alpha * animatedAlpha，确保传入的 75% 基础透明度能正确相乘
+                style.copy(color = color.copy(alpha = color.alpha * animatedAlpha))
             }
         }
     }

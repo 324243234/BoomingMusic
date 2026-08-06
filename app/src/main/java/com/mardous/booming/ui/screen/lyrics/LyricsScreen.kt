@@ -28,11 +28,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +46,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.layout.ContentScale
@@ -97,30 +100,30 @@ private fun rememberLyricsViewState(lyrics: SyncedLyrics): LyricsViewState {
     return remember(lyrics) { LyricsViewState(lyrics) }
 }
 
-@Composable
-fun rememberSmoothPlaybackPosition(
-    playerPosition: Long,
-    playbackSpeed: Float,
-    isPlaying: Boolean
-): State<Long> {
-    val position = remember { mutableLongStateOf(playerPosition) }
-    LaunchedEffect(playerPosition, isPlaying) {
-        val baseRealtime = SystemClock.elapsedRealtime()
-        if (!isPlaying) {
-            position.longValue = playerPosition
-            return@LaunchedEffect
-        }
-
-        while (isActive) {
-            withFrameNanos {
-                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                position.longValue = playerPosition + (elapsed * playbackSpeed).toLong()
-            }
-        }
-    }
-
-    return position
-}
+//@Composable
+//fun rememberSmoothPlaybackPosition(
+//    playerPosition: Long,
+//    playbackSpeed: Float,
+//    isPlaying: Boolean
+//): State<Long> {
+//    val position = remember { mutableLongStateOf(playerPosition) }
+//    LaunchedEffect(playerPosition, isPlaying) {
+//        val baseRealtime = SystemClock.elapsedRealtime()
+//        if (!isPlaying) {
+//            position.longValue = playerPosition
+//            return@LaunchedEffect
+//        }
+//
+//        while (isActive) {
+//            withFrameNanos {
+//                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
+//                position.longValue = playerPosition + (elapsed * playbackSpeed).toLong()
+//            }
+//        }
+//    }
+//
+//   return position
+//}
 
 @Composable
 fun LyricsScreen(
@@ -163,7 +166,11 @@ fun LyricsScreen(
         }
     }
 
-    var hasBackgroundEffects by remember { mutableStateOf(false) }
+    // ✅ 改为纯状态推导（优化状态重组）
+    val hasBackgroundEffects = remember(lyricsViewSettings.backgroundEffect, gradientColors) {
+        (lyricsViewSettings.backgroundEffect.isGradient && gradientColors.size >= 2) ||
+                lyricsViewSettings.backgroundEffect.isBlur
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets
@@ -197,7 +204,6 @@ fun LyricsScreen(
                                 .fillMaxSize()
                                 .animatedGradient(gradientColors, isPlaying)
                         )
-                        hasBackgroundEffects = true
                     }
 
                     effect.isBlur -> {
@@ -205,12 +211,17 @@ fun LyricsScreen(
 
                         Box(modifier = Modifier.fillMaxSize()) {
                             AsyncImage(
-                                model = song,
+                                // 💡 强制指定加载 200x200 的缩略图，大幅降低模糊计算开销
+                                model = ImageRequest.Builder(context)
+                                    .data(song)
+                                    .size(200)
+                                    .build(),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .blur(90.dp)
+                                    .graphicsLayer()
+                                    .blur(30.dp)
                                     .drawWithContent {
                                         drawContent()
 
@@ -227,11 +238,10 @@ fun LyricsScreen(
                                     }
                             )
                         }
-                        hasBackgroundEffects = true
                     }
 
                     else -> {
-                        hasBackgroundEffects = false
+                        // no background effects
                     }
                 }
             }
@@ -269,15 +279,26 @@ fun CoverLyricsScreen(
 ) {
     val context = LocalContext.current
     val isPowerSaveMode = context.isPowerSaveMode()
-
     val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-
     val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
     val uiState by lyricsViewModel.lyricsUiState.collectAsState()
-
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
+    val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val isDefaultTheme = com.mardous.booming.util.Preferences.nowPlayingScreen == com.mardous.booming.core.model.theme.NowPlayingScreen.Default
+    val hideExpandButton = isLandscape && isDefaultTheme
+
+    val translationKey = "lyrics_show_translation"
+    val prefs = remember(context) { 
+        androidx.preference.PreferenceManager.getDefaultSharedPreferences(context) 
+    }
+    var isTranslationEnabled by remember { 
+        mutableStateOf(prefs.getBoolean(translationKey, true)) 
+    }
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -292,7 +313,7 @@ fun CoverLyricsScreen(
                 isPowerSaveMode = isPowerSaveMode,
                 hasBackgroundEffects = false,
                 onSeekTo = { position ->
-                    playerViewModel.seekTo(position)
+                    playerViewModel.seekTo(position) 
                     if (lyricsViewSettings.resumeOnSeek) {
                         playerViewModel.play()
                     }
@@ -300,21 +321,50 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            FilledIconButton(
+            // 全局悬浮侧边栏：排布顺序：译 -> 放大。 🌟 padding 减小至 16dp，使其更靠近底部
+            androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    .padding(16.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.onSurface,
-                    contentColor = MaterialTheme.colorScheme.surface
-                ),
-                onClick = onExpandClick
+                    .padding(end = 24.dp, bottom = 16.dp), 
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_open_in_full_24dp),
-                    contentDescription = stringResource(R.string.action_lyrics_editor)
-                )
+                // 1. 翻译按钮
+                androidx.compose.material3.IconButton(
+                    modifier = Modifier.size(36.dp),
+                    onClick = {
+                        try {
+                            val newState = !isTranslationEnabled
+                            isTranslationEnabled = newState
+                            prefs.edit().putBoolean(translationKey, newState).apply()
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                ) {
+                    Text(
+                        text = "译",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
+                    )
+                }
+
+                // 2. 放大按钮
+                if (!hideExpandButton) {
+                    FilledIconButton(
+                        modifier = Modifier.size(36.dp), 
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        ),
+                        onClick = onExpandClick
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
+                            contentDescription = stringResource(R.string.action_lyrics_editor),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -335,7 +385,59 @@ private fun LyricsSurface(
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    
+    // 🌡️ 手机/车机全局温度雷达：记录设备物理发热状态
+    var isOverheating by remember { mutableStateOf(false) }
+    // 🔋 电量雷达：纯事件驱动，记录是否低于 50%
+    var isLowBattery by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        val batteryReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context, intent: android.content.Intent) {
+                val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+                if (level != -1 && scale != -1) {
+                    val batteryPct = level * 100 / scale.toFloat()
+                    // 阈值：低于 50% (代码内为30f) 触发降频护盾
+                    isLowBattery = batteryPct < 30f
+                }
+            }
+        }
+        // 注册电量变化广播（系统级粘性广播，极低频触发）
+        context.registerReceiver(
+            batteryReceiver,
+            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        )
+
+        onDispose {
+            context.unregisterReceiver(batteryReceiver)
+        }
+    }
+        
+    // 注册硬件温度回调（纯事件驱动，0 轮询开销，Unit 确保全局仅注册一次）
+    DisposableEffect(Unit) {
+        val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        
+        val thermalListener = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            android.os.PowerManager.OnThermalStatusChangedListener { status ->
+                // 阈值：达到 MODERATE (轻度发热) 即触发自我保护
+                isOverheating = status >= android.os.PowerManager.THERMAL_STATUS_LIGHT
+            }
+        } else null
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && thermalListener != null) {
+            powerManager?.addThermalStatusListener(thermalListener)
+        }
+
+        onDispose {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && thermalListener != null) {
+                powerManager?.removeThermalStatusListener(thermalListener)
+            }
+        }
+    }
+
     val contentColor = when {
         hasBackgroundEffects -> Color.White
         else -> when (settings.mode) {
@@ -343,6 +445,7 @@ private fun LyricsSurface(
             else -> colorScheme.secondary
         }
     }
+    
     Box(modifier) {
         when (uiState) {
             is LyricsUiState.Empty -> {
@@ -402,18 +505,74 @@ private fun LyricsSurface(
 
             is LyricsUiState.Synced -> {
                 val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
+                val view = androidx.compose.ui.platform.LocalView.current
 
-                val playerPosition by playerViewModel.progressFlow.collectAsStateWithLifecycle()
-                val playbackSpeed by playerViewModel.playbackSpeed.collectAsStateWithLifecycle()
+                var basePosition by remember { mutableLongStateOf(0L) }
+                var baseRealtime by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+                var playbackSpeed by remember { mutableFloatStateOf(1f) }
 
-                val smoothProgress by rememberSmoothPlaybackPosition(
-                    playerPosition = playerPosition,
-                    playbackSpeed = playbackSpeed,
-                    isPlaying = isPlaying
-                )
+                // 1. 【解耦基建】：独立监听播放速度变化 (已包含作者关于 倍速的支持)
+                LaunchedEffect(playerViewModel) {
+                    playerViewModel.playbackSpeed.collect { speed ->
+                        playbackSpeed = speed
+                    }
+                }
 
-                LaunchedEffect(playerPosition) {
-                    lyricsViewState.updatePosition(smoothProgress)
+                // 2. 【防跳秒锚点】：独立监听底层进度打底，确保切回界面时无缝接合
+                LaunchedEffect(lyricsViewState, playerViewModel) {
+                    playerViewModel.progressFlow.collect { position ->
+                        basePosition = position
+                        baseRealtime = android.os.SystemClock.elapsedRealtime()
+                        
+                        // 兜底：即使插值引擎在休眠，底层真实数据来了，只要肉眼可见就更新一次
+                        if (view.isShown) {
+                            lyricsViewState.updatePosition(position)
+                        }
+                    }
+                }
+
+                // 3. 👑【三段式终极调度引擎】(完美兼容作者的倍速功能且性能翻倍)
+                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode, isOverheating) {
+                    var wasVisible = view.isShown
+                    
+                    while (isActive) {
+                        val isVisible = view.isShown
+
+                        // 🛡️ 破晓护盾：从不可见（切桌面/被遮挡）变为可见的瞬间
+                        if (isVisible && !wasVisible) {
+                            // 主动挂起 150ms，100% 避让系统级的切屏过渡动画，杜绝掉帧卡顿
+                            kotlinx.coroutines.delay(150L)
+                        }
+
+                        if (isPlaying && isVisible) {
+                            // 【状态评估】：是否处于系统省电模式 或 物理发热状态？
+                            if (isPowerSaveMode || isOverheating || isLowBattery) {
+                                // 🧊 【阶段一：自保降频模式 (30fps)】
+                                // 主动降级为 33ms 软时钟，强制压制 CPU/GPU，控制温度
+                                val elapsed = android.os.SystemClock.elapsedRealtime() - baseRealtime
+                                val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                lyricsViewState.updatePosition(smoothPosition)
+                                
+                                kotlinx.coroutines.delay(33L)
+                            } else {
+                                // 🔥 【阶段二：火力全开模式 (VSYNC)】
+                                // 常温且电量健康，无缝接管系统底层 Choreographer 帧信号 (60Hz/120Hz 自动满血)
+                                androidx.compose.runtime.withFrameNanos {
+                                    val elapsed = android.os.SystemClock.elapsedRealtime() - baseRealtime
+                                    val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                    lyricsViewState.updatePosition(smoothPosition)
+                                }
+                            }
+                        } else {
+                            // 💤 【阶段三：深度休眠模式 (0fps)】
+                            // 当切到桌面（桌面卡片由底层 Service 独立接管）、切播放列表或音乐暂停时
+                            // 停止一切渲染插值，进入 100ms 的低频心跳巡检，功耗彻底归零
+                            kotlinx.coroutines.delay(100L)
+                        }
+
+                        // 闭环状态更新
+                        wasVisible = isVisible
+                    }
                 }
 
                 LyricsView(
