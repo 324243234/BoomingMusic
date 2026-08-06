@@ -969,23 +969,43 @@ class PlaybackService :
                 val rawLyrics = lyricsRepository.fileLyrics(newSong)
                     ?: lyricsRepository.embeddedLyrics(newSong)
                     ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+
+                var text = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
                 
-                var text = rawLyrics?.lyrics
-                val isTtml = text != null && (text.contains("<?xml") || text.contains("<tt") || text.contains("xmlns:tt"))
+                // 🌟 1. 更严密的 TTML 判定（结合扩展名和标签特征）
+                val isTtml = rawLyrics is RawLyrics.File && (
+                    rawLyrics.file.format == com.mardous.booming.data.model.lyrics.LyricsFile.Format.TTML ||
+                    (text != null && (text.contains("<tt", ignoreCase = true) || text.contains("xmlns:tt", ignoreCase = true)))
+                )
 
                 if (isTtml) {
                     try {
-                        val audioPath = newSong.data
-                        if (!audioPath.isNullOrBlank()) {
-                            val lrcPath = audioPath.substringBeforeLast(".") + ".lrc"
-                            val lrcFile = java.io.File(lrcPath)
-                            if (lrcFile.exists() && lrcFile.isFile) {
-                                text = lrcFile.readText()
+                        val songFile = java.io.File(newSong.data)
+                        val parentDir = songFile.parentFile
+                        if (parentDir != null && parentDir.exists()) {
+                            // 🌟 2. 兼顾“音频同名.lrc”与“歌手 - 歌名.lrc”两种命名规则
+                            val possibleNames = listOf(
+                                "${songFile.nameWithoutExtension}.lrc",
+                                "${newSong.artistName} - ${newSong.title}.lrc"
+                            )
+                            
+                            val lrcFile = parentDir.listFiles()?.firstOrNull { file ->
+                                file.isFile && possibleNames.any { name -> file.name.equals(name, ignoreCase = true) }
+                            }
+
+                            if (lrcFile != null && lrcFile.exists()) {
+                                // 🌟 3. 自动识别 GBK/UTF-8 编码，并清理隐形 BOM 字符，防止乱码
+                                val bytes = lrcFile.readBytes()
+                                val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
+                                text = String(bytes, charset).replace("\uFEFF", "").trim()
                             } else {
                                 text = null
                             }
+                        } else {
+                            text = null
                         }
                     } catch (e: Exception) {
+                        Log.e("PlaybackService", "Read fallback LRC for CarWith failed", e)
                         text = null
                     }
                 }
@@ -993,9 +1013,8 @@ class PlaybackService :
             }
 
             currentRawLyricsData = rawLyricsText
-            
             currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-            
+			
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
             withContext(Dispatchers.Main) {
                 if (isBtLyricsEnabled) {
@@ -1509,6 +1528,27 @@ class PlaybackService :
                 }
             }
         }
+    }
+	
+	// 简易 UTF-8 编码字节检测，防止本地 ANSI/GBK 格式的 LRC 产生乱码
+    private fun isUtf8(bytes: ByteArray): Boolean {
+        var i = 0
+        while (i < bytes.size) {
+            val b = bytes[i].toInt() and 0xFF
+            if (b <= 0x7F) { i++; continue }
+            val count = when {
+                b in 0xC0..0xDF -> 1
+                b in 0xE0..0xEF -> 2
+                b in 0xF0..0xF7 -> 3
+                else -> return false
+            }
+            if (i + count >= bytes.size) return true
+            for (j in 1..count) {
+                if ((bytes[i + j].toInt() and 0xC0) != 0x80) return false
+            }
+            i += count + 1
+        }
+        return true
     }
 
     companion object {
