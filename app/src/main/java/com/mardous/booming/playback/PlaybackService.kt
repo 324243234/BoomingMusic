@@ -332,7 +332,6 @@ class PlaybackService :
                     BoomingMusicRenderersFactory(this, balanceProcessor, replayGainProcessor)
                         .setEnableAudioFloatOutput(equalizerManager.audioFloatOutput.value)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                        // 🌟 完美保留！针对 FLAC 的精确拦截，强制走 FFmpeg 软解解决受损卡死问题
                         .setMediaCodecSelector(object : androidx.media3.exoplayer.mediacodec.MediaCodecSelector {
                             val originalSelector = AlacWorkaroundCodecSelector()
                             override fun getDecoderInfos(
@@ -972,10 +971,10 @@ class PlaybackService :
 
                 var text = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
                 
-                // 🌟 1. 更严密的 TTML 判定（结合扩展名和标签特征）
-                val isTtml = rawLyrics is RawLyrics.File && (
-                    rawLyrics.file.format == com.mardous.booming.data.model.lyrics.LyricsFile.Format.TTML ||
-                    (text != null && (text.contains("<tt", ignoreCase = true) || text.contains("xmlns:tt", ignoreCase = true)))
+                val isTtml = text != null && (
+                    text.contains("<?xml", ignoreCase = true) ||
+                    text.contains("<tt", ignoreCase = true) ||
+                    text.contains("xmlns:tt", ignoreCase = true)
                 )
 
                 if (isTtml) {
@@ -983,7 +982,6 @@ class PlaybackService :
                         val songFile = java.io.File(newSong.data)
                         val parentDir = songFile.parentFile
                         if (parentDir != null && parentDir.exists()) {
-                            // 🌟 2. 兼顾“音频同名.lrc”与“歌手 - 歌名.lrc”两种命名规则
                             val possibleNames = listOf(
                                 "${songFile.nameWithoutExtension}.lrc",
                                 "${newSong.artistName} - ${newSong.title}.lrc"
@@ -994,7 +992,6 @@ class PlaybackService :
                             }
 
                             if (lrcFile != null && lrcFile.exists()) {
-                                // 🌟 3. 自动识别 GBK/UTF-8 编码，并清理隐形 BOM 字符，防止乱码
                                 val bytes = lrcFile.readBytes()
                                 val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
                                 text = String(bytes, charset).replace("\uFEFF", "").trim()
@@ -1036,9 +1033,6 @@ class PlaybackService :
         updateWidgets(force = true)
     }
 
-    // 🌟 完美组合方案：
-    // 1. 保留双字段（Long/String）推送，完美适配所有小米车机版本读取。
-    // 2. 仅写入 sessionExtras 与 playlistMetadata，保证绝对不截断时间线（按钮不再消失）。
     private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
         val (targetPlayMode, targetCollectStatus, targetCollectLong) = withContext(Dispatchers.Main) {
             val playMode = when {
@@ -1530,7 +1524,6 @@ class PlaybackService :
         }
     }
 	
-	// 简易 UTF-8 编码字节检测，防止本地 ANSI/GBK 格式的 LRC 产生乱码
     private fun isUtf8(bytes: ByteArray): Boolean {
         var i = 0
         while (i < bytes.size) {
@@ -1550,7 +1543,6 @@ class PlaybackService :
         }
         return true
     }
-	  
 
     companion object {
         private const val PACKAGE_NAME = "com.mardous.booming"

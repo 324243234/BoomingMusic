@@ -131,11 +131,9 @@ class LyricsViewModel(
             _saveEvent.send(event)
 
             if (event == LyricsEditorResult.Success) {
-                // Lyrics need to be updated to avoid unnecessary save operations
                 val newLyrics = getEditorLyricsBySources(song, newLyrics.keys.toList())
                 _lyricsEditorUiState.value = uiState.copy(isLoading = false, lyrics = newLyrics)
 
-                // Update current song lyrics if necessary
                 if (song.id == lyricsUiState.value.id) {
                     updateSong(song)
                 }
@@ -183,20 +181,17 @@ class LyricsViewModel(
                     } else null
                 } ?: defaultName
 
-            // Sanitize the filename to prevent path traversal
             val fileName = File(rawFileName).name.sanitize()
                 .ifBlank { defaultName }
 
-            // 1. Initial extension check
             var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
 
-            // 2. Magic-byte check before choosing any destination path or writing
             if (isValid) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     val header = ByteArray(4)
                     if (input.read(header) == 4) {
                         val hex = header.joinToString("") { "%02X".format(it) }
-                        isValid = hex == "00010000" || hex == "4F54544F" // TTF or OTF
+                        isValid = hex == "00010000" || hex == "4F54544F"
                     } else {
                         isValid = false
                     }
@@ -208,14 +203,12 @@ class LyricsViewModel(
                 return@liveData
             }
 
-            // 3. Resolve destination and verify containment
             val outFile = File(fontsDir, fileName)
             if (!outFile.belongsTo(fontsDir)) {
                 emit(false)
                 return@liveData
             }
 
-            // 4. Perform the actual import
             context.contentResolver.openInputStream(uri)?.use { input ->
                 outFile.outputStream().use { output ->
                     input.copyTo(output)
@@ -410,12 +403,10 @@ class LyricsViewModel(
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         when (key) {
-            // 🌟 1. 增加首选歌词格式监听，改动时立刻清缓存并重新重新加载歌词
             "preferred_lyrics_file_format" -> {
-                (repository as? RealLyricsRepository)?.clearMemoryCache()
+                repository.clearMemoryCache()
                 val currentSongId = _lyricsUiState.value.id
                 if (currentSongId != -1L) {
-                    // 重新刷新当前歌曲的歌词
                     _playerLyricsViewSettings.value = createViewSettings(LyricsViewMode.Player)
                     _fullLyricsViewSettings.value = createViewSettings(LyricsViewMode.Full)
                 }

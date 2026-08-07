@@ -44,10 +44,8 @@ interface LyricsRepository {
 
     suspend fun writableUris(song: Song): List<Uri>
     suspend fun deleteAllLyrics()
-	
-	fun clearMemoryCache() {
-        memoryCache.evictAll()
-    }
+
+    fun clearMemoryCache()
 }
 
 class RealLyricsRepository(
@@ -65,6 +63,10 @@ class RealLyricsRepository(
     private val ttmlLyricsParser = TtmlLyricsParser()
 
     private val lyricsParsers = listOf(lrcLyricsParser, ttmlLyricsParser)
+
+    override fun clearMemoryCache() {
+        memoryCache.evictAll()
+    }
 
     override suspend fun parseRawLyrics(song: Song, rawLyrics: RawLyrics): SyncedLyrics? {
         val ignoreBlankLines = preferences.getBoolean(IGNORE_BLANK_LINES, false)
@@ -105,17 +107,15 @@ class RealLyricsRepository(
         try {
             val preferredFormatValue = preferences.requireString("preferred_lyrics_file_format", "ttml").trim()
             
-            // 🌟 1. 宽泛匹配：支持小写、大写以及 ListPreference 的 index 序号
             val preferredFormat = when {
                 preferredFormatValue.equals("ttml", ignoreCase = true) || preferredFormatValue == "0" -> LyricsFile.Format.TTML
                 preferredFormatValue.equals("lrc", ignoreCase = true) || preferredFormatValue == "1" -> LyricsFile.Format.LRC
                 else -> LyricsFile.Format.entries.firstOrNull { it.value.equals(preferredFormatValue, ignoreCase = true) }
-            } ?: LyricsFile.Format.TTML // 兜底默认 TTML
+            } ?: LyricsFile.Format.TTML
 
             val rawLyricsList = mutableListOf<RawLyrics.File>()
             val lyricsFiles = findLyricsFiles(song)
 
-            // 🌟 2. 强行重排序：如果偏好是 TTML，将列表中的 TTML 文件排到最前面，防止按字母序优先选中 LRC
             val sortedFiles = lyricsFiles.sortedByDescending { it.format == preferredFormat }
 
             for (file in sortedFiles) {
