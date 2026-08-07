@@ -965,53 +965,45 @@ class PlaybackService :
 
             var rawLyricsText: String? = null
             if (newSong != Song.emptySong) {
-                val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                    ?: lyricsRepository.embeddedLyrics(newSong)
-                    ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-
-                var text = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
-                
-                val isTtml = text != null && (
-                    text.contains("<?xml", ignoreCase = true) ||
-                    text.contains("<tt", ignoreCase = true) ||
-                    text.contains("xmlns:tt", ignoreCase = true)
-                )
-
-                if (isTtml) {
-                    try {
-                        val songFile = java.io.File(newSong.data)
-                        val parentDir = songFile.parentFile
-                        if (parentDir != null && parentDir.exists()) {
-                            val possibleNames = listOf(
-                                "${songFile.nameWithoutExtension}.lrc",
-                                "${newSong.artistName} - ${newSong.title}.lrc"
-                            )
-                            
-                            val lrcFile = parentDir.listFiles()?.firstOrNull { file ->
-                                file.isFile && possibleNames.any { name -> file.name.equals(name, ignoreCase = true) }
-                            }
-
-                            if (lrcFile != null && lrcFile.exists()) {
-                                val bytes = lrcFile.readBytes()
-                                val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
-                                text = String(bytes, charset).replace("\uFEFF", "").trim()
-                            } else {
-                                text = null
-                            }
-                        } else {
-                            text = null
+                // 1. 优先向本地目录硬抓取 .lrc 文件（无视 APP 当前正在渲染什么格式）
+                var localLrcText: String? = null
+                try {
+                    val songFile = java.io.File(newSong.data)
+                    val parentDir = songFile.parentFile
+                    if (parentDir != null && parentDir.exists()) {
+                        val possibleNames = listOf(
+                            "${songFile.nameWithoutExtension}.lrc",
+                            "${newSong.artistName} - ${newSong.title}.lrc"
+                        )
+                        
+                        val lrcFile = parentDir.listFiles()?.firstOrNull { file ->
+                            file.isFile && possibleNames.any { name -> file.name.equals(name, ignoreCase = true) }
                         }
-                    } catch (e: Exception) {
-                        Log.e("PlaybackService", "Read fallback LRC for CarWith failed", e)
-                        text = null
+
+                        if (lrcFile != null && lrcFile.exists()) {
+                            val bytes = lrcFile.readBytes()
+                            val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
+                            localLrcText = String(bytes, charset).replace("\uFEFF", "").trim()
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.e("PlaybackService", "Read local LRC for CarWith failed", e)
                 }
-                rawLyricsText = text
+
+                // 2. 逻辑分流：有本地 LRC 就直接用；没有本地 LRC，再向 APP 数据库请求兜底（如内嵌 LRC）
+                if (!localLrcText.isNullOrBlank()) {
+                    rawLyricsText = localLrcText
+                } else {
+                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                        ?: lyricsRepository.embeddedLyrics(newSong)
+                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                    
+                    rawLyricsText = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
+                }
             }
 
             currentRawLyricsData = rawLyricsText
             currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-			
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
             withContext(Dispatchers.Main) {
                 if (isBtLyricsEnabled) {
