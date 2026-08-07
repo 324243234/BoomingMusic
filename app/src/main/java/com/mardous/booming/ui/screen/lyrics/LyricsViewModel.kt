@@ -1,5 +1,6 @@
 package com.mardous.booming.ui.screen.lyrics
 
+import androidx.compose.ui.text.font.FontSynthesis
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
@@ -369,6 +370,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = syncedFontSize.sp,
             fontWeight = if (syncedBoldFont) FontWeight.Bold else FontWeight.Normal,
+            fontSynthesis = FontSynthesis.Weight, // 🌟 严谨修复：强制允许单字重字体通过算法合成加粗
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         val unsyncedBoldFont = preferences.getBoolean(Key.UNSYNCED_BOLD_FONT, false)
@@ -376,10 +378,13 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = unsyncedFontSize.sp,
             fontWeight = if (unsyncedBoldFont) FontWeight.Bold else FontWeight.Normal,
+            fontSynthesis = FontSynthesis.Weight, // 🌟 严谨修复：同时修复未同步歌词的加粗开关
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
+        
         return LyricsViewSettings(
             mode = mode,
+            // ... 下面保持原样 ...
             isCenterCurrentLine = preferences.getBoolean(Key.CENTER_CURRENT_LINE, false),
             isCenterHorizontally = preferences.getBoolean(Key.CENTER_HORIZONTALLY, false),
             enableSyllableLyrics = enableSyllableLyrics,
