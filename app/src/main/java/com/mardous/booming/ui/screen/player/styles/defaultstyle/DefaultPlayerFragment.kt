@@ -1,5 +1,10 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
+
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
+import androidx.core.content.edit
+import android.widget.Toast
+import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.resources.applyColor
 import android.content.SharedPreferences
@@ -44,6 +49,10 @@ import org.koin.android.ext.android.inject
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
+	
+	// 2. 注入全局 SharedPreferences 和 LyricsViewModel
+    private val sharedPreferences: SharedPreferences by inject()
+    private val lyricsViewModel: LyricsViewModel by activityViewModel()
 
     private var _binding: FragmentDefaultPlayerBinding? = null
     private val binding get() = _binding!!
@@ -74,6 +83,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         _binding = FragmentDefaultPlayerBinding.bind(view)
         setupToolbar()
         inflateMenuInView(playerToolbar)
+		
+		// 3. 🌟 新增：拦截 Toolbar 菜单点击事件，处理切换逻辑
+        playerToolbar.setOnMenuItemClickListener { item ->
+            if (item.itemId == R.id.action_toggle_lyrics_format) {
+                toggleLyricsFormat()
+                true
+            } else {
+                // 其他菜单项交由原有的框架逻辑处理
+                onOptionsItemSelected(item)
+            }
+        }
+		
+		
+		
         
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
@@ -308,6 +331,44 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
+	
+	// 4. 🌟 新增：切换核心逻辑
+    private fun toggleLyricsFormat() {
+        // 读取当前格式（默认兜底 ttml），来自 preferences_screen_advanced 的 ListPreference 设定
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml")
+        val newFormat = if (currentFormat == "ttml") "lrc" else "ttml"
+        
+        // 写入新配置，这会立刻触发 LyricsViewModel 的 onSharedPreferenceChanged 清理缓存
+        sharedPreferences.edit {
+            putString("preferred_lyrics_file_format", newFormat)
+        }
+        
+        // 给予用户视觉反馈
+        val toastText = if (newFormat == "ttml") "已切换为 TTML 逐字歌词" else "已切换为 LRC 滚动歌词"
+        Toast.makeText(requireContext(), toastText, Toast.LENGTH_SHORT).show()
+        
+		// 🌟 优化新增：切换后，立刻让 Toolbar 重新加载当前文字状态
+        playerToolbar.menu?.let { updateMenuTitle(it) }
+		
+        // 致命关键：强制更新当前歌曲的歌词状态，实现 0 延迟实时反馈 UI
+        playerViewModel.currentSongFlow.value?.let { currentSong ->
+            lyricsViewModel.updateSong(currentSong)
+        }
+    }
+	
+	// 🌟 优化新增：动态更新菜单状态的辅助方法
+    private fun updateMenuTitle(menu: Menu) {
+        // 读取当前真实格式，默认兜底为 ttml
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml")
+        val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
+        
+        // 动态修改标题（也是长按图标时的提示文字）
+        if (currentFormat == "ttml") {
+            toggleItem?.title = "当前: TTML逐字"
+        } else {
+            toggleItem?.title = "当前: LRC滚动"
+        }
+    }
 
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
@@ -322,16 +383,28 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscapeOrTablet) {
 		    
 			menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-            // 横屏/平板：空间足够，将专辑和艺人均衡器显示在外面
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-			menu.findItem(R.id.action_equalizer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        } else {
+            menu.findItem(R.id.action_equalizer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            
+            // 🌟 核心改动：平板横屏模式下，隐藏原有的显示歌词按钮（收入三点菜单），展示我们新建的切换开关
+            menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            menu.findItem(R.id.action_toggle_lyrics_format)?.apply {
+                isVisible = true
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
+		} else {
 		    menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            // 手机竖屏：空间狭窄，把专辑和艺人收纳进三点菜单，防止把前面的按钮挤掉
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            
+            // 🌟 手机竖屏模式：隐藏切换开关，恢复显示歌词按钮
+            menu.findItem(R.id.action_toggle_lyrics_format)?.isVisible = false
+            menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         }
+		
+		// 🌟 优化新增：界面刚加载菜单时，主动赋予一次正确的标题状态
+        updateMenuTitle(menu)
 		
         setupQueueMenuItem(menu)
     }

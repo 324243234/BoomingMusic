@@ -15,6 +15,14 @@
         android:title="@string/album"
         android:icon="@drawable/ic_album_24dp" 
         app:showAsAction="always"/>
+	
+	<!-- 🌟 新增：切换 LRC/TTML 格式的快捷按钮 -->
+    <item
+    android:id="@+id/action_toggle_lyrics_format"
+    android:title="切换歌词格式"
+    android:icon="@drawable/ic_lyrics_outline_24dp"
+    app:showAsAction="always"/>
+	
 	<item
         android:id="@+id/action_favorite"
         android:title="@string/action_add_to_favorites"
