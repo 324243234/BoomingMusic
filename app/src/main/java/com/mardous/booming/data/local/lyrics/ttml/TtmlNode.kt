@@ -82,17 +82,28 @@ data class TtmlNode(
     fun addChildNode(node: TtmlNode): Boolean {
         if (closed || node.closed) return false
 
-        if (this.type == NODE_BODY && node.type == NODE_SECTION ||
-            this.type == NODE_SECTION && node.type == NODE_LINE ||
+        // 🌟 修复：放宽层级限制，允许 BODY 直接包含 LINE，允许 SECTION 嵌套 SECTION
+        if (this.type == NODE_BODY && (node.type == NODE_SECTION || node.type == NODE_LINE) ||
+            this.type == NODE_SECTION && (node.type == NODE_SECTION || node.type == NODE_LINE) ||
             this.type == NODE_LINE && node.type == NODE_WORD
         ) {
-
             if (node.begin > -1 || node.type == NODE_SECTION) {
                 return children.add(node)
             }
-
         }
         return false
+    }
+	
+	// 🌟 新增：深度优先递归获取所有 LINE 节点（哪怕外层嵌套了 10 个 <div> 都能完美抓出）
+    fun getAllDescendantLines(): List<TtmlNode> {
+        val result = mutableListOf<TtmlNode>()
+        if (this.type == NODE_LINE) {
+            result.add(this)
+        }
+        for (child in children) {
+            result.addAll(child.getAllDescendantLines())
+        }
+        return result
     }
 
     fun close(): Boolean {

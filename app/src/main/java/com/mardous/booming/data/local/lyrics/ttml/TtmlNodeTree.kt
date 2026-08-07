@@ -120,8 +120,9 @@ internal class TtmlNodeTree {
 
         val lineNode = getOpenNode(TtmlNode.NODE_LINE)
         if (lineNode == null && node.type == TtmlNode.NODE_LINE) {
-            val currentSection = getOpenNode(TtmlNode.NODE_SECTION)
-            return currentSection?.addChildNode(node) == true
+            // 🌟 修复：如果 XML 没有 <div> 包装，平滑回退，直接挂载到 rootNode (body) 下
+            val parent = getOpenNode(TtmlNode.NODE_SECTION) ?: rootNode
+            return parent?.addChildNode(node) == true
         }
         return false
     }
@@ -300,13 +301,14 @@ internal class TtmlNodeTree {
         check(closed) { "The node tree must be closed to obtain nested data" }
 
         val duration = rootNode!!.dur.takeIf { it > -1 } ?: trackLength
-        val sectionNodes = rootNode!!.getChildren(TtmlNode.NODE_SECTION)
+        //val sectionNodes = rootNode!!.getChildren(TtmlNode.NODE_SECTION)
 
         // Flatten the hierarchy to get all lines across all sections
         // 🌟 终极修复：兼顾 <div> 内部的 <p> 以及直接挂在 <body> 下的 <p>
-        val linesInSections = sectionNodes.flatMap { it.getChildren(TtmlNode.NODE_LINE) }
-        val linesInBody = rootNode!!.getChildren(TtmlNode.NODE_LINE)
-        val lineNodes = (linesInSections + linesInBody)
+        //val linesInSections = sectionNodes.flatMap { it.getChildren(TtmlNode.NODE_LINE) }
+        //val linesInBody = rootNode!!.getChildren(TtmlNode.NODE_LINE)
+        // 🌟 修复：调用新写的递归方法，替代原先只读一层的错误逻辑
+        val lineNodes = rootNode!!.getAllDescendantLines()
             .distinctBy { System.identityHashCode(it) }
             .sortedBy { it.begin }
         val translation = getClosedTranslation()
@@ -475,13 +477,12 @@ internal class TtmlNodeTree {
                 if (word.dur == -1L) {
                     word.dur = (word.end - word.begin)
                 }
-                val text = word.text.orEmpty()
-                
-                // 🌟 核心修复：防止 text.length == 0 时 (text.length - 1) 变成 -1 导致 Compose 绘制崩溃
-                val textLength = text.length.coerceAtLeast(1)
+                // 🌟 致命修复1：YRC 的前奏停顿会生成空 Span。如果 text 为 ""，赋予空格 " "，绝不能为长度 0，否则截取必崩！
+                val text = if (word.text.isNullOrEmpty()) " " else word.text!!
+
                 val startIndex = words.filter { it.isBackground == word.background }
                     .sumOf { it.content.length }
-                val endIndex = (startIndex + textLength - 1).coerceAtLeast(startIndex)
+                val endIndex = startIndex + text.length - 1 // 现在的 text 一定有长度，绝对安全
 
                 words.add(
                     SyncedLyrics.Word(
@@ -502,14 +503,14 @@ internal class TtmlNodeTree {
     private fun wordsToTextContent(
         syllables: List<SyncedLyrics.Word>
     ): SyncedLyrics.TextContent {
-        val blankSpace = "\\s{2,}".toRegex()
+        // 🌟 致命修复2：彻底移除 .replace("\\s{2,}".toRegex(), " ") 和 .trim()。
+        // TTML 是对空白符敏感的结构。保证在这里输出的 content 总长度，与上方分配的 startIndex / endIndex 100% 吻合！
         val content = syllables.filterNot { it.isBackground }
-            .joinToString("") { it.content.replace(blankSpace, " ") }
-            .trim()
+            .joinToString("") { it.content }
 
         val backgroundContent = syllables.filter { it.isBackground }
-            .joinToString("") { it.content.replace(blankSpace, " ") }
-            .trim()
+            .joinToString("") { it.content }
+            .takeIf { it.isNotEmpty() }
 
         return SyncedLyrics.TextContent(
             content = content,
