@@ -17,6 +17,7 @@
 
 package com.mardous.booming.ui.screen.settings
 
+import com.mardous.booming.ui.screen.lyrics.FontTarget
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.net.Uri
@@ -161,10 +162,29 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     private val updateViewModel: UpdateViewModel by activityViewModel()
 
-    private val importFontLauncher: ActivityResultLauncher<Array<String>> =
+    // 记得在文件顶部导入 FontTarget：
+    // import com.mardous.booming.ui.screen.lyrics.FontTarget
+
+    // 🌟 1. 常规字体导入选择器
+    private val importRegularFontLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
-                lyricsViewModel.importCustomFont(requireContext(), uri)
+                lyricsViewModel.importCustomFont(requireContext(), uri, FontTarget.REGULAR)
+                    .observe(viewLifecycleOwner) { success ->
+                        if (success) {
+                            showToast(R.string.font_imported_successfully)
+                        } else {
+                            showToast(R.string.could_not_import_font)
+                        }
+                    }
+            }
+        }
+
+    // 🌟 2. 加粗字体导入选择器
+    private val importBoldFontLauncher: ActivityResultLauncher<Array<String>> =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri != null) {
+                lyricsViewModel.importCustomFont(requireContext(), uri, FontTarget.BOLD)
                     .observe(viewLifecycleOwner) { success ->
                         if (success) {
                             showToast(R.string.font_imported_successfully)
@@ -281,9 +301,19 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         findPreference<Preference>(LyricsViewSettings.Key.BLUR_EFFECT)
             ?.isVisible = hasS()
 
-        findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT)
+        // 🌟 绑定常规/Medium 字体点击事件
+        findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_REGULAR)
             ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
-            importFontLauncher.launch(
+            importRegularFontLauncher.launch(
+                arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf")
+            )
+            true
+        }
+
+        // 🌟 绑定加粗/Bold 字体点击事件
+        findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_BOLD)
+            ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+            importBoldFontLauncher.launch(
                 arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf")
             )
             true

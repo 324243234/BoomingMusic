@@ -66,13 +66,24 @@
         app:widgetLayout="@layout/preference_switch"
         app:key="lyrics_use_custom_font" />
 
+    <!-- 🌟 修改点：拆分为两个导入按钮，都依赖于上面的 switch -->
     <Preference
         app:icon="@drawable/ic_file_open_24dp"
-        app:title="@string/lyrics_import_custom_font_title"
+        app:title="导入常规/Medium 字体" 
+        app:summary="用于非加粗状态的普通歌词显示"
         app:persistent="false"
         app:dependency="lyrics_use_custom_font"
         app:layout="@layout/list_item_view"
-        app:key="lyrics_custom_font" />
+        app:key="lyrics_custom_font_regular" />
+
+    <Preference
+        app:iconSpaceReserved="true"
+        app:title="导入加粗/Bold 字体"
+        app:summary="用于当前同步句子的原生加粗显示"
+        app:persistent="false"
+        app:dependency="lyrics_use_custom_font"
+        app:layout="@layout/list_item_view"
+        app:key="lyrics_custom_font_bold" />
 
     <SeekBarPreference
         app:icon="@drawable/ic_format_line_spacing_24dp"

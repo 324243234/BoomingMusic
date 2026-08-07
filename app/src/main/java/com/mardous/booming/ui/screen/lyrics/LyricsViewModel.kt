@@ -1,6 +1,5 @@
 package com.mardous.booming.ui.screen.lyrics
 
-import androidx.compose.ui.text.font.FontSynthesis
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
@@ -9,7 +8,9 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -45,6 +46,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Mode as LyricsViewMode
+
+// 🌟 1. 新增：导入目标枚举，区分常规字体和加粗字体
+enum class FontTarget {
+    REGULAR,
+    BOLD
+}
 
 /**
  * @author Christians M. A. (mardous)
@@ -170,9 +177,11 @@ class LyricsViewModel(
         repository.deleteAllLyrics()
     }
 
-    fun importCustomFont(context: Context, uri: Uri) = liveData(IO) {
+    // 🌟 2. 升级导入逻辑：支持传参分辨导入的是 Regular 还是 Bold
+    fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
         try {
-            val defaultName = "custom_font_${System.currentTimeMillis()}.ttf"
+            val targetName = target.name.lowercase()
+            val defaultName = "custom_font_${targetName}_${System.currentTimeMillis()}.ttf"
             val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
             val rawFileName = context.contentResolver.query(uri, null, null, null, null)
                 ?.use { cursor ->
@@ -204,7 +213,18 @@ class LyricsViewModel(
                 return@liveData
             }
 
-            val outFile = File(fontsDir, fileName)
+            val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
+
+            // 🌟 清理旧的字重物理文件，防止多次导入占用空间
+            val oldPath = preferences.getString(targetPrefKey, null)
+            if (!oldPath.isNullOrBlank()) {
+                val oldFile = File(oldPath)
+                if (oldFile.exists() && oldFile.belongsTo(fontsDir)) {
+                    oldFile.delete()
+                }
+            }
+
+            val outFile = File(fontsDir, "font_${targetName}_$fileName")
             if (!outFile.belongsTo(fontsDir)) {
                 emit(false)
                 return@liveData
@@ -216,9 +236,15 @@ class LyricsViewModel(
                 }
             }
 
+            // 🌟 存储配置
             preferences.edit(commit = true) {
                 putBoolean(Key.USE_CUSTOM_FONT, true)
-                putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
+                putString(targetPrefKey, outFile.absolutePath)
+                
+                // 为了兼容旧版逻辑，如果是导入 Regular，同时更新一下旧 Key
+                if (target == FontTarget.REGULAR) {
+                    putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
+                }
             }
 
             emit(outFile.length() > 0)
@@ -340,20 +366,44 @@ class LyricsViewModel(
         val resumeOnSeek = preferences.getBoolean(Key.RESUME_ON_SEEK, false)
         val blurEffect = !background.isNone && preferences.getBoolean(Key.BLUR_EFFECT, false)
         val shadowEffect = !background.isNone && preferences.getBoolean(Key.SHADOW_EFFECT, false)
+        
+        // 🌟 3. 重构字体构建逻辑：智能组合原生双字重
         val fontFamily: FontFamily = if (preferences.getBoolean(Key.USE_CUSTOM_FONT, false)) {
             try {
-                preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
-                    ?.let { FontFamily(Typeface.createFromFile(it)) }
-                    ?: FontFamily.Default
-            } catch (_: Exception) {
-                preferences.edit {
-                    remove(Key.SELECTED_CUSTOM_FONT)
+                // 读取常规字体（优先用新 Key，找不到用旧 Key 兜底兼容）
+                val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
+                    ?: preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
+                // 读取加粗字体
+                val boldPath = preferences.getString(PREF_CUSTOM_FONT_BOLD, null)
+
+                val fonts = mutableListOf<Font>()
+
+                if (!regularPath.isNullOrBlank()) {
+                    val file = File(regularPath)
+                    if (file.exists()) {
+                        fonts.add(Font(file = file, weight = FontWeight.Normal))
+                    }
                 }
+
+                if (!boldPath.isNullOrBlank()) {
+                    val file = File(boldPath)
+                    if (file.exists()) {
+                        fonts.add(Font(file = file, weight = FontWeight.Bold))
+                    }
+                }
+
+                if (fonts.isNotEmpty()) {
+                    FontFamily(fonts)
+                } else {
+                    FontFamily.Default
+                }
+            } catch (_: Exception) {
                 FontFamily.Default
             }
         } else {
             FontFamily.Default
         }
+        
         val lineSpacing = preferences.getInt(Key.LINE_SPACING, 40)
         val syncedFontSize = if (mode == LyricsViewMode.Player) {
             preferences.getInt(Key.SYNCED_FONT_SIZE_PLAYER, 20)
@@ -370,7 +420,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = syncedFontSize.sp,
             fontWeight = if (syncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // 🌟 严谨修复：强制允许单字重字体通过算法合成加粗
+            fontSynthesis = FontSynthesis.Weight, // 🌟 兜底保障：哪怕用户只导了一个常规字体，这行也能让它自动算法加粗！
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         val unsyncedBoldFont = preferences.getBoolean(Key.UNSYNCED_BOLD_FONT, false)
@@ -378,13 +428,12 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = unsyncedFontSize.sp,
             fontWeight = if (unsyncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // 🌟 严谨修复：同时修复未同步歌词的加粗开关
+            fontSynthesis = FontSynthesis.Weight, // 同上
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         
         return LyricsViewSettings(
             mode = mode,
-            // ... 下面保持原样 ...
             isCenterCurrentLine = preferences.getBoolean(Key.CENTER_CURRENT_LINE, false),
             isCenterHorizontally = preferences.getBoolean(Key.CENTER_HORIZONTALLY, false),
             enableSyllableLyrics = enableSyllableLyrics,
@@ -417,12 +466,15 @@ class LyricsViewModel(
                 }
             }
 
+            // 🌟 监听双字重 Key 变动，实时刷新界面
+            PREF_CUSTOM_FONT_REGULAR,
+            PREF_CUSTOM_FONT_BOLD,
+            Key.USE_CUSTOM_FONT,
+            Key.SELECTED_CUSTOM_FONT,
             Key.ENABLE_SYLLABLE_LYRICS,
             Key.ENABLE_KARAOKE_STYLE,
             Key.CENTER_CURRENT_LINE,
             Key.CENTER_HORIZONTALLY,
-            Key.USE_CUSTOM_FONT,
-            Key.SELECTED_CUSTOM_FONT,
             Key.LINE_SPACING,
             Key.PROGRESSIVE_COLORING,
             Key.SHOW_TRANSLATION,
@@ -469,5 +521,9 @@ class LyricsViewModel(
         private const val INSTRUMENTAL_IDENTIFIER_MAX_LENGTH = 50
         private const val INSTRUMENTAL_TRACK_IDENTIFIERS = "instrumental_track_identifiers"
         private const val MARK_INSTRUMENTAL_BY_TITLE = "mark_instrumental_tracks_by_title"
+        
+        // 🌟 存储双字重路径的常量 Key
+        const val PREF_CUSTOM_FONT_REGULAR = "selected_custom_font_regular"
+        const val PREF_CUSTOM_FONT_BOLD = "selected_custom_font_bold"
     }
 }

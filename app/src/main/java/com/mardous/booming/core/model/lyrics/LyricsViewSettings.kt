@@ -44,6 +44,12 @@ class LyricsViewSettings(
             const val ENABLE_KARAOKE_STYLE = "enable_karaoke_style"
             const val USE_CUSTOM_FONT = "lyrics_use_custom_font"
             const val SELECTED_CUSTOM_FONT = "lyrics_custom_font"
+			
+			// 🌟 在这里新增下面这两行，用于双字重存储
+            const val SELECTED_CUSTOM_FONT_REGULAR = "lyrics_custom_font_regular"
+            const val SELECTED_CUSTOM_FONT_BOLD = "lyrics_custom_font_bold"
+            
+            
             const val CENTER_CURRENT_LINE = "lyrics_center_current_line"
             const val CENTER_HORIZONTALLY = "lyrics_center_horizontally"
             const val LINE_SPACING = "lyrics_line_spacing"
