@@ -1,6 +1,5 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
-
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import androidx.core.content.edit
 import android.widget.Toast
@@ -46,13 +45,17 @@ import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import org.koin.android.ext.android.inject
+// 🌟 引入底层的歌词数据仓库，用于手动强杀缓存
+import com.mardous.booming.data.local.repository.LyricsRepository
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
-	
-	// 2. 注入全局 SharedPreferences 和 LyricsViewModel
+    
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
+    
+    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
+    private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentDefaultPlayerBinding? = null
     private val binding get() = _binding!!
@@ -61,8 +64,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private var isDraggingInlineSlider = false
     
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
-
-    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
 
     override val playerControlsFragment: AbsPlayerControlsFragment
         get() = controlsFragment
@@ -81,22 +82,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentDefaultPlayerBinding.bind(view)
+        
+        // 🌟 核心修正：绝对不在这里覆写 Toolbar 监听器，保障基类事件分发健康
         setupToolbar()
         inflateMenuInView(playerToolbar)
-		
-		// 3. 🌟 新增：拦截 Toolbar 菜单点击事件，处理切换逻辑
-        playerToolbar.setOnMenuItemClickListener { item ->
-            if (item.itemId == R.id.action_toggle_lyrics_format) {
-                toggleLyricsFormat()
-                true
-            } else {
-                // 其他菜单项交由原有的框架逻辑处理
-                onOptionsItemSelected(item)
-            }
-        }
-		
-		
-		
         
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
@@ -117,15 +106,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 requireContext().startService(intent)
             } catch (e: Exception) { e.printStackTrace() }
         }
-		
-		// 绑定左侧迷你下一首按钮的点击事件
+        
         binding.leftNextButton?.setOnClickListener {
             playerViewModel.seekToNext()
         }
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            
-            // A. 监听切歌与歌曲信息改变
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
@@ -141,7 +127,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         }
                         binding.leftSongArtistText?.text = "- $artist"
 
-                        // 🌟 致命 BUG 修复：数据库 IO 查询必须移到内部，防止随 Flow 无限重查卡死主线程！
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
                             withContext(Dispatchers.Main) {
@@ -154,7 +139,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
 
-            // B. 系统级全局收藏事件监听
             launch {
                 playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
@@ -181,33 +165,26 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
         binding.inlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-
             override fun onStartTrackingTouch(seekBar: SeekBar?) {
                 isDraggingInlineSlider = true
             }
-
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 seekBar?.progress?.let { progress ->
                     playerViewModel.seekTo(progress.toLong())
                 }
-                
                 seekBar?.postDelayed({
                     isDraggingInlineSlider = false
                 }, 500)
             }
         })
 
-        // 3. 影子同步机制
-        // 3. 影子同步机制（包含安全的镜像时间逻辑，彻底切断 GC 性能风暴）
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
             val rightCurrTime = view.findViewById<TextView>(R.id.songCurrentProgress)
             val rightTotTime = view.findViewById<TextView>(R.id.songTotalTime)
-            
             val leftCurrTime = view.findViewById<TextView>(R.id.leftCurrentTime)
             val leftTotTime = view.findViewById<TextView>(R.id.leftTotalTime)
 
-            // 🛡️ 核心破局点：声明一个颜色缓存，阻断无限重绘导致的 CPU 饥饿
             var lastAppliedColor = android.graphics.Color.TRANSPARENT
 
             playerViewModel.progressFlow
@@ -225,21 +202,16 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 }
                             
                                 val mainColor = main.currentColor
-                                // 🛡️ 脏检查：只有当提取的颜色不是透明，且“和上次不一样”时，才允许执行高耗能的上色！
                                 if (mainColor != android.graphics.Color.TRANSPARENT && mainColor != lastAppliedColor) {
-                                    lastAppliedColor = mainColor // 记录当前颜色，下次直接跳过
-                                    
+                                    lastAppliedColor = mainColor 
                                     slider.applyColor(mainColor)
                                     val timeColor = mainColor.withAlpha(0.6f)
                                     leftCurrTime?.applyColor(timeColor)
                                     leftTotTime?.applyColor(timeColor)
                                 }
                             }
-
-                            // 进度条只赋值数字，底层自带防抖，耗能极低
                             slider.progress = currentProgress
 
-                            // 文本同步
                             rightCurrTime?.text?.let { rightText ->
                                 if (leftCurrTime != null && leftCurrTime.text != rightText) {
                                     leftCurrTime.text = rightText
@@ -260,7 +232,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        
         if (isLandscape) {
             when (gestureType) {
                 is GestureType.Tap -> {
@@ -313,17 +284,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         binding.leftSongTitleText?.let { titleText ->
             targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
         }
-        
         binding.leftSongArtistText?.let { artistText ->
             val secondaryColor = scheme.onSurfaceColor.withAlpha(0.7f) 
             targets.add(artistText.tintTarget(artistText.currentTextColor, secondaryColor))
         }
-
         binding.leftFavoriteButton?.let { favBtn ->
             targets.add(favBtn.tintTarget(favBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
         }
-		
-		// 🌟 新增：让迷你切歌按钮也跟随封面动态提取的颜色变色
         binding.leftNextButton?.let { nextBtn ->
             targets.add(nextBtn.tintTarget(nextBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
         }
@@ -331,81 +298,87 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
-	
-	// 4. 🌟 新增：切换核心逻辑
+    
+    // 🌟 核心修复：阻断内存竞态，保证读取最新配置并强制清空内存死数据
     private fun toggleLyricsFormat() {
-        // 读取当前格式（默认兜底 ttml），来自 preferences_screen_advanced 的 ListPreference 设定
-        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml")
-        val newFormat = if (currentFormat == "ttml") "lrc" else "ttml"
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         
-        // 写入新配置，这会立刻触发 LyricsViewModel 的 onSharedPreferenceChanged 清理缓存
-        sharedPreferences.edit {
+        val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
+        
+        // 1. 同步阻塞式写入，确保立刻落盘
+        sharedPreferences.edit(commit = true) {
             putString("preferred_lyrics_file_format", newFormat)
         }
         
-        // 给予用户视觉反馈
-        val toastText = if (newFormat == "ttml") "已切换为 TTML 逐字歌词" else "已切换为 LRC 滚动歌词"
-        Toast.makeText(requireContext(), toastText, Toast.LENGTH_SHORT).show()
-        
-		// 🌟 优化新增：切换后，立刻让 Toolbar 重新加载当前文字状态
+        // 2. 视觉反馈
+        val toastText = if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词"
+        context?.let { Toast.makeText(it, toastText, Toast.LENGTH_SHORT).show() }
         playerToolbar.menu?.let { updateMenuTitle(it) }
-		
-        // 致命关键：强制更新当前歌曲的歌词状态，实现 0 延迟实时反馈 UI
+        
+        // 3. 越权手杀：强行干预底层缓存，避免等待 ViewModel 的回调时差
+        lyricsRepository.clearMemoryCache()
+        
+        // 4. 重载当前歌曲数据
         playerViewModel.currentSongFlow.value?.let { currentSong ->
             lyricsViewModel.updateSong(currentSong)
         }
     }
-	
-	// 🌟 优化新增：动态更新菜单状态的辅助方法
+    
+    // 🌟 核心修复：严格遵循原项目的“实心/空心”双态图标 Material Design 规范
     private fun updateMenuTitle(menu: Menu) {
-        // 读取当前真实格式，默认兜底为 ttml
-        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml")
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
         
-        // 动态修改标题（也是长按图标时的提示文字）
-        if (currentFormat == "ttml") {
+        if (isCurrentlyTtml) {
             toggleItem?.title = "当前: TTML逐字"
+            // 实心图标 (亮起状态)
+            toggleItem?.setIcon(R.drawable.ic_lyrics_24dp)
         } else {
             toggleItem?.title = "当前: LRC滚动"
+            // 空心描边图标 (暗淡状态)
+            toggleItem?.setIcon(R.drawable.ic_lyrics_outline_24dp)
         }
     }
 
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         menu.removeItem(R.id.action_sound_settings)
-        //menu.setShowAsAction(R.id.action_favorite)
         menu.setShowAsAction(R.id.action_show_lyrics)
-		
-		// 🌟 新增逻辑：检测是否为横屏或平板模式
+        
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
+        // 🌟 核心修正：仅孤立拦截当前切换按钮的事件，其余任何菜单项全部交还系统自动分发
+        val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
+        toggleItem?.setOnMenuItemClickListener {
+            toggleLyricsFormat()
+            true
+        }
+
         if (isLandscapeOrTablet) {
-		    
-			menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_equalizer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             
-            // 🌟 核心改动：平板横屏模式下，隐藏原有的显示歌词按钮（收入三点菜单），展示我们新建的切换开关
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-            menu.findItem(R.id.action_toggle_lyrics_format)?.apply {
+            toggleItem?.apply {
                 isVisible = true
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
-		} else {
-		    menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        } else {
+            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             
-            // 🌟 手机竖屏模式：隐藏切换开关，恢复显示歌词按钮
-            menu.findItem(R.id.action_toggle_lyrics_format)?.isVisible = false
+            toggleItem?.isVisible = false
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         }
-		
-		// 🌟 优化新增：界面刚加载菜单时，主动赋予一次正确的标题状态
+        
         updateMenuTitle(menu)
-		
         setupQueueMenuItem(menu)
     }
 
