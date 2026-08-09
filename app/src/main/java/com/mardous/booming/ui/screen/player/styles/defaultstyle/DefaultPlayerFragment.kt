@@ -395,6 +395,46 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             true
         }
 
+		// 🌟 需求 3：绑定“获取 TTML”按钮逻辑
+        menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { currentSong ->
+                val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
+                toast.show()
+
+                // 启动协程在后台获取
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
+                    
+                    withContext(Dispatchers.Main) {
+                        toast.cancel()
+                        if (!ttmlContent.isNullOrBlank()) {
+                            try {
+                                val songFile = File(currentSong.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    // 保存为同名文件
+                                    val ttmlFile = File(parentDir, "${songFile.nameWithoutExtension}.ttml")
+                                    ttmlFile.writeText(ttmlContent)
+                                    
+                                    Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
+                                    
+                                    // 强杀缓存并无缝重载歌词 UI
+                                    lyricsRepository.clearMemoryCache()
+                                    lyricsViewModel.updateSong(currentSong)
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            true // 拦截事件
+        }
+		
+		
         // 🌟 需求 1：绑定新增的“删除 TTML”按钮，点击后自行消费处理
         menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
