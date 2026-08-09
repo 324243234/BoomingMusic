@@ -133,7 +133,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 repeatMode = Player.REPEAT_MODE_ALL
                 volume = 0f // 强制静音，绝不干扰音频流
             }
-            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.player = canvasExoPlayer
+            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
+                player = canvasExoPlayer
+                useController = false // 动态关闭控制器
+                setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM) // 动态设置等比缩放填充
+            }
         }
 
         binding.leftFavoriteButton?.setOnClickListener {
@@ -192,7 +196,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                             canvasExoPlayer?.prepare()
                                             canvasExoPlayer?.play()
                                             
-                                            playerView?.isVisible = true
+                                            playerView?.apply {
+                                                useController = false
+                                                setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+                                                isVisible = true
+                                            }
                                             staticCoverFragment?.isVisible = false
                                         } else {
                                             canvasExoPlayer?.stop()
