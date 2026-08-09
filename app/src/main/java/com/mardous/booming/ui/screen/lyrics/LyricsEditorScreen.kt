@@ -1,20 +1,3 @@
-/*
- * Copyright (c) 2026 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 @file:SuppressLint("LocalContextGetResourceValueCall")
 package com.mardous.booming.ui.screen.lyrics
 
@@ -62,6 +45,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
@@ -89,6 +73,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -178,7 +163,7 @@ fun LyricsEditorScreen(
     }
 
     LaunchedEffect(Unit) {
-        delay(500.milliseconds) // Wait until the editor is fully visible
+        delay(500.milliseconds)
         viewModel.preparePermissionRequest(song)
     }
 
@@ -210,6 +195,7 @@ fun LyricsEditorScreen(
     var showManualSearchDialog by remember { mutableStateOf(false) }
     var showLyricsDownloadDialog by remember { mutableStateOf(false) }
     var showLyricsSearchDialog by remember { mutableStateOf(false) }
+    var showTimeShiftDialog by remember { mutableStateOf(false) }
     var downloadedLyricsForSelector by rememberSaveable { mutableStateOf<RawLyrics.Remote?>(null) }
 
     ObserveAsEvent(viewModel.saveEvent) { saveResult ->
@@ -348,6 +334,17 @@ fun LyricsEditorScreen(
         )
     }
 
+    if (showTimeShiftDialog) {
+        TimeShiftDialog(
+            onDismissRequest = { showTimeShiftDialog = false },
+            onConfirm = { offsetMs ->
+                val shiftedText = viewModel.shiftTimeline(textFieldState.text.toString(), offsetMs)
+                textFieldState.setContent(shiftedText)
+                showTimeShiftDialog = false
+            }
+        )
+    }
+
     fun saveContent() {
         viewModel.saveLyrics(song, editedContent)
     }
@@ -412,15 +409,21 @@ fun LyricsEditorScreen(
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.action_save),
                                     icon = painterResource(R.drawable.ic_save_24dp),
-                                    enabled = !uiState.isLoading && !isFileSource,
+                                    // 🌟 核心解除：移除了 !isFileSource 的拦截，任何标签页下都可保存
+                                    enabled = !uiState.isLoading,
                                     onClick = { saveContent() }
                                 ),
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.download_lyrics),
                                     icon = painterResource(R.drawable.ic_download_24dp),
-                                    enabled = !uiState.isLoading && !isFileSource,
+                                    enabled = !uiState.isLoading,
                                     visible = isLyricsDownloadEnabled,
                                     onClick = { downloadLyrics() }
+                                ),
+                                MenuItem.Button.DropDown(
+                                    text = "时间轴平移",
+                                    icon = painterResource(R.drawable.ic_timer_24dp),
+                                    onClick = { showTimeShiftDialog = true }
                                 ),
                                 MenuItem.Button.DropDown(
                                     text = stringResource(R.string.search_lyrics),
@@ -452,14 +455,16 @@ fun LyricsEditorScreen(
         bottomBar = {
             if (!isLandscape) {
                 LyricsEditorBottomBar(
-                    enabled = !uiState.isLoading && !isFileSource,
+                    // 🌟 核心解除：移除了 !isFileSource，允许手机竖屏下的保存和所有操作
+                    enabled = !uiState.isLoading,
                     downloadEnabled = isLyricsDownloadEnabled,
                     onSearchClick = { showLyricsSearchDialog = true },
                     onDownloadClick = { downloadLyrics() },
                     onSelectAllClick = { selectAllText() },
                     onPasteClick = { pasteFromClipboard() },
                     onUndoChangesClick = { undoChanges() },
-                    onSaveClick = { saveContent() }
+                    onSaveClick = { saveContent() },
+                    onTimeShiftClick = { showTimeShiftDialog = true }
                 )
             }
         }
@@ -490,15 +495,12 @@ fun LyricsEditorScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    LyricsFileNotice(
-                        isFileSource = isFileSource,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // 🌟 删除了 LyricsFileNotice（不再显示“不能编辑本地文件”的警告）
                 }
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = isFileSource,
+                    readOnly = false, // 🌟 核心解除：将 TextField 完全释放为可编辑状态
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -532,7 +534,7 @@ fun LyricsEditorScreen(
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = isFileSource,
+                    readOnly = false, // 🌟 核心解除：完全释放可编辑
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -542,58 +544,55 @@ fun LyricsEditorScreen(
                         .padding(horizontal = 16.dp)
                         .focusRequester(focusRequester)
                 )
-
-                LyricsFileNotice(
-                    isFileSource = isFileSource,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                )
             }
         }
     }
 }
 
+// 🌟 新增：时间调整弹窗组件
 @Composable
-fun LyricsSelectorDialog(
+fun TimeShiftDialog(
     onDismissRequest: () -> Unit,
-    onModeSelected: (LyricsMode) -> Unit
+    onConfirm: (Long) -> Unit
 ) {
-    var selectedMode by remember { mutableStateOf(LyricsMode.Plain) }
+    var offsetText by remember { mutableStateOf("") }
+    var isAdvance by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
-        title = { Text(stringResource(R.string.choose_lyrics)) },
+        title = { Text("调整时间轴") },
         text = {
-            Column(Modifier.fillMaxWidth()) {
-                DialogListItemWithRadio(
-                    title = stringResource(R.string.plain_lyrics),
-                    onClick = {
-                        selectedMode = LyricsMode.Plain
-                    },
-                    isSelected = selectedMode == LyricsMode.Plain,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("输入平移的毫秒数 (1000毫秒 = 1秒)：")
+                OutlinedTextField(
+                    value = offsetText,
+                    onValueChange = { if (it.all { char -> char.isDigit() }) offsetText = it },
+                    label = { Text("毫秒") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-
-                DialogListItemWithRadio(
-                    title = stringResource(R.string.synced_lyrics),
-                    onClick = {
-                        selectedMode = LyricsMode.Synced
-                    },
-                    isSelected = selectedMode == LyricsMode.Synced,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = !isAdvance, onClick = { isAdvance = false })
+                        Text("延后 (+)")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = isAdvance, onClick = { isAdvance = true })
+                        Text("提前 (-)")
+                    }
+                }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    onModeSelected(selectedMode)
-                }
-            ) {
-                Text(stringResource(android.R.string.ok))
+            Button(onClick = {
+                val ms = offsetText.toLongOrNull() ?: 0L
+                onConfirm(if (isAdvance) -ms else ms)
+            }) {
+                Text("确定")
             }
         },
         dismissButton = {
@@ -784,7 +783,8 @@ private fun LyricsEditorBottomBar(
     onPasteClick: () -> Unit,
     onSaveClick: () -> Unit,
     onUndoChangesClick: () -> Unit,
-    onSelectAllClick: () -> Unit
+    onSelectAllClick: () -> Unit,
+    onTimeShiftClick: () -> Unit
 ) {
     FlexibleBottomAppBar {
         IconButton(
@@ -830,6 +830,12 @@ private fun LyricsEditorBottomBar(
         OverflowMenu(
             enabled = enabled,
             items = listOf(
+                // 🌟 新增：收纳在竖屏的更多菜单里
+                MenuItem.Button.DropDown(
+                    text = "时间轴平移",
+                    icon = painterResource(R.drawable.ic_timer_24dp),
+                    onClick = { onTimeShiftClick() }
+                ),
                 MenuItem.Button.DropDown(
                     text = stringResource(R.string.select_all_title),
                     icon = painterResource(R.drawable.ic_select_all_24dp),
@@ -842,24 +848,6 @@ private fun LyricsEditorBottomBar(
                     onClick = { onUndoChangesClick() }
                 )
             )
-        )
-    }
-}
-
-@Composable
-fun ColumnScope.LyricsFileNotice(
-    isFileSource: Boolean,
-    modifier: Modifier = Modifier
-) {
-    AnimatedVisibility(
-        visible = isFileSource,
-        modifier = modifier
-    ) {
-        Text(
-            text = stringResource(R.string.cannot_edit_lyrics_file),
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
         )
     }
 }

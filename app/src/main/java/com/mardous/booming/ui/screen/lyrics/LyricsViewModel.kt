@@ -450,6 +450,55 @@ class LyricsViewModel(
             lineSpacing = ((lineSpacing / 2) + 8).coerceIn(8, 48)
         )
     }
+	
+	// 🌟 新增：智能时间轴平移算法
+    fun shiftTimeline(content: String, offsetMs: Long): String {
+        if (offsetMs == 0L || content.isBlank()) return content
+
+        var newContent = content
+
+        // 1. 处理 LRC 时间轴 [mm:ss.xx] 或 [mm:ss.xxx]
+        val lrcRegex = Regex("""\[(\d{2,}):(\d{2})\.(\d{2,3})\]""")
+        newContent = lrcRegex.replace(newContent) { match ->
+            val m = match.groupValues[1].toLong()
+            val s = match.groupValues[2].toLong()
+            val msStr = match.groupValues[3]
+            val ms = if (msStr.length == 2) msStr.toLong() * 10 else msStr.toLong()
+            
+            var totalMs = m * 60000 + s * 1000 + ms + offsetMs
+            if (totalMs < 0) totalMs = 0
+            
+            val nm = totalMs / 60000
+            val ns = (totalMs % 60000) / 1000
+            if (msStr.length == 3) {
+                String.format("[%02d:%02d.%03d]", nm, ns, totalMs % 1000)
+            } else {
+                String.format("[%02d:%02d.%02d]", nm, ns, (totalMs % 1000) / 10)
+            }
+        }
+
+        // 2. 处理 TTML 时间轴 (HH:MM:SS.mmm)
+        val ttmlRegex = Regex("""(begin|end)="(\d{2,}):(\d{2}):(\d{2})\.(\d{3})"""")
+        newContent = ttmlRegex.replace(newContent) { match ->
+            val attr = match.groupValues[1]
+            val h = match.groupValues[2].toLong()
+            val m = match.groupValues[3].toLong()
+            val s = match.groupValues[4].toLong()
+            val ms = match.groupValues[5].toLong()
+            
+            var totalMs = h * 3600000 + m * 60000 + s * 1000 + ms + offsetMs
+            if (totalMs < 0) totalMs = 0
+            
+            val nh = totalMs / 3600000
+            val nm = (totalMs % 3600000) / 60000
+            val ns = (totalMs % 60000) / 1000
+            val nms = totalMs % 1000
+            
+            String.format("%s=\"%02d:%02d:%02d.%03d\"", attr, nh, nm, ns, nms)
+        }
+
+        return newContent
+    }
 
     private fun isLyricsDownloadEnabled(): Boolean {
         return BetterLyrics.isEnabled || Lyrically.isEnabled || LRCLib.isEnabled

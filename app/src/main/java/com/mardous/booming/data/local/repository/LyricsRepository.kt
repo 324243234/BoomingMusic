@@ -220,11 +220,11 @@ class RealLyricsRepository(
     ): Boolean? {
         try {
             val editedLyrics = newContentBySource.mapNotNull { (source, content) ->
-                if (source == LyricsSource.File) return@mapNotNull null
-
+                // 🌟 核心解除：删除了原有的 `if (source == LyricsSource.File) return@mapNotNull null`
                 val originalLyrics = originalLyricsBySource[source] ?: when (source) {
                     LyricsSource.Embedded -> RawLyrics.Embedded(null)
                     LyricsSource.Downloaded -> RawLyrics.Stored()
+                    LyricsSource.File -> return@mapNotNull null // 如果之前没有匹配到本地文件，则无法凭空生成保存
                 }
                 if (originalLyrics.lyrics != content) {
                     RawLyrics.Edited(
@@ -263,6 +263,19 @@ class RealLyricsRepository(
                             true
                         }.getOrDefault(false).also { success ->
                             if (success) removeCachedLyrics(LyricsSource.Downloaded, song.id)
+                        }
+                    }
+                    
+                    // 🌟 新增：支持将修改直接写入本地 .lrc 或 .ttml 物理文件
+                    is RawLyrics.File -> {
+                        runCatching {
+                            val file = java.io.File(it.originalLyrics.file.path)
+                            if (file.exists()) {
+                                file.writeText(it.newContent)
+                            }
+                            true
+                        }.getOrDefault(false).also { success ->
+                            if (success) removeCachedLyrics(LyricsSource.File, song.id)
                         }
                     }
 
