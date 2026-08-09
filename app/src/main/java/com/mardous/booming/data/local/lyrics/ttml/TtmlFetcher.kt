@@ -17,7 +17,8 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (极致并发并发 & 严格防串歌鉴伪版)
+ * TTML 级联网络获取引擎 (零冗余、直通解析、极致轻量版)
+ * 优先级：Apple Music / AMLL -> QQ 音乐 / QRC -> 网易云音乐 / YRC
  */
 object TtmlFetcher {
 
@@ -59,7 +60,7 @@ object TtmlFetcher {
 
         try {
             // ========================================================
-            // 通道一：Apple Music (CN & US) + AMLL DB 并发获取
+            // 通道一：Apple Music (CN & US) + AMLL DB 并发获取 (绝对信任，直通)
             // ========================================================
             for (country in listOf("cn", "us")) {
                 val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=5&country=$country"
@@ -84,7 +85,6 @@ object TtmlFetcher {
                             val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
                             
                             if (isTitleMatch && trackId.isNotBlank()) {
-                                // 物理时长校验 (3000ms 容差)
                                 val isDurationMatch = Math.abs(localDurationMs - remoteDurationMs) <= 3000L
                                 val normRemoteAlbum = normalizeStr(remoteAlbumName)
                                 val isAlbumMatch = targetAlbumNorm.isEmpty() || normRemoteAlbum.contains(targetAlbumNorm) || targetAlbumNorm.contains(normRemoteAlbum)
@@ -95,6 +95,7 @@ object TtmlFetcher {
                                             async { fetchAppleOfficial(trackId, country) },
                                             async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
                                         )
+                                        // 没有任何多余校验，拿到就用
                                         tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                     }
                                     if (ttmlResult != null) return@withContext ttmlResult
@@ -107,7 +108,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道二：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 并发获取
+            // 通道二：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 并发获取 (绝对信任，直通)
             // ========================================================
             val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
@@ -160,6 +161,7 @@ object TtmlFetcher {
                                                     val qrcHex = fetchQqQrc(item)
                                                     if (!qrcHex.isNullOrBlank()) {
                                                         val rawQrc = decryptQrc(qrcHex)
+                                                        // 解密完直接送去解析，绝不犹豫
                                                         if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc) else null
                                                     } else null
                                                 }
@@ -175,10 +177,219 @@ object TtmlFetcher {
                     }
                 }
             }
+
+            // ========================================================
+            // 通道三：网易云音乐搜索 + YRC 转译 (绝对信任，直通)
+            // ========================================================
+            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
+            val neteaseSearchRes = httpGet(neteaseSearchUrl)
+            if (neteaseSearchRes != null) {
+                val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs")
+                if (songs != null && songs.length() > 0) {
+                    for (i in 0 until songs.length()) {
+                        val item = songs.getJSONObject(i)
+                        val songId = item.optInt("id", 0)
+                        val songName = item.optString("name")
+                        val artists = item.optJSONArray("artists")
+                        val remoteArtistStr = if (artists != null) {
+                            (0 until artists.length()).joinToString("") { normalizeStr(artists.getJSONObject(it).optString("name")) }
+                        } else ""
+                        
+                        val isRemoteLive = songName.contains("live", ignoreCase = true) || songName.contains("现场")
+                        val isRemoteRemix = songName.contains("remix", ignoreCase = true) || songName.contains("dj", ignoreCase = true) || songName.contains("版")
+
+                        if (!isLocalLive && isRemoteLive) continue
+                        if (!isLocalRemix && isRemoteRemix) continue
+
+                        val normTrack = normalizeStr(songName)
+                        val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
+                        
+                        var isArtistMatch = targetArtists.isEmpty()
+                        if (targetArtists.isNotEmpty()) {
+                            val primaryArtist = targetArtists[0]
+                            val isPrimaryMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr)
+                            val hasAnyMatch = targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
+                            isArtistMatch = isPrimaryMatch || hasAnyMatch
+                        }
+
+                        if (isTitleMatch && isArtistMatch && songId != 0) {
+                            val yrcUrl = "https://music.163.com/api/song/lyric?id=$songId&lv=-1&kv=-1&tv=-1&yv=1"
+                            val yrcRes = httpGet(yrcUrl)
+                            if (yrcRes != null) {
+                                val yrcData = JSONObject(yrcRes).optJSONObject("yrc")?.optString("lyric")
+                                if (!yrcData.isNullOrBlank()) {
+                                    // 直接交由 YRC 转译器，零预检拦截
+                                    val ttmlResult = parseYrcToTtml(yrcData)
+                                    if (ttmlResult != null) return@withContext ttmlResult
+                                }
+                            }
+                            break 
+                        }
+                    }
+                }
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "Fetch TTML failed", e)
         }
         return@withContext null
+    }
+
+    // ========================================================
+    // 工具层：YRC / TTML 互转及硬核解密逻辑
+    // ========================================================
+
+    private fun parseYrcToTtml(yrcText: String): String? {
+        val lines = yrcText.split(Regex("""\r?\n"""))
+        val ttmlParagraphs = mutableListOf<String>()
+
+        for (line in lines) {
+            val cl = line.trim()
+            if (cl.isEmpty()) continue
+
+            val lineMatch = Regex("""^\[(\d+),\s*(\d+)\]\s*(.*)""").find(cl)
+            if (lineMatch != null) {
+                val lineStart = lineMatch.groupValues[1].toLong()
+                val lineDur = lineMatch.groupValues[2].toLong()
+                val content = lineMatch.groupValues[3].trim()
+                
+                val spans = mutableListOf<String>()
+
+                if (content.startsWith("{") && content.endsWith("}")) {
+                    try {
+                        val cArray = JSONObject(content).optJSONArray("c")
+                        if (cArray != null) {
+                            for (i in 0 until cArray.length()) {
+                                val wordObj = cArray.getJSONObject(i)
+                                val tx = wordObj.optString("tx")
+                                val t = wordObj.optLong("t")
+                                val d = wordObj.optLong("d")
+                                if (tx.isNotEmpty() && d > 0) {
+                                    val safeText = tx.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                                    spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {}
+                } else {
+                    val wordPattern = Regex("""\((\d+),\s*(\d+)(?:,\d+)?\)([^\(]+)""")
+                    wordPattern.findAll(content).forEach { match ->
+                        val t = match.groupValues[1].toLong()
+                        val d = match.groupValues[2].toLong()
+                        val tx = match.groupValues[3]
+                        val safeText = tx.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        if (safeText.isNotEmpty() && d > 0) {
+                            spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
+                        }
+                    }
+                }
+
+                if (spans.isNotEmpty()) {
+                    ttmlParagraphs.add(
+                        "      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n" +
+                        spans.joinToString("\n") +
+                        "\n      </p>"
+                    )
+                }
+            }
+        }
+
+        if (ttmlParagraphs.isEmpty()) return null
+
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
+               ttmlParagraphs.joinToString("\n") +
+               "\n    </div>\n  </body>\n</tt>"
+    }
+
+    private fun parseQrcToTtmlDirectly(rawQrcText: String): String? {
+        var text = rawQrcText.trim()
+        val xmlMatch = Regex("""LyricContent="([^"]+)"""", RegexOption.IGNORE_CASE).find(text)
+        if (xmlMatch != null) text = xmlMatch.groupValues[1]
+
+        text = text.replace(Regex("""&#(\d+);""")) { it.groupValues[1].toInt().toChar().toString() }
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+
+        val wordPattern = Regex("""([^\(\)\r\n]+)\((\d+),\s*(\d+)(?:,\d+)*\)""")
+        if (!wordPattern.containsMatchIn(text)) return null
+
+        val lines = text.split(Regex("""\r?\n"""))
+        val ttmlParagraphs = mutableListOf<String>()
+
+        for (line in lines) {
+            var cl = line.replace(Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]"""), "").trim()
+            cl = cl.replace(Regex("""^\[\d+,\d+\]"""), "").trim()
+            if (cl.isEmpty()) continue
+
+            if (Regex("""^(词|曲|编曲|监制|混音|吉他|贝斯|和声|录音|发行|出品|OP|SP)[：:]""").containsMatchIn(cl)) continue
+
+            val words = mutableListOf<Triple<String, Long, Long>>()
+            wordPattern.findAll(cl).forEach { match ->
+                var rawText = match.groupValues[1]
+                rawText = rawText.replace(Regex("""\[\d+,\d+\]"""), "")
+                val start = match.groupValues[2].toLong()
+                val dur = match.groupValues[3].toLong()
+                if (rawText.isNotEmpty()) words.add(Triple(rawText, start, start + dur))
+            }
+
+            if (words.isEmpty()) continue
+
+            var lineStart = Long.MAX_VALUE
+            var lineEnd = 0L
+            val spans = mutableListOf<String>()
+
+            for (w in words) {
+                if (w.second < lineStart) lineStart = w.second
+                if (w.third > lineEnd) lineEnd = w.third
+
+                val safeText = w.first.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                if (safeText.isNotEmpty() && w.third > w.second) {
+                    spans.add("        <span begin=\"${msToTimeStr(w.second)}\" end=\"${msToTimeStr(w.third)}\">$safeText</span>")
+                }
+            }
+
+            if (spans.isNotEmpty()) {
+                ttmlParagraphs.add(
+                    "      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\">\n" +
+                    spans.joinToString("\n") +
+                    "\n      </p>"
+                )
+            }
+        }
+
+        if (ttmlParagraphs.isEmpty()) return null
+
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
+               ttmlParagraphs.joinToString("\n") +
+               "\n    </div>\n  </body>\n</tt>"
+    }
+
+    private fun msToTimeStr(ms: Long): String {
+        var seconds = ms / 1000
+        val remMs = ms % 1000
+        val minutes = (seconds / 60) % 60
+        val hours = seconds / 3600
+        seconds %= 60
+        return String.format("%02d:%02d:%02d.%03d", hours, minutes, seconds, remMs)
+    }
+
+    private fun httpGet(urlString: String): String? {
+        try {
+            val url = URL(urlString)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.readTimeout = 3000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            
+            if (urlString.contains("163.com")) {
+                conn.setRequestProperty("Referer", "https://music.163.com/")
+            } else if (urlString.contains("qq.com")) {
+                conn.setRequestProperty("Referer", "https://y.qq.com/")
+            }
+            
+            if (conn.responseCode == 200) {
+                return conn.inputStream.bufferedReader().readText()
+            }
+        } catch (e: Exception) {}
+        return null
     }
 
     private fun fetchAppleOfficial(trackId: String, country: String): String? {
@@ -263,91 +474,6 @@ object TtmlFetcher {
         } catch (e: Exception) {
             Log.e(TAG, "Native QQMusicDES Decrypt Error", e)
         }
-        return null
-    }
-
-    private fun parseQrcToTtmlDirectly(rawQrcText: String): String? {
-        var text = rawQrcText.trim()
-        val xmlMatch = Regex("""LyricContent="([^"]+)"""", RegexOption.IGNORE_CASE).find(text)
-        if (xmlMatch != null) text = xmlMatch.groupValues[1]
-
-        text = text.replace(Regex("""&#(\d+);""")) { it.groupValues[1].toInt().toChar().toString() }
-            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-
-        val wordPattern = Regex("""([^\(\)\r\n]+)\((\d+),\s*(\d+)(?:,\d+)*\)""")
-        if (!wordPattern.containsMatchIn(text)) return null
-
-        val lines = text.split(Regex("""\r?\n"""))
-        val ttmlParagraphs = mutableListOf<String>()
-
-        for (line in lines) {
-            var cl = line.replace(Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]"""), "").trim()
-            cl = cl.replace(Regex("""^\[\d+,\d+\]"""), "").trim()
-            if (cl.isEmpty()) continue
-
-            if (Regex("""^(词|曲|编曲|监制|混音|吉他|贝斯|和声|录音|发行|出品|OP|SP)[：:]""").containsMatchIn(cl)) continue
-
-            val words = mutableListOf<Triple<String, Long, Long>>()
-            wordPattern.findAll(cl).forEach { match ->
-                var rawText = match.groupValues[1]
-                rawText = rawText.replace(Regex("""\[\d+,\d+\]"""), "")
-                val start = match.groupValues[2].toLong()
-                val dur = match.groupValues[3].toLong()
-                if (rawText.isNotEmpty()) words.add(Triple(rawText, start, start + dur))
-            }
-
-            if (words.isEmpty()) continue
-
-            var lineStart = Long.MAX_VALUE
-            var lineEnd = 0L
-            val spans = mutableListOf<String>()
-
-            for (w in words) {
-                if (w.second < lineStart) lineStart = w.second
-                if (w.third > lineEnd) lineEnd = w.third
-
-                val safeText = w.first.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                if (safeText.isNotEmpty() && w.third > w.second) {
-                    spans.add("        <span begin=\"${msToTimeStr(w.second)}\" end=\"${msToTimeStr(w.third)}\">$safeText</span>")
-                }
-            }
-
-            if (spans.isNotEmpty()) {
-                ttmlParagraphs.add(
-                    "      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\">\n" +
-                    spans.joinToString("\n") +
-                    "\n      </p>"
-                )
-            }
-        }
-
-        if (ttmlParagraphs.isEmpty()) return null
-
-        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
-               "\n    </div>\n  </body>\n</tt>"
-    }
-
-    private fun msToTimeStr(ms: Long): String {
-        var seconds = ms / 1000
-        val remMs = ms % 1000
-        val minutes = (seconds / 60) % 60
-        val hours = seconds / 3600
-        seconds %= 60
-        return String.format("%02d:%02d:%02d.%03d", hours, minutes, seconds, remMs)
-    }
-
-    private fun httpGet(urlString: String): String? {
-        try {
-            val url = URL(urlString)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.readTimeout = 3000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            conn.setRequestProperty("Referer", "https://y.qq.com/")
-            if (conn.responseCode == 200) {
-                return conn.inputStream.bufferedReader().readText()
-            }
-        } catch (e: Exception) {}
         return null
     }
 }
