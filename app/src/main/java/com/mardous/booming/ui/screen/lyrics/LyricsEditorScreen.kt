@@ -409,8 +409,8 @@ fun LyricsEditorScreen(
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.action_save),
                                     icon = painterResource(R.drawable.ic_save_24dp),
-                                    // 🌟 核心解除：移除了 !isFileSource 的拦截，任何标签页下都可保存
-                                    enabled = !uiState.isLoading,
+                                    // 🌟 恢复原作者锁定：如果是本地文件，置灰系统保存按钮！
+                                    enabled = !uiState.isLoading && !isFileSource,
                                     onClick = { saveContent() }
                                 ),
                                 MenuItem.Button.Action(
@@ -424,6 +424,12 @@ fun LyricsEditorScreen(
                                     text = "时间轴平移",
                                     icon = painterResource(R.drawable.ic_timer_24dp),
                                     onClick = { showTimeShiftDialog = true }
+                                ),
+                                // 🌟 新增独立的专属按钮
+                                MenuItem.Button.DropDown(
+                                    text = "保存为本地文件",
+                                    icon = painterResource(R.drawable.ic_save_24dp),
+                                    onClick = { viewModel.saveLocalLyricsFile(context, song, textFieldState.text.toString()) }
                                 ),
                                 MenuItem.Button.DropDown(
                                     text = stringResource(R.string.search_lyrics),
@@ -455,8 +461,8 @@ fun LyricsEditorScreen(
         bottomBar = {
             if (!isLandscape) {
                 LyricsEditorBottomBar(
-                    // 🌟 核心解除：移除了 !isFileSource，允许手机竖屏下的保存和所有操作
                     enabled = !uiState.isLoading,
+                    isFileSource = isFileSource, // 🌟 传入状态
                     downloadEnabled = isLyricsDownloadEnabled,
                     onSearchClick = { showLyricsSearchDialog = true },
                     onDownloadClick = { downloadLyrics() },
@@ -464,7 +470,8 @@ fun LyricsEditorScreen(
                     onPasteClick = { pasteFromClipboard() },
                     onUndoChangesClick = { undoChanges() },
                     onSaveClick = { saveContent() },
-                    onTimeShiftClick = { showTimeShiftDialog = true }
+                    onTimeShiftClick = { showTimeShiftDialog = true },
+                    onSaveFileClick = { viewModel.saveLocalLyricsFile(context, song, textFieldState.text.toString()) } // 🌟 触发我们的独立方法
                 )
             }
         }
@@ -827,6 +834,7 @@ private fun LyricsEditorHeader(
 @Composable
 private fun LyricsEditorBottomBar(
     enabled: Boolean,
+	isFileSource: Boolean, // 🌟 新增参数
     downloadEnabled: Boolean,
     onSearchClick: () -> Unit,
     onDownloadClick: () -> Unit,
@@ -834,7 +842,8 @@ private fun LyricsEditorBottomBar(
     onSaveClick: () -> Unit,
     onUndoChangesClick: () -> Unit,
     onSelectAllClick: () -> Unit,
-    onTimeShiftClick: () -> Unit
+    onTimeShiftClick: () -> Unit,
+	onSaveFileClick: () -> Unit // 🌟 新增专属保存事件
 ) {
     FlexibleBottomAppBar {
         IconButton(
@@ -861,7 +870,7 @@ private fun LyricsEditorBottomBar(
                 shape = IconButtonDefaults.smallSquareShape,
                 pressedShape = IconButtonDefaults.smallPressedShape
             ),
-            enabled = enabled
+            enabled = enabled && !isFileSource
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_save_24dp),
@@ -885,6 +894,12 @@ private fun LyricsEditorBottomBar(
                     text = "时间轴平移",
                     icon = painterResource(R.drawable.ic_timer_24dp),
                     onClick = { onTimeShiftClick() }
+                ),
+				// 🌟 新增：藏在竖屏三点菜单里的独立保存按钮
+                MenuItem.Button.DropDown(
+                    text = "保存为本地文件",
+                    icon = painterResource(R.drawable.ic_save_24dp),
+                    onClick = { onSaveFileClick() }
                 ),
                 MenuItem.Button.DropDown(
                     text = stringResource(R.string.select_all_title),

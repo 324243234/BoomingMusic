@@ -220,17 +220,16 @@ class RealLyricsRepository(
     ): Boolean? {
         try {
             val editedLyrics = newContentBySource.mapNotNull { (source, content) ->
-                // 🌟 核心解除：删除了原有的 `if (source == LyricsSource.File) return@mapNotNull null`
+                // 🌟 1. 恢复原作者的安全锁：如果是本地文件，直接踢出这套复杂的保存流程！
+                if (source == LyricsSource.File) return@mapNotNull null
+                
                 val originalLyrics = originalLyricsBySource[source] ?: when (source) {
                     LyricsSource.Embedded -> RawLyrics.Embedded(null)
                     LyricsSource.Downloaded -> RawLyrics.Stored()
-                    LyricsSource.File -> return@mapNotNull null // 如果之前没有匹配到本地文件，则无法凭空生成保存
+                    LyricsSource.File -> return@mapNotNull null 
                 }
                 if (originalLyrics.lyrics != content) {
-                    RawLyrics.Edited(
-                        originalLyrics = originalLyrics,
-                        newContent = content
-                    )
+                    RawLyrics.Edited(originalLyrics, content)
                 } else null
             }
 

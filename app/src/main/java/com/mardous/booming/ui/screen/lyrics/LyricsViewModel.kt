@@ -500,6 +500,50 @@ class LyricsViewModel(
         return newContent
     }
 
+	// 🌟 新增：完全独立的本地文件覆盖逻辑，不走原作者复杂的数据库和标签通道
+    fun saveLocalLyricsFile(context: android.content.Context, song: Song, content: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = java.io.File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
+                
+                val possibleNames = listOf(
+                    songFile.nameWithoutExtension,
+                    "${song.artistName} - ${song.title}"
+                ).filter { it.isNotBlank() }
+                
+                var saved = false
+                val isTtml = content.trim().startsWith("<")
+                val ext = if (isTtml) ".ttml" else ".lrc"
+                
+                for (name in possibleNames) {
+                    val targetFile = java.io.File(parentDir, "$name$ext")
+                    // 如果存在同名文件，或者当前尝试保存的就是主文件名，直接覆写
+                    if (targetFile.exists() || name == songFile.nameWithoutExtension) {
+                        targetFile.writeText(content)
+                        saved = true
+                        break
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    if (saved) {
+                        android.widget.Toast.makeText(context, "成功覆写本地 $ext 文件", android.widget.Toast.LENGTH_SHORT).show()
+                        repository.clearMemoryCache()
+                        updateSong(song)
+                    } else {
+                        android.widget.Toast.makeText(context, "保存失败：未找到有效目录", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "保存失败，请检查存储权限", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+	
     private fun isLyricsDownloadEnabled(): Boolean {
         return BetterLyrics.isEnabled || Lyrically.isEnabled || LRCLib.isEnabled
     }

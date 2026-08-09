@@ -2,14 +2,13 @@ package com.mardous.booming.data.local.lyrics.ttml
 
 /**
  * 纯 Kotlin 原生手搓的魔改 Triple DES 引擎
- * 算法原理逆向自 QQ 音乐 QRC 解密逻辑
+ * 完全剥离 UInt 实验特性，使用标准 Int 与 ushr 确保 100% 编译兼容
  */
 object QQMusicDES {
 
     private const val ENCRYPT = 1
     private const val DECRYPT = 0
 
-    // QQ音乐独有的魔改 S-Box
     private val sbox = arrayOf(
         intArrayOf(
             14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7,
@@ -64,27 +63,26 @@ object QQMusicDES {
     private val QRC_KEY = "!@#)(*\$%123ZXC!@!@#)(NHL".toByteArray(Charsets.UTF_8)
     private val tripleDesKeys by lazy { tripledes_key_setup(QRC_KEY, DECRYPT) }
 
-    // ====== 底层位运算工具 ======
-    private fun bitnum(a: ByteArray, b: Int, c: Int): UInt {
-        val byteVal = a[(b / 32) * 4 + 3 - (b % 32) / 8].toUInt() and 0xFFu
-        return ((byteVal ushr (7 - b % 8)) and 1u) shl c
+    // ====== 底层位运算工具 (全系 Int + ushr) ======
+    private fun bitnum(a: ByteArray, b: Int, c: Int): Int {
+        val byteVal = a[(b / 32) * 4 + 3 - (b % 32) / 8].toInt() and 0xFF
+        return ((byteVal ushr (7 - b % 8)) and 1) shl c
     }
 
-    private fun bitnum_intr(a: UInt, b: Int, c: Int): UInt {
-        return ((a ushr (31 - b)) and 1u) shl c
+    private fun bitnum_intr(a: Int, b: Int, c: Int): Int {
+        return ((a ushr (31 - b)) and 1) shl c
     }
 
-    private fun bitnum_intl(a: UInt, b: Int, c: Int): UInt {
-        return ((a ushr (31 - b)) and 1u) shl (31 - c)
+    private fun bitnum_intl(a: Int, b: Int, c: Int): Int {
+        return ((a ushr (31 - b)) and 1) shl (31 - c)
     }
 
-    private fun sbox_bit(a: UInt): Int {
-        val ai = a.toInt()
-        return (ai and 32) or ((ai and 31) ushr 1) or ((ai and 1) shl 4)
+    private fun sbox_bit(a: Int): Int {
+        return (a and 32) or ((a and 31) ushr 1) or ((a and 1) shl 4)
     }
 
     // ====== 魔改 DES 置换过程 ======
-    private fun initial_permutation(input_data: ByteArray): Pair<UInt, UInt> {
+    private fun initial_permutation(input_data: ByteArray): Pair<Int, Int> {
         val s0 = (bitnum(input_data, 57, 31) or bitnum(input_data, 49, 30) or bitnum(input_data, 41, 29) or bitnum(input_data, 33, 28) or
                   bitnum(input_data, 25, 27) or bitnum(input_data, 17, 26) or bitnum(input_data, 9, 25) or bitnum(input_data, 1, 24) or
                   bitnum(input_data, 59, 23) or bitnum(input_data, 51, 22) or bitnum(input_data, 43, 21) or bitnum(input_data, 35, 20) or
@@ -105,7 +103,7 @@ object QQMusicDES {
         return Pair(s0, s1)
     }
 
-    private fun inverse_permutation(s0: UInt, s1: UInt): ByteArray {
+    private fun inverse_permutation(s0: Int, s1: Int): ByteArray {
         val data = ByteArray(8)
         data[3] = (bitnum_intr(s1, 7, 7) or bitnum_intr(s0, 7, 6) or bitnum_intr(s1, 15, 5) or
                    bitnum_intr(s0, 15, 4) or bitnum_intr(s1, 23, 3) or bitnum_intr(s0, 23, 2) or
@@ -141,48 +139,48 @@ object QQMusicDES {
         return data
     }
 
-    private fun f(state: UInt, key: UIntArray): UInt {
+    private fun f(state: Int, key: IntArray): Int {
         val t1 = (bitnum_intl(state, 31, 0) or
-                  ((state and 0xf0000000u) ushr 1) or
+                  ((state and 0xf0000000.toInt()) ushr 1) or
                   bitnum_intl(state, 4, 5) or
                   bitnum_intl(state, 3, 6) or
-                  ((state and 0x0f000000u) ushr 3) or
+                  ((state and 0x0f000000) ushr 3) or
                   bitnum_intl(state, 8, 11) or
                   bitnum_intl(state, 7, 12) or
-                  ((state and 0x00f00000u) ushr 5) or
+                  ((state and 0x00f00000) ushr 5) or
                   bitnum_intl(state, 12, 17) or
                   bitnum_intl(state, 11, 18) or
-                  ((state and 0x000f0000u) ushr 7) or
+                  ((state and 0x000f0000) ushr 7) or
                   bitnum_intl(state, 16, 23))
 
         val t2 = (bitnum_intl(state, 15, 0) or
-                  ((state and 0x0000f000u) shl 15) or
+                  ((state and 0x0000f000) shl 15) or
                   bitnum_intl(state, 20, 5) or
                   bitnum_intl(state, 19, 6) or
-                  ((state and 0x00000f00u) shl 13) or
+                  ((state and 0x00000f00) shl 13) or
                   bitnum_intl(state, 24, 11) or
                   bitnum_intl(state, 23, 12) or
-                  ((state and 0x000000f0u) shl 11) or
+                  ((state and 0x000000f0) shl 11) or
                   bitnum_intl(state, 28, 17) or
                   bitnum_intl(state, 27, 18) or
-                  ((state and 0x0000000fu) shl 9) or
+                  ((state and 0x0000000f) shl 9) or
                   bitnum_intl(state, 0, 23))
 
-        val lrg0 = ((t1 ushr 24) and 0xffu) xor key[0]
-        val lrg1 = ((t1 ushr 16) and 0xffu) xor key[1]
-        val lrg2 = ((t1 ushr 8) and 0xffu) xor key[2]
-        val lrg3 = ((t2 ushr 24) and 0xffu) xor key[3]
-        val lrg4 = ((t2 ushr 16) and 0xffu) xor key[4]
-        val lrg5 = ((t2 ushr 8) and 0xffu) xor key[5]
+        val lrg0 = ((t1 ushr 24) and 0xff) xor key[0]
+        val lrg1 = ((t1 ushr 16) and 0xff) xor key[1]
+        val lrg2 = ((t1 ushr 8) and 0xff) xor key[2]
+        val lrg3 = ((t2 ushr 24) and 0xff) xor key[3]
+        val lrg4 = ((t2 ushr 16) and 0xff) xor key[4]
+        val lrg5 = ((t2 ushr 8) and 0xff) xor key[5]
 
-        val st = ((sbox[0][sbox_bit(lrg0 ushr 2)].toUInt() shl 28) or
-                  (sbox[1][sbox_bit(((lrg0 and 0x03u) shl 4) or (lrg1 ushr 4))].toUInt() shl 24) or
-                  (sbox[2][sbox_bit(((lrg1 and 0x0fu) shl 2) or (lrg2 ushr 6))].toUInt() shl 20) or
-                  (sbox[3][sbox_bit(lrg2 and 0x3fu)].toUInt() shl 16) or
-                  (sbox[4][sbox_bit(lrg3 ushr 2)].toUInt() shl 12) or
-                  (sbox[5][sbox_bit(((lrg3 and 0x03u) shl 4) or (lrg4 ushr 4))].toUInt() shl 8) or
-                  (sbox[6][sbox_bit(((lrg4 and 0x0fu) shl 2) or (lrg5 ushr 6))].toUInt() shl 4) or
-                  sbox[7][sbox_bit(lrg5 and 0x3fu)].toUInt())
+        val st = ((sbox[0][sbox_bit(lrg0 ushr 2)] shl 28) or
+                  (sbox[1][sbox_bit(((lrg0 and 0x03) shl 4) or (lrg1 ushr 4))] shl 24) or
+                  (sbox[2][sbox_bit(((lrg1 and 0x0f) shl 2) or (lrg2 ushr 6))] shl 20) or
+                  (sbox[3][sbox_bit(lrg2 and 0x3f)] shl 16) or
+                  (sbox[4][sbox_bit(lrg3 ushr 2)] shl 12) or
+                  (sbox[5][sbox_bit(((lrg3 and 0x03) shl 4) or (lrg4 ushr 4))] shl 8) or
+                  (sbox[6][sbox_bit(((lrg4 and 0x0f) shl 2) or (lrg5 ushr 6))] shl 4) or
+                  sbox[7][sbox_bit(lrg5 and 0x3f)])
 
         return (bitnum_intl(st, 15, 0) or bitnum_intl(st, 6, 1) or bitnum_intl(st, 19, 2) or
                 bitnum_intl(st, 20, 3) or bitnum_intl(st, 28, 4) or bitnum_intl(st, 11, 5) or
@@ -197,7 +195,7 @@ object QQMusicDES {
                 bitnum_intl(st, 3, 30) or bitnum_intl(st, 24, 31))
     }
 
-    private fun crypt(input_data: ByteArray, key: Array<UIntArray>): ByteArray {
+    private fun crypt(input_data: ByteArray, key: Array<IntArray>): ByteArray {
         var (s0, s1) = initial_permutation(input_data)
         for (idx in 0..14) {
             val previous_s1 = s1
@@ -208,23 +206,23 @@ object QQMusicDES {
         return inverse_permutation(s0, s1)
     }
 
-    private fun key_schedule(key: ByteArray, mode: Int): Array<UIntArray> {
-        val schedule = Array(16) { UIntArray(6) }
+    private fun key_schedule(key: ByteArray, mode: Int): Array<IntArray> {
+        val schedule = Array(16) { IntArray(6) }
         val key_rnd_shift = intArrayOf(1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1)
         val key_perm_c = intArrayOf(56, 48, 40, 32, 24, 16, 8, 0, 57, 49, 41, 33, 25, 17, 9, 1, 58, 50, 42, 34, 26, 18, 10, 2, 59, 51, 43, 35)
         val key_perm_d = intArrayOf(62, 54, 46, 38, 30, 22, 14, 6, 61, 53, 45, 37, 29, 21, 13, 5, 60, 52, 44, 36, 28, 20, 12, 4, 27, 19, 11, 3)
         val key_compression = intArrayOf(13, 16, 10, 23, 0, 4, 2, 27, 14, 5, 20, 9, 22, 18, 11, 3, 25, 7, 15, 6, 26, 19, 12, 1, 40, 51, 30, 36,
                                          46, 54, 29, 39, 50, 44, 32, 47, 43, 48, 38, 55, 33, 52, 45, 41, 49, 35, 28, 31)
 
-        var c = 0u
+        var c = 0
         for (i in 0..27) c += bitnum(key, key_perm_c[i], 31 - i)
-        var d = 0u
+        var d = 0
         for (i in 0..27) d += bitnum(key, key_perm_d[i], 31 - i)
 
         for (i in 0..15) {
             val shift = key_rnd_shift[i]
-            c = ((c shl shift) or (c ushr (28 - shift))) and 0xfffffff0u
-            d = ((d shl shift) or (d ushr (28 - shift))) and 0xfffffff0u
+            c = ((c shl shift) or (c ushr (28 - shift))) and 0xfffffff0.toInt()
+            d = ((d shl shift) or (d ushr (28 - shift))) and 0xfffffff0.toInt()
 
             val togen = if (mode == DECRYPT) 15 - i else i
 
@@ -238,7 +236,7 @@ object QQMusicDES {
         return schedule
     }
 
-    private fun tripledes_key_setup(key: ByteArray, mode: Int): Array<Array<UIntArray>> {
+    private fun tripledes_key_setup(key: ByteArray, mode: Int): Array<Array<IntArray>> {
         return if (mode == ENCRYPT) {
             arrayOf(key_schedule(key.copyOfRange(0, 8), ENCRYPT),
                     key_schedule(key.copyOfRange(8, 16), DECRYPT),
