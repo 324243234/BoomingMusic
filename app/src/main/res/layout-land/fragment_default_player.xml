@@ -44,6 +44,20 @@
         app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
         app:layout_constraintStart_toStartOf="parent" 
         tools:layout="@layout/fragment_album_cover_default"/>
+	<!-- 🌟 2. 新增：动态视频预埋框。因为 visibility="gone"，GPU根本不鸟它，所以对性能毫无影响 -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/canvasPlayerView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="24dp"
+        android:visibility="gone"
+        app:use_controller="false"
+        app:resize_mode="zoom" 
+        app:surface_type="texture_view"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
+        app:layout_constraintStart_toStartOf="parent" />
 
     <!-- 2. 歌名信息：打破链条，实现“歌名绝对优先，歌手见缝插针”的智能排版 -->
     <androidx.constraintlayout.widget.ConstraintLayout

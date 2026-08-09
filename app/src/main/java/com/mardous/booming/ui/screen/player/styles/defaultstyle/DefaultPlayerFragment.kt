@@ -1,32 +1,31 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
-
-import androidx.lifecycle.lifecycleScope
-import org.koin.androidx.viewmodel.ext.android.activityViewModel
-import androidx.core.content.edit
-import android.widget.Toast
-import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
-import com.mardous.booming.extensions.resources.withAlpha
-import com.mardous.booming.extensions.resources.applyColor
+import android.content.Context
 import android.content.SharedPreferences
-import kotlinx.coroutines.flow.sample
+import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import android.widget.Toast
 import androidx.appcompat.widget.Toolbar
+import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
-import androidx.core.view.updatePadding
 import androidx.core.view.isInvisible
+import androidx.core.view.isVisible
+import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
@@ -35,19 +34,27 @@ import com.mardous.booming.core.model.player.PlayerTintTarget
 import com.mardous.booming.core.model.player.surfaceTintTarget
 import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
+import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
 import com.mardous.booming.extensions.media.albumArtistName
 import com.mardous.booming.extensions.media.displayArtistName
+import com.mardous.booming.extensions.resources.applyColor
+import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.component.views.MusicSlider
+import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
-import com.mardous.booming.data.local.repository.LyricsRepository
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
@@ -66,6 +73,27 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private var isDraggingInlineSlider = false
     
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
+
+    // 🌟 核心引擎：动态封面播放器
+    private var canvasExoPlayer: ExoPlayer? = null
+
+    // 🌟 优化：使用 lazy 懒加载。仅在第一次横屏用到时才去向系统索要服务，之后永久复用，零开销！
+    private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
+    private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
+
+    // 🌟 核心探针：温控与电量检测 (极致版)
+    private fun isDeviceStressed(): Boolean {
+        val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (batteryLevel <= 30) return true
+        if (powerManager.isPowerSaveMode) return true
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
+                return true
+            }
+        }
+        return false
+    }
 
     override val playerControlsFragment: AbsPlayerControlsFragment
         get() = controlsFragment
@@ -96,6 +124,17 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             WindowInsetsCompat.CONSUMED
         }
         Preferences.registerOnSharedPreferenceChangeListener(this)
+
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        
+        // 🌟 极致优化点：只有横屏才会去分配解码器运存！竖屏时解码器为 null，零内存消耗！
+        if (isLandscape) {
+            canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
+                repeatMode = Player.REPEAT_MODE_ALL
+                volume = 0f // 强制静音，绝不干扰音频流
+            }
+            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.player = canvasExoPlayer
+        }
 
         binding.leftFavoriteButton?.setOnClickListener {
             val isFav = it.tag as? Boolean ?: false
@@ -132,6 +171,40 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             val isFav = repository.isSongFavorite(song.id)
                             withContext(Dispatchers.Main) {
                                 updateFavoriteIcon(isFav)
+                            }
+                        }
+
+                        // 🌟 横屏专属：动态封面静默获取与智能播放逻辑
+                        if (isLandscape) {
+                            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                            val isStressed = isDeviceStressed()
+                            
+                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                            val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
+
+                            if (isVideoEnabled && !isStressed) {
+                                launch(Dispatchers.IO) {
+                                    val videoUri = com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
+                                    withContext(Dispatchers.Main) {
+                                        val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                                        if (!videoUri.isNullOrBlank() && recheckEnabled && !isDeviceStressed()) {
+                                            canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                            canvasExoPlayer?.prepare()
+                                            canvasExoPlayer?.play()
+                                            
+                                            playerView?.isVisible = true
+                                            staticCoverFragment?.isVisible = false
+                                        } else {
+                                            canvasExoPlayer?.stop()
+                                            playerView?.isVisible = false
+                                            staticCoverFragment?.isVisible = true
+                                        }
+                                    }
+                                }
+                            } else {
+                                canvasExoPlayer?.stop()
+                                playerView?.isVisible = false
+                                staticCoverFragment?.isVisible = true
                             }
                         }
 
@@ -333,10 +406,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // 🌟 新增核心功能：安全穿透删除相关的本地歌词文件
-    // 🌟 新增核心功能：安全穿透删除相关的本地歌词文件 (增强版：忽略大小写 + 暴力清空)
+    // 🌟 增强功能：忽略大小写 + 暴力清空防死锁的本地物理删除链路
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
-        // 放入 IO 协程中执行，防止遍历文件夹导致主界面卡顿
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val songFile = File(song.data)
@@ -351,7 +422,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 var deletedTtml = false
                 var deletedLrc = false
                 
-                // 🌟 1. 遍历同级文件夹扫描：彻底无视 .ttml 还是 .TTML 的大小写差异
                 val filesInDir = parentDir.listFiles() ?: emptyArray()
                 
                 for (file in filesInDir) {
@@ -362,16 +432,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     
                     val fileNameLower = file.nameWithoutExtension.lowercase()
                     
-                    // 精确比对文件名 (全转小写比对)
                     if (possibleNamesLower.contains(fileNameLower)) {
                         if (ext == "ttml") {
-                            // 🌟 2. 暴力删除法：如果被系统死锁导致 File.delete() 失败，
-                            // 我们先强制把文件内容清空！变成 0 字节的废壳子，原代码也会视为无歌词。
-                            runCatching { file.writeText("") }
+                            runCatching { file.writeText("") } // 暴力写空破除系统占用锁
                             if (file.delete() || !file.exists()) {
                                 deletedTtml = true
                             } else if (file.length() == 0L) {
-                                deletedTtml = true // 内容已彻底清空，效果等同于删除
+                                deletedTtml = true 
                             }
                         }
                         
@@ -386,7 +453,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     }
                 }
                 
-                // 🌟 3. 切回主线程刷新 UI 和吐司提示
                 withContext(Dispatchers.Main) {
                     if (onlyTtml) {
                         val msg = if (deletedTtml) "TTML 歌词文件已彻底删除" else "未找到匹配的本地 TTML 文件"
@@ -397,7 +463,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
-                        // 跟随歌曲删除时只清理缓存
                         if (deletedTtml || deletedLrc) {
                             lyricsRepository.clearMemoryCache()
                         }
@@ -420,20 +485,38 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
-        // 🌟 孤立绑定：格式切换按钮
+        // 孤立绑定：格式切换按钮
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
         toggleItem?.setOnMenuItemClickListener {
             toggleLyricsFormat()
             true
         }
 
-		// 🌟 需求 3：绑定“获取 TTML”按钮逻辑
+        // 🌟 视频封面开关控制逻辑
+        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
+        if (isLandscapeOrTablet) {
+            videoToggleItem?.isVisible = true
+            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+            videoToggleItem?.title = if (isVideoEnabled) "视频封面: 开启" else "视频封面: 关闭"
+            
+            videoToggleItem?.setOnMenuItemClickListener {
+                val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+                videoToggleItem.title = if (newState) "视频封面: 开启" else "视频封面: 关闭"
+                
+                playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+                true
+            }
+        } else {
+            videoToggleItem?.isVisible = false
+        }
+
+        // 获取 TTML 按钮逻辑
         menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
                 toast.show()
 
-                // 启动协程在后台获取
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
                     
@@ -444,13 +527,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 val songFile = File(currentSong.data)
                                 val parentDir = songFile.parentFile
                                 if (parentDir != null && parentDir.exists()) {
-                                    // 保存为同名文件
                                     val ttmlFile = File(parentDir, "${songFile.nameWithoutExtension}.ttml")
                                     ttmlFile.writeText(ttmlContent)
                                     
                                     Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
-                                    
-                                    // 强杀缓存并无缝重载歌词 UI
                                     lyricsRepository.clearMemoryCache()
                                     lyricsViewModel.updateSong(currentSong)
                                 }
@@ -463,25 +543,22 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     }
                 }
             }
-            true // 拦截事件
+            true 
         }
-		
-		
-        // 🌟 需求 1：绑定新增的“删除 TTML”按钮，点击后自行消费处理
+        
+        // 删除 TTML 按钮
         menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 deleteAssociatedLyricsFiles(currentSong, onlyTtml = true)
             }
-            true // 拦截并消费事件，不交由基类处理
+            true 
         }
 
-        // 🌟 需求 2：完美挂钩系统原有的“删除歌曲”按钮，实现无缝连带删除
+        // 完美挂钩系统原有的“删除歌曲”按钮
         menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 deleteAssociatedLyricsFiles(currentSong, onlyTtml = false)
             }
-            // 🚨 绝对核心：必须返回 false！这样 Android 系统才会把点击事件继续下发给基类 AbsPlayerFragment，
-            // 从而正常触发原作者内置的“弹出删除音频确认对话框”等后续流程。我们只是一个静默的“顺手牵羊”拦截器。
             false 
         }
 
@@ -527,8 +604,23 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
+    // ==========================================
+    // 🌟 生命线的最后护盾：防止后台漏电
+    // ==========================================
+    override fun onResume() {
+        super.onResume()
+        if (!isDeviceStressed()) canvasExoPlayer?.play()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        canvasExoPlayer?.pause()
+    }
+
     override fun onDestroyView() {
         Preferences.unregisterOnSharedPreferenceChangeListener(this)
+        canvasExoPlayer?.release()
+        canvasExoPlayer = null
         super.onDestroyView()
         _binding = null
     }
