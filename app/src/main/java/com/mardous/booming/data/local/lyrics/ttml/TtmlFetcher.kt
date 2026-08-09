@@ -12,8 +12,6 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.Inflater
-import javax.crypto.Cipher
-import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
 
 /**
@@ -163,39 +161,13 @@ object TtmlFetcher {
             // 1. 将 Hex 字符串转换为 Byte 数组
             val decodedBytes = hexStr.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             
-            // 2. 初始化 DES 解密器 (注意：必须是 NoPadding)
-            val cipher = Cipher.getInstance("DES/ECB/NoPadding")
-            val keySpec = SecretKeySpec("!@#\$0%^&".toByteArray(), "DES")
-            cipher.init(Cipher.DECRYPT_MODE, keySpec)
-            
-            // 🌟 3. 核心破解逻辑：绝对不能用 doFinal 整个数组！必须按 8 字节手动切块！
-            val decryptedStream = ByteArrayOutputStream()
-            var i = 0
-            while (i < decodedBytes.size) {
-                val chunkSize = minOf(8, decodedBytes.size - i)
-                if (chunkSize == 8) {
-                    // 满 8 字节，执行 DES 解密
-                    val decryptedBlock = cipher.update(decodedBytes, i, 8)
-                    if (decryptedBlock != null) {
-                        decryptedStream.write(decryptedBlock)
-                    }
-                } else {
-                    // 🚨 坑点处理：剩下的不足 8 字节的尾巴根本没加密，直接当明文拼上去！
-                    decryptedStream.write(decodedBytes, i, chunkSize)
-                }
-                i += 8
-            }
-            // 结束 cipher
-            val finalBlock = cipher.doFinal()
-            if (finalBlock != null) {
-                decryptedStream.write(finalBlock)
-            }
-            val decryptedBytes = decryptedStream.toByteArray()
+            // 2. 🚀 调用纯 Kotlin 手搓版魔改 3DES 引擎解密
+            val decryptedBytes = QQMusicDES.decrypt(decodedBytes)
 
-            // 4. Zlib 解压缩
+            // 3. Zlib 解压缩还原文本
             val inflater = java.util.zip.Inflater()
             inflater.setInput(decryptedBytes)
-            val outputStream = ByteArrayOutputStream()
+            val outputStream = java.io.ByteArrayOutputStream()
             val buffer = ByteArray(1024)
             while (!inflater.finished()) {
                 val count = inflater.inflate(buffer)
@@ -206,7 +178,7 @@ object TtmlFetcher {
             
             return outputStream.toString("UTF-8")
         } catch (e: Exception) {
-            Log.e(TAG, "QRC Decrypt Error", e)
+            Log.e(TAG, "Native QQMusicDES Decrypt Error", e)
         }
         return null
     }
