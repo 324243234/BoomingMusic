@@ -7,8 +7,8 @@ import com.mardous.booming.data.model.Song
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -26,7 +26,7 @@ object AnimatedCanvasFetcher {
     // Apple Music Auth Token
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
-    // 🌟 已为你自动配置好网易云 API 域名
+    // 网易云 API 域名
     private const val NETEASE_API_DOMAIN = "https://my-wangymusic-api.vercel.app"
 
     // 支持的本地视频格式
@@ -44,7 +44,7 @@ object AnimatedCanvasFetcher {
         }
 
         // 检查 1：如果此时用户已经切歌，立刻中断，不碰本地 IO
-        ensureActive()
+        yield()
 
         // 2. 本地资产检索
         val parentDir = File(song.data).parentFile
@@ -61,7 +61,7 @@ object AnimatedCanvasFetcher {
         }
 
         // 检查 2：进入耗时网络请求前，再次确认未被切歌打断
-        ensureActive()
+        yield()
 
         // 3. 提取并清洗检索词，提高命中率
         val rawTitle = song.title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
@@ -77,7 +77,7 @@ object AnimatedCanvasFetcher {
         if (appleCover != null) return@withContext cacheAndReturn(cacheKey, appleCover)
 
         // 检查 3：Apple 没查到，准备请求网易云之前，确认未被切歌打断
-        ensureActive()
+        yield()
 
         // 5. 网易云 API 兜底 (通过获取歌曲关联的 MV 直链)
         val neteaseCover = fetchNeteaseCover(cleanQuery)
@@ -110,7 +110,7 @@ object AnimatedCanvasFetcher {
     private suspend fun fetchAppleMusicCover(query: String): String? {
         try {
             for (country in listOf("cn", "us")) {
-                ensureActive()
+                yield()
                 val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(query)}&entity=song&limit=2&country=$country"
                 val searchRes = httpGet(searchUrl) ?: continue
                 
@@ -150,7 +150,7 @@ object AnimatedCanvasFetcher {
             val mvid = songs.getJSONObject(0).optInt("mvid", 0)
             if (mvid == 0) return null
 
-            ensureActive() // 发起第二次请求前检查
+            yield() // 发起第二次请求前检查
 
             // 第二步：通过 MVID 拿视频直链
             val mvUrl = "$NETEASE_API_DOMAIN/mv/url?id=$mvid"
@@ -170,7 +170,7 @@ object AnimatedCanvasFetcher {
 
     @Throws(Exception::class)
     private suspend fun httpGet(urlString: String, useAuth: Boolean = false): String? {
-        ensureActive()
+        yield()
         var conn: HttpURLConnection? = null
         try {
             val url = URL(urlString)
