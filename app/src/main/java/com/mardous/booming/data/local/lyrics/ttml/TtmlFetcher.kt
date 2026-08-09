@@ -1,6 +1,7 @@
 package com.mardous.booming.data.local.lyrics.ttml
 
 import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.extensions.media.isArtistNameUnknown
@@ -8,14 +9,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.Inflater
-import android.util.Base64
 
 /**
- * TTML 级联网络获取引擎
+ * TTML 级联网络获取引擎 (增强版：严格匹配+数据清洗)
  * 寻源路径：Apple Music (CN/US) -> AMLL DB (Apple) -> QQ 音乐搜索 -> AMLL DB (QQ) -> QQ 音乐 QRC -> QRC 解密并转 TTML
  */
 object TtmlFetcher {
@@ -24,22 +23,60 @@ object TtmlFetcher {
     // Apple Music 临时 fallback Token
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
+    // 🌟 1. 清洗标题：去除开头的序号(如 01, 00 - ) 及括号内的无用后缀 (如 (Live), 【Remix】)
+    private fun cleanTitle(title: String?): String {
+        if (title == null) return ""
+        var t = title
+        t = t.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
+        t = t.replace(Regex("""\(.*?\)|\（.*?\）|\[.*?\]|\【.*?\】"""), "")
+        return t.trim()
+    }
+
+    // 🌟 2. 标准化字符串：仅保留字母、数字、中文，并全部转为小写，用于严格比对
+    private fun normalizeStr(input: String?): String {
+        if (input == null) return ""
+        return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
+    }
+
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
-        val searchQuery = if (song.isArtistNameUnknown()) song.title else "${song.artistName} ${song.title}"
+        // 数据清洗
+        val rawTitle = cleanTitle(song.title)
+        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
+        
+        // 生成最终用于比较的标准形态
+        val targetTitleNorm = normalizeStr(rawTitle)
+        val targetArtistNorm = normalizeStr(rawArtist)
+        
+        if (targetTitleNorm.isEmpty()) return@withContext null
+
+        // 构建搜索词
+        val searchQuery = if (rawArtist.isBlank()) rawTitle else "$rawArtist $rawTitle"
         val cleanQuery = searchQuery.replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
         try {
-            // 1. 尝试 Apple Music (CN & US) 与 AMLL (Apple ID)
+            // ========================================================
+            // 阶段一：尝试 Apple Music (CN & US) 与 AMLL (Apple ID)
+            // ========================================================
             for (country in listOf("cn", "us")) {
-                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=3&country=$country"
+                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=5&country=$country"
                 val searchRes = httpGet(searchUrl)
                 if (searchRes != null) {
                     val json = JSONObject(searchRes)
                     val results = json.optJSONArray("results")
                     if (results != null && results.length() > 0) {
                         for (i in 0 until results.length()) {
-                            val trackId = results.getJSONObject(i).optString("trackId")
-                            if (trackId.isNotBlank()) {
+                            val item = results.getJSONObject(i)
+                            val trackName = item.optString("trackName")
+                            val artistName = item.optString("artistName")
+                            val trackId = item.optString("trackId")
+
+                            // 🌟 严格校验机制：校验结果是否真正匹配目标
+                            val normTrack = normalizeStr(trackName)
+                            val normArtist = normalizeStr(artistName)
+                            val titleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
+                            val artistMatch = targetArtistNorm.isEmpty() || normArtist.contains(targetArtistNorm) || targetArtistNorm.contains(normArtist)
+
+                            if (titleMatch && artistMatch && trackId.isNotBlank()) {
                                 // 尝试 Apple 官方 API
                                 val appleTtml = fetchAppleOfficial(trackId, country)
                                 if (!appleTtml.isNullOrBlank() && appleTtml.length > 50) return@withContext appleTtml
@@ -47,14 +84,19 @@ object TtmlFetcher {
                                 // 尝试 AMLL 数据库 (Apple ID)
                                 val amllAppleTtml = httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml")
                                 if (!amllAppleTtml.isNullOrBlank() && amllAppleTtml.length > 50) return@withContext amllAppleTtml
+                                
+                                // 一旦匹配到目标歌曲但均获取失败，跳出当前循环寻找下一首
+                                break 
                             }
                         }
                     }
                 }
             }
 
-            // 2. 尝试 QQ 音乐搜索与 AMLL (QQ ID) / 官方 QRC
-            val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=3&p=1&w=${Uri.encode(cleanQuery)}"
+            // ========================================================
+            // 阶段二：尝试 QQ 音乐搜索与 AMLL (QQ ID) / 官方 QRC
+            // ========================================================
+            val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
             if (qqSearchRes != null) {
                 val start = qqSearchRes.indexOf("{")
@@ -64,23 +106,36 @@ object TtmlFetcher {
                     val qqJson = JSONObject(jsonStr)
                     val list = qqJson.optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list")
                     if (list != null && list.length() > 0) {
-                        val firstSong = list.getJSONObject(0)
-                        val songmid = firstSong.optString("songmid")
-                        val songid = firstSong.optString("songid")
-
-                        if (songmid.isNotBlank()) {
-                            // 尝试 AMLL 数据库 (QQ MID)
-                            val amllQqTtml = httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml")
-                            if (!amllQqTtml.isNullOrBlank() && amllQqTtml.length > 50) return@withContext amllQqTtml
+                        for (i in 0 until list.length()) {
+                            val item = list.getJSONObject(i)
+                            val songName = item.optString("songname")
+                            val artistName = item.optJSONArray("singer")?.optJSONObject(0)?.optString("name") ?: ""
                             
-                            // 尝试抓取 QQ 音乐官方 QRC 并解密转码
-                            val qrcHex = fetchQqQrc(firstSong)
-                            if (!qrcHex.isNullOrBlank()) {
-                                val rawQrc = decryptQrc(qrcHex)
-                                if (!rawQrc.isNullOrBlank()) {
-                                    val ttml = parseQrcToTtmlDirectly(rawQrc)
-                                    if (!ttml.isNullOrBlank()) return@withContext ttml
+                            // 🌟 严格校验机制：校验结果是否真正匹配目标
+                            val normTrack = normalizeStr(songName)
+                            val normArtist = normalizeStr(artistName)
+                            val titleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
+                            val artistMatch = targetArtistNorm.isEmpty() || normArtist.contains(targetArtistNorm) || targetArtistNorm.contains(normArtist)
+
+                            if (titleMatch && artistMatch) {
+                                val songmid = item.optString("songmid")
+                                
+                                if (songmid.isNotBlank()) {
+                                    // 尝试 AMLL 数据库 (QQ MID)
+                                    val amllQqTtml = httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml")
+                                    if (!amllQqTtml.isNullOrBlank() && amllQqTtml.length > 50) return@withContext amllQqTtml
+                                    
+                                    // 尝试抓取 QQ 音乐官方 QRC 并解密转码
+                                    val qrcHex = fetchQqQrc(item)
+                                    if (!qrcHex.isNullOrBlank()) {
+                                        val rawQrc = decryptQrc(qrcHex)
+                                        if (!rawQrc.isNullOrBlank()) {
+                                            val ttml = parseQrcToTtmlDirectly(rawQrc)
+                                            if (!ttml.isNullOrBlank()) return@withContext ttml
+                                        }
+                                    }
                                 }
+                                break // 找到严格匹配的条目后，不再检查其他无关条目
                             }
                         }
                     }
@@ -158,16 +213,12 @@ object TtmlFetcher {
 
     private fun decryptQrc(hexStr: String): String? {
         try {
-            // 1. 将 Hex 字符串转换为 Byte 数组
             val decodedBytes = hexStr.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            
-            // 2. 🚀 调用纯 Kotlin 手搓版魔改 3DES 引擎解密
             val decryptedBytes = QQMusicDES.decrypt(decodedBytes)
-
-            // 3. Zlib 解压缩还原文本
+            
             val inflater = java.util.zip.Inflater()
             inflater.setInput(decryptedBytes)
-            val outputStream = java.io.ByteArrayOutputStream()
+            val outputStream = ByteArrayOutputStream()
             val buffer = ByteArray(1024)
             while (!inflater.finished()) {
                 val count = inflater.inflate(buffer)
