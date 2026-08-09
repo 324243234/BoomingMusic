@@ -165,40 +165,36 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    // 把你的网易云 Cookie 字符串贴在这里 (记得保留 MUSIC_U 等核心字段)
-// 修复：使用三引号 """ 包裹，允许长字符串跨行，避免编译报错
-    private const val NETEASE_COOKIE = """MUSIC_A_T=1429951568000; MUSIC_R_T=1429951651174; WEVNSM=1.0.0; NTES_CMT_USER_INFO=1229549712%7C%E6%9C%89%E6%80%81%E5%BA%A6%E7%BD%91%E5%8F%8B19in2g%7Chttp%3A%2F%2Fcms-bucket.nosdn.127.net%2F2018%2F08%2F13%2F078ea9f65d954410b62a52ac773875a1.jpeg%7Cfalse%7Cemh1Mjd4aUAxNjMuY29t; NMTID=00OKTuanndT_EArNErqtNlv_WY571UAAAGeSVNWZA; WNMCID=cszhnf.1779346662045.01.0; NTES_P_UTID=u1uIQwroupzYk8OJRleeYMa2eY6rMplb|1782538308; nts_mail_user=huatesport@163.com:-1:1; MUSIC_U=00C53D9FC111B0B0850A763AC0BDEC1A694A4BDFAB85DF5C9700BA9AD92F45095EFA33B95EE6B638CA9BDBF28284C325BA9CE63825941433CA5BF8ACCC6F866616B1DF60C317C814F12A3402B06B9F3B2A9E88E43C268E5E90009E6E1DB4FB4B540946E57FE0A0B04BC2B7E4AEA6C6695665645A694228235F9CAE765B54E9F92E764415C0236D5CD6BAA477493E8EB9EDADB6372C77F9C2177796764BCCECD3D52D9C36973801A7CDF07BE3E19592F90624F9F606E6A7B2F13766485F30074DB4B414E05CED58EDE167825EFDC9C1804EA710FEF43A37FB6DA92747BFF2F8D04576CDA3B73DBDB375865152A35048DE5C7DC3187518073F05563E94E40AB7668B4C9CE6A3748240447F8EDBBB8E4F14177627E6642C43BF9721D209F0CC56209C4FCF78F58015CE94632F1C9315E92E735466F891C086F10785E2197DA16082275CAF1A8BE5AF299CFB748744423A5F601AA79A37CFA0B33BE6F57353476E7BF41B3468551E1B059449BE450BED666E657013C373DE67C160DDEFE9504199C749; __csrf=20a15fb97b798f8dc423db64a192de2f; ntes_kaola_ad=1; JSESSIONID-WYYY=k4%2BKzOqp1NJ0i8tYHXb1s0wClMOwXlrzUVCfGBQ845DSK64TU%2Bc0SeiuuxoQDrhGFQHtMlgZSSkwgUYOzrHJksuY%5CO2HpPAI4eeO8zx%2BYITqvJVGERxkY%2B7O9h0wyawFdMm%2BW4iOz1s%2B4drJxVUwp8NQoF9wSqDe%5CuHl%5CWd1HylDlTs%2F%3A1786308980905; _iuqxldmzr_=33"""
+    private suspend fun fetchNeteaseCover(query: String): String? {
+        try {
+            // 第一步：搜歌拿 ID
+            val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=1"
+            val searchRes = httpGet(searchUrl) ?: return null
+            
+            val songs = JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs")
+            if (songs == null || songs.length() == 0) return null
+            
+            val songId = songs.getJSONObject(0).optLong("id", 0L)
+            if (songId == 0L) return null
 
-private suspend fun fetchNeteaseCover(query: String): String? {
-    try {
-        // 1. 搜歌
-        val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=1"
-        val searchRes = httpGet(searchUrl) ?: return null
-        
-        val songs = JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs")
-        if (songs == null || songs.length() == 0) return null
-        
-        val songId = songs.getJSONObject(0).optLong("id", 0L)
-        if (songId == 0L) return null
+            yield() 
 
-        yield()
-
-        // 2. 请求动态封面，把 cookie 参数直接拼在 URL 末尾
-        val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=$songId&cookie=${Uri.encode(NETEASE_COOKIE)}"
-        val dynamicRes = httpGet(dynamicCoverUrl)
-        
-        if (dynamicRes != null) {
-            val coverUrl = JSONObject(dynamicRes).optJSONObject("data")?.optString("url")
-            if (!coverUrl.isNullOrBlank()) {
-                return coverUrl.replace("http://", "https://")
+            // 第二步：请求网易云官方动态封面
+            val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=$songId"
+            val dynamicRes = httpGet(dynamicCoverUrl)
+            
+            if (dynamicRes != null) {
+                val coverUrl = JSONObject(dynamicRes).optJSONObject("data")?.optString("url")
+                if (!coverUrl.isNullOrBlank()) {
+                    return coverUrl.replace("http://", "https://")
+                }
             }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e(TAG, "Netease fetch error", e)
         }
-    } catch (e: Exception) {
-        if (e is CancellationException) throw e
-        Log.e(TAG, "Netease fetch error", e)
+        return null
     }
-    return null
-}
 
     @Throws(Exception::class)
     private suspend fun httpGet(urlString: String, useAuth: Boolean = false): String? {
