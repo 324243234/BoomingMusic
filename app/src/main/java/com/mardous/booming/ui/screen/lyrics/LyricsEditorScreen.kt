@@ -549,6 +549,56 @@ fun LyricsEditorScreen(
     }
 }
 
+@Composable
+fun LyricsSelectorDialog(
+    onDismissRequest: () -> Unit,
+    onModeSelected: (LyricsMode) -> Unit
+) {
+    var selectedMode by remember { mutableStateOf(LyricsMode.Plain) }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(stringResource(R.string.choose_lyrics)) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                DialogListItemWithRadio(
+                    title = stringResource(R.string.plain_lyrics),
+                    onClick = {
+                        selectedMode = LyricsMode.Plain
+                    },
+                    isSelected = selectedMode == LyricsMode.Plain,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                DialogListItemWithRadio(
+                    title = stringResource(R.string.synced_lyrics),
+                    onClick = {
+                        selectedMode = LyricsMode.Synced
+                    },
+                    isSelected = selectedMode == LyricsMode.Synced,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onModeSelected(selectedMode)
+                }
+            ) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(stringResource(android.R.string.cancel))
+            }
+        }
+    )
+}
+
 // 🌟 新增：时间调整弹窗组件
 @Composable
 fun TimeShiftDialog(
