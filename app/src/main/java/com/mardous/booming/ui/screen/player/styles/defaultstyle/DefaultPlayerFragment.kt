@@ -334,51 +334,81 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     // 🌟 新增核心功能：安全穿透删除相关的本地歌词文件
+    // 🌟 新增核心功能：安全穿透删除相关的本地歌词文件 (增强版：忽略大小写 + 暴力清空)
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
-        try {
-            val songFile = File(song.data)
-            val parentDir = songFile.parentFile ?: return
-            
-            val possibleNames = listOf(
-                songFile.nameWithoutExtension,
-                "${song.artistName} - ${song.title}"
-            ).filter { it.isNotBlank() }
-            
-            var deletedTtml = false
-            var deletedLrc = false
-            
-            for (name in possibleNames) {
-                val ttmlFile = File(parentDir, "$name.ttml")
-                if (ttmlFile.exists() && ttmlFile.isFile) {
-                    if (ttmlFile.delete()) deletedTtml = true
-                }
+        // 放入 IO 协程中执行，防止遍历文件夹导致主界面卡顿
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
                 
-                if (!onlyTtml) {
-                    val lrcFile = File(parentDir, "$name.lrc")
-                    if (lrcFile.exists() && lrcFile.isFile) {
-                        if (lrcFile.delete()) deletedLrc = true
+                val possibleNamesLower = listOf(
+                    songFile.nameWithoutExtension.lowercase(),
+                    "${song.artistName} - ${song.title}".lowercase(),
+                    "${song.title} - ${song.artistName}".lowercase()
+                ).filter { it.isNotBlank() }
+                
+                var deletedTtml = false
+                var deletedLrc = false
+                
+                // 🌟 1. 遍历同级文件夹扫描：彻底无视 .ttml 还是 .TTML 的大小写差异
+                val filesInDir = parentDir.listFiles() ?: emptyArray()
+                
+                for (file in filesInDir) {
+                    if (!file.isFile) continue
+                    
+                    val ext = file.extension.lowercase()
+                    if (ext != "ttml" && ext != "lrc") continue
+                    
+                    val fileNameLower = file.nameWithoutExtension.lowercase()
+                    
+                    // 精确比对文件名 (全转小写比对)
+                    if (possibleNamesLower.contains(fileNameLower)) {
+                        if (ext == "ttml") {
+                            // 🌟 2. 暴力删除法：如果被系统死锁导致 File.delete() 失败，
+                            // 我们先强制把文件内容清空！变成 0 字节的废壳子，原代码也会视为无歌词。
+                            runCatching { file.writeText("") }
+                            if (file.delete() || !file.exists()) {
+                                deletedTtml = true
+                            } else if (file.length() == 0L) {
+                                deletedTtml = true // 内容已彻底清空，效果等同于删除
+                            }
+                        }
+                        
+                        if (!onlyTtml && ext == "lrc") {
+                            runCatching { file.writeText("") }
+                            if (file.delete() || !file.exists()) {
+                                deletedLrc = true
+                            } else if (file.length() == 0L) {
+                                deletedLrc = true
+                            }
+                        }
                     }
                 }
-            }
-            
-            // 行为分流处理
-            if (onlyTtml) {
-                val msg = if (deletedTtml) "TTML 歌词文件已删除" else "未找到对应的 TTML 文件"
-                context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
                 
-                if (deletedTtml) {
-                    lyricsRepository.clearMemoryCache()
-                    // 清理后瞬间重载歌词流，让 UI 实时回退到 LRC 或空状态
-                    lyricsViewModel.updateSong(song)
+                // 🌟 3. 切回主线程刷新 UI 和吐司提示
+                withContext(Dispatchers.Main) {
+                    if (onlyTtml) {
+                        val msg = if (deletedTtml) "TTML 歌词文件已彻底删除" else "未找到匹配的本地 TTML 文件"
+                        context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
+                        
+                        if (deletedTtml) {
+                            lyricsRepository.clearMemoryCache()
+                            lyricsViewModel.updateSong(song)
+                        }
+                    } else {
+                        // 跟随歌曲删除时只清理缓存
+                        if (deletedTtml || deletedLrc) {
+                            lyricsRepository.clearMemoryCache()
+                        }
+                    }
                 }
-            } else {
-                // 如果是跟随系统删除音频，只需静默清理缓存，无需 Toast，防止与系统的弹窗冲突
-                if (deletedTtml || deletedLrc) {
-                    lyricsRepository.clearMemoryCache()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    context?.let { Toast.makeText(it, "删除失败，存储读写异常", Toast.LENGTH_SHORT).show() }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
 
