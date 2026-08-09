@@ -2,6 +2,7 @@ import com.android.build.api.variant.BuildConfigField
 import com.android.build.api.variant.ResValue
 import java.util.Properties
 
+
 plugins {
     alias(libs.plugins.android)
     alias(libs.plugins.android.safeargs)
@@ -295,6 +296,7 @@ dependencies {
     implementation(libs.bundles.kotlinx)
     implementation(libs.bundles.lifecycle)
     implementation(libs.bundles.media3)
+	implementation("androidx.media3:media3-ui:1.3.1")
     implementation(libs.bundles.navigation)
     implementation(libs.bundles.glance)
     implementation(libs.bundles.koin)
