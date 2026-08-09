@@ -75,17 +75,18 @@
 		android:title="@string/action_tag_editor"
 		android:icon="@drawable/ic_edit_24dp"
 		app:showAsAction="never"/>		
+	
+	<item
+		android:id="@+id/action_details"
+		android:title="@string/action_details"
+		android:icon="@drawable/ic_info_24dp"
+		app:showAsAction="never"/>
 	<!-- 🌟 新增：独立获取 TTML 文件的按钮 (永远收纳在三点菜单中) -->
     <item
         android:id="@+id/action_fetch_ttml"
         android:title="获取 TTML"
         android:icon="@drawable/ic_download_24dp"
         app:showAsAction="never"/>
-	<item
-		android:id="@+id/action_details"
-		android:title="@string/action_details"
-		android:icon="@drawable/ic_info_24dp"
-		app:showAsAction="never"/>
 	<item
 		android:id="@+id/action_web_search"
 		android:title="@string/web_search"

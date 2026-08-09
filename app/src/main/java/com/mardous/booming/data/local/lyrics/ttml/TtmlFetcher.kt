@@ -17,14 +17,13 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (极致并发并发 & 严格防串歌版)
+ * TTML 级联网络获取引擎 (极致并发并发 & 严格防串歌鉴伪版)
  */
 object TtmlFetcher {
 
     private const val TAG = "TtmlFetcher"
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
 
-    // 🌟 1. 深度清洗标题：去除序号及 Live/Remix/Cover 等干扰词
     private fun cleanTitle(title: String?): String {
         if (title == null) return ""
         var t = title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
@@ -41,8 +40,11 @@ object TtmlFetcher {
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
-
+        val rawAlbum = song.albumName ?: ""
+        val localDurationMs = song.duration 
+        
         val targetTitleNorm = normalizeStr(rawTitle)
+        val targetAlbumNorm = normalizeStr(rawAlbum)
         val targetArtists = rawArtist.split(Regex("""&|,|、|/|与|和|feat\.?|ft\.?"""))
             .map { normalizeStr(it) }
             .filter { it.isNotEmpty() }
@@ -60,7 +62,7 @@ object TtmlFetcher {
             // 通道一：Apple Music (CN & US) + AMLL DB 并发获取
             // ========================================================
             for (country in listOf("cn", "us")) {
-                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=3&country=$country"
+                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=5&country=$country"
                 val searchRes = httpGet(searchUrl)
                 if (searchRes != null) {
                     val results = JSONObject(searchRes).optJSONArray("results")
@@ -69,27 +71,35 @@ object TtmlFetcher {
                             val item = results.getJSONObject(i)
                             val trackName = item.optString("trackName")
                             val trackId = item.optString("trackId")
+                            val remoteDurationMs = item.optLong("trackTimeMillis", 0L)
+                            val remoteAlbumName = item.optString("collectionName")
                             
                             val isRemoteLive = trackName.contains("live", ignoreCase = true) || trackName.contains("现场")
                             val isRemoteRemix = trackName.contains("remix", ignoreCase = true) || trackName.contains("dj", ignoreCase = true) || trackName.contains("版")
                             
-                            // 严苛过滤：现场版/Remix版 必须状态一致
                             if (!isLocalLive && isRemoteLive) continue
                             if (!isLocalRemix && isRemoteRemix) continue
 
                             val normTrack = normalizeStr(trackName)
-                            if ((normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)) && trackId.isNotBlank()) {
-                                
-                                // 🚀 协程级联并发：同时请求 Apple API 和 AMLL DB
-                                val ttmlResult = coroutineScope {
-                                    val tasks = listOf(
-                                        async { fetchAppleOfficial(trackId, country) },
-                                        async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
-                                    )
-                                    val responses = tasks.awaitAll()
-                                    responses.firstOrNull { !it.isNullOrBlank() && it.length > 50 }
+                            val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
+                            
+                            if (isTitleMatch && trackId.isNotBlank()) {
+                                // 物理时长校验 (3000ms 容差)
+                                val isDurationMatch = Math.abs(localDurationMs - remoteDurationMs) <= 3000L
+                                val normRemoteAlbum = normalizeStr(remoteAlbumName)
+                                val isAlbumMatch = targetAlbumNorm.isEmpty() || normRemoteAlbum.contains(targetAlbumNorm) || targetAlbumNorm.contains(normRemoteAlbum)
+
+                                if (isDurationMatch || (remoteDurationMs == 0L && isAlbumMatch)) {
+                                    val ttmlResult = coroutineScope {
+                                        val tasks = listOf(
+                                            async { fetchAppleOfficial(trackId, country) },
+                                            async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
+                                        )
+                                        tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
+                                    }
+                                    if (ttmlResult != null) return@withContext ttmlResult
+                                    break
                                 }
-                                if (ttmlResult != null) return@withContext ttmlResult
                             }
                         }
                     }
@@ -99,7 +109,7 @@ object TtmlFetcher {
             // ========================================================
             // 通道二：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 并发获取
             // ========================================================
-            val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=3&p=1&w=${Uri.encode(cleanQuery)}"
+            val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
             if (qqSearchRes != null) {
                 val start = qqSearchRes.indexOf("{")
@@ -112,6 +122,8 @@ object TtmlFetcher {
                         for (i in 0 until list.length()) {
                             val item = list.getJSONObject(i)
                             val songName = item.optString("songname")
+                            val remoteAlbumName = item.optString("albumname")
+                            val remoteDurationMs = item.optLong("interval", 0L) * 1000L
                             val remoteArtistStr = item.optJSONArray("singer")?.let { singers ->
                                 (0 until singers.length()).joinToString("") { normalizeStr(singers.getJSONObject(it).optString("name")) }
                             } ?: ""
@@ -125,7 +137,6 @@ object TtmlFetcher {
                             val normTrack = normalizeStr(songName)
                             val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
                             
-                            // 严苛的多歌手匹配逻辑
                             var isArtistMatch = targetArtists.isEmpty()
                             if (targetArtists.isNotEmpty()) {
                                 val primaryArtist = targetArtists[0]
@@ -135,25 +146,29 @@ object TtmlFetcher {
                             }
 
                             if (isTitleMatch && isArtistMatch) {
-                                val songmid = item.optString("songmid")
-                                if (songmid.isNotBlank()) {
-                                    
-                                    // 🚀 协程级联并发：同时请求 AMLL DB 和 原生 QRC 解密引擎
-                                    val ttmlResult = coroutineScope {
-                                        val tasks = listOf(
-                                            async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml") },
-                                            async { 
-                                                val qrcHex = fetchQqQrc(item)
-                                                if (!qrcHex.isNullOrBlank()) {
-                                                    val rawQrc = decryptQrc(qrcHex)
-                                                    if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc) else null
-                                                } else null
-                                            }
-                                        )
-                                        val responses = tasks.awaitAll()
-                                        responses.firstOrNull { !it.isNullOrBlank() && it.length > 50 }
+                                val isDurationMatch = Math.abs(localDurationMs - remoteDurationMs) <= 3000L
+                                val normRemoteAlbum = normalizeStr(remoteAlbumName)
+                                val isAlbumMatch = targetAlbumNorm.isEmpty() || normRemoteAlbum.contains(targetAlbumNorm) || targetAlbumNorm.contains(normRemoteAlbum)
+
+                                if (isDurationMatch || (remoteDurationMs == 0L && isAlbumMatch)) {
+                                    val songmid = item.optString("songmid")
+                                    if (songmid.isNotBlank()) {
+                                        val ttmlResult = coroutineScope {
+                                            val tasks = listOf(
+                                                async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml") },
+                                                async { 
+                                                    val qrcHex = fetchQqQrc(item)
+                                                    if (!qrcHex.isNullOrBlank()) {
+                                                        val rawQrc = decryptQrc(qrcHex)
+                                                        if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc) else null
+                                                    } else null
+                                                }
+                                            )
+                                            tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
+                                        }
+                                        if (ttmlResult != null) return@withContext ttmlResult
+                                        break
                                     }
-                                    if (ttmlResult != null) return@withContext ttmlResult
                                 }
                             }
                         }
@@ -234,7 +249,7 @@ object TtmlFetcher {
             val decodedBytes = hexStr.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             val decryptedBytes = QQMusicDES.decrypt(decodedBytes)
             
-            val inflater = java.util.zip.Inflater()
+            val inflater = Inflater()
             inflater.setInput(decryptedBytes)
             val outputStream = ByteArrayOutputStream()
             val buffer = ByteArray(1024)
@@ -275,7 +290,7 @@ object TtmlFetcher {
             val words = mutableListOf<Triple<String, Long, Long>>()
             wordPattern.findAll(cl).forEach { match ->
                 var rawText = match.groupValues[1]
-                rawText = rawText.replace(Regex("""\[\d+,\d+\]"""), "") // 清理坐标残留
+                rawText = rawText.replace(Regex("""\[\d+,\d+\]"""), "")
                 val start = match.groupValues[2].toLong()
                 val dur = match.groupValues[3].toLong()
                 if (rawText.isNotEmpty()) words.add(Triple(rawText, start, start + dur))
