@@ -325,24 +325,27 @@ class RealLyricsRepository(
         val songFile = File(song.data)
         val parentDir = songFile.parentFile ?: return emptyList()
 
-        val baseNames = listOf(
+        val possibleNames = listOf(
             songFile.nameWithoutExtension,
             "${song.artistName} - ${song.title}"
-        ).filter { it.isNotBlank() }.map { Pattern.quote(it) }
+        ).filter { it.isNotBlank() }
 
-        val patterns = baseNames.map { base ->
-            Regex(".*$base.*\\.(lrc|ttml)", RegexOption.IGNORE_CASE)
+        val validFiles = mutableListOf<LyricsFile>()
+
+        // 🌟 核心修复：抛弃 listFiles 和 Regex，双格式点射查询
+        for (name in possibleNames) {
+            val ttmlFile = File(parentDir, "$name.ttml")
+            if (ttmlFile.exists() && ttmlFile.isFile) {
+                validFiles.add(LyricsFile(ttmlFile.absolutePath, LyricsFile.Format.TTML))
+            }
+            
+            val lrcFile = File(parentDir, "$name.lrc")
+            if (lrcFile.exists() && lrcFile.isFile) {
+                validFiles.add(LyricsFile(lrcFile.absolutePath, LyricsFile.Format.LRC))
+            }
         }
 
-        return parentDir.listFiles()
-            ?.filter { file -> file.isFile && patterns.any { it.matches(file.name) } }
-            ?.mapNotNull { file ->
-                val extension = file.extension.lowercase()
-                LyricsFile.Format.entries.firstOrNull { it.value == extension }?.let { format ->
-                    LyricsFile(file.absolutePath, format)
-                }
-            }
-            .orEmpty()
+        return validFiles
     }
 
     private fun detectEncoding(bis: BufferedInputStream): Charset {

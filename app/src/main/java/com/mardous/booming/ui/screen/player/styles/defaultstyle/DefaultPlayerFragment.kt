@@ -45,8 +45,8 @@ import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import org.koin.android.ext.android.inject
-// 🌟 引入底层的歌词数据仓库，用于手动强杀缓存
 import com.mardous.booming.data.local.repository.LyricsRepository
+import java.io.File
 
 class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player),
     SharedPreferences.OnSharedPreferenceChangeListener {
@@ -83,7 +83,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentDefaultPlayerBinding.bind(view)
         
-        // 🌟 核心修正：绝对不在这里覆写 Toolbar 监听器，保障基类事件分发健康
         setupToolbar()
         inflateMenuInView(playerToolbar)
         
@@ -299,47 +298,85 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         return targets
     }
     
-    // 🌟 核心修复：阻断内存竞态，保证读取最新配置并强制清空内存死数据
     private fun toggleLyricsFormat() {
         val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
-        
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         
-        // 1. 同步阻塞式写入，确保立刻落盘
         sharedPreferences.edit(commit = true) {
             putString("preferred_lyrics_file_format", newFormat)
         }
         
-        // 2. 视觉反馈
         val toastText = if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词"
         context?.let { Toast.makeText(it, toastText, Toast.LENGTH_SHORT).show() }
         playerToolbar.menu?.let { updateMenuTitle(it) }
         
-        // 3. 越权手杀：强行干预底层缓存，避免等待 ViewModel 的回调时差
         lyricsRepository.clearMemoryCache()
-        
-        // 4. 重载当前歌曲数据
         playerViewModel.currentSongFlow.value?.let { currentSong ->
             lyricsViewModel.updateSong(currentSong)
         }
     }
     
-    // 🌟 核心修复：严格遵循原项目的“实心/空心”双态图标 Material Design 规范
     private fun updateMenuTitle(menu: Menu) {
         val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
-        
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
         
         if (isCurrentlyTtml) {
             toggleItem?.title = "当前: TTML逐字"
-            // 实心图标 (亮起状态)
             toggleItem?.setIcon(R.drawable.ic_lyrics_24dp)
         } else {
             toggleItem?.title = "当前: LRC滚动"
-            // 空心描边图标 (暗淡状态)
             toggleItem?.setIcon(R.drawable.ic_lyrics_outline_24dp)
+        }
+    }
+
+    // 🌟 新增核心功能：安全穿透删除相关的本地歌词文件
+    private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
+        try {
+            val songFile = File(song.data)
+            val parentDir = songFile.parentFile ?: return
+            
+            val possibleNames = listOf(
+                songFile.nameWithoutExtension,
+                "${song.artistName} - ${song.title}"
+            ).filter { it.isNotBlank() }
+            
+            var deletedTtml = false
+            var deletedLrc = false
+            
+            for (name in possibleNames) {
+                val ttmlFile = File(parentDir, "$name.ttml")
+                if (ttmlFile.exists() && ttmlFile.isFile) {
+                    if (ttmlFile.delete()) deletedTtml = true
+                }
+                
+                if (!onlyTtml) {
+                    val lrcFile = File(parentDir, "$name.lrc")
+                    if (lrcFile.exists() && lrcFile.isFile) {
+                        if (lrcFile.delete()) deletedLrc = true
+                    }
+                }
+            }
+            
+            // 行为分流处理
+            if (onlyTtml) {
+                val msg = if (deletedTtml) "TTML 歌词文件已删除" else "未找到对应的 TTML 文件"
+                context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
+                
+                if (deletedTtml) {
+                    lyricsRepository.clearMemoryCache()
+                    // 清理后瞬间重载歌词流，让 UI 实时回退到 LRC 或空状态
+                    lyricsViewModel.updateSong(song)
+                }
+            } else {
+                // 如果是跟随系统删除音频，只需静默清理缓存，无需 Toast，防止与系统的弹窗冲突
+                if (deletedTtml || deletedLrc) {
+                    lyricsRepository.clearMemoryCache()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -351,11 +388,29 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
-        // 🌟 核心修正：仅孤立拦截当前切换按钮的事件，其余任何菜单项全部交还系统自动分发
+        // 🌟 孤立绑定：格式切换按钮
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
         toggleItem?.setOnMenuItemClickListener {
             toggleLyricsFormat()
             true
+        }
+
+        // 🌟 需求 1：绑定新增的“删除 TTML”按钮，点击后自行消费处理
+        menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { currentSong ->
+                deleteAssociatedLyricsFiles(currentSong, onlyTtml = true)
+            }
+            true // 拦截并消费事件，不交由基类处理
+        }
+
+        // 🌟 需求 2：完美挂钩系统原有的“删除歌曲”按钮，实现无缝连带删除
+        menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { currentSong ->
+                deleteAssociatedLyricsFiles(currentSong, onlyTtml = false)
+            }
+            // 🚨 绝对核心：必须返回 false！这样 Android 系统才会把点击事件继续下发给基类 AbsPlayerFragment，
+            // 从而正常触发原作者内置的“弹出删除音频确认对话框”等后续流程。我们只是一个静默的“顺手牵羊”拦截器。
+            false 
         }
 
         if (isLandscapeOrTablet) {

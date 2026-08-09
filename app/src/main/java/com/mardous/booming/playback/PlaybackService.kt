@@ -974,13 +974,19 @@ class PlaybackService :
                         val possibleNames = listOf(
                             "${songFile.nameWithoutExtension}.lrc",
                             "${newSong.artistName} - ${newSong.title}.lrc"
-                        )
+                        ).filter { it.isNotBlank() }
                         
-                        val lrcFile = parentDir.listFiles()?.firstOrNull { file ->
-                            file.isFile && possibleNames.any { name -> file.name.equals(name, ignoreCase = true) }
+                        // 🌟 核心修复：彻底消灭 listFiles()，采用 O(1) 直接穿透查询！
+                        var lrcFile: java.io.File? = null
+                        for (name in possibleNames) {
+                            val targetFile = java.io.File(parentDir, name)
+                            if (targetFile.exists() && targetFile.isFile) {
+                                lrcFile = targetFile
+                                break // 找到了就立刻停止
+                            }
                         }
 
-                        if (lrcFile != null && lrcFile.exists()) {
+                        if (lrcFile != null) {
                             val bytes = lrcFile.readBytes()
                             val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
                             localLrcText = String(bytes, charset).replace("\uFEFF", "").trim()
@@ -990,7 +996,7 @@ class PlaybackService :
                     Log.e("PlaybackService", "Read local LRC for CarWith failed", e)
                 }
 
-                // 2. 逻辑分流：有本地 LRC 就直接用；没有本地 LRC，再向 APP 数据库请求兜底（如内嵌 LRC）
+                // 2. 逻辑分流：有本地 LRC 就直接用；没有本地 LRC，再向 APP 数据库请求兜底
                 if (!localLrcText.isNullOrBlank()) {
                     rawLyricsText = localLrcText
                 } else {
