@@ -41,10 +41,14 @@ object AnimatedCanvasFetcher {
         // 🌟 1. 本地最高优先：先找同名视频
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
-            val safeTitle = getSafeFilename(song.title)
-            val songVideo = checkLocalVideo(parentDir, safeTitle) 
-                ?: checkLocalVideo(parentDir, File(song.data).nameWithoutExtension)
-                ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}")
+		    val audioFileName = File(song.data).nameWithoutExtension // 获取音频真实文件名
+            
+            val songVideo = checkLocalVideo(parentDir, audioFileName) // 🥇 优先检查绝对同名
+                ?: checkLocalVideo(parentDir, getSafeFilename(song.title)) // 🥈 其次检查纯歌名
+                ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}") // 🥉 最后检查 歌手-歌名
+		
+		
+		
             
             if (songVideo != null) return@withContext cacheAndReturn(cacheKey, songVideo)
 
@@ -121,7 +125,9 @@ object AnimatedCanvasFetcher {
         }
 
         if (networkUrl != null && parentDir != null) {
-            return downloadToLocal(networkUrl, parentDir, song.title)
+            // 获取本地音频的真实文件名（不带后缀），确保 MP4 绝对同名
+            val audioFileName = File(song.data).nameWithoutExtension
+            return downloadToLocal(networkUrl, parentDir, audioFileName)
         }
 
         return networkUrl
@@ -151,8 +157,8 @@ object AnimatedCanvasFetcher {
         }
 
         return withContext(Dispatchers.IO) {
-            val safeTitle = getSafeFilename(songTitle)
-            val targetFile = File(parentDir, "$safeTitle.mp4")
+            // 直接使用传进来的音频文件名，不作任何修改！
+            val targetFile = File(parentDir, "$audioFileName.mp4")
 
             try {
                 if (targetFile.exists() && targetFile.length() > 0) {
