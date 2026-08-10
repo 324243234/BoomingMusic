@@ -51,6 +51,32 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         updateTabs()
         setupNavigationController()
 
+        // 🌟 本地修改：监听 Mini 播放器高度，动态垫高导航栏，防止被遮挡 🌟
+        // 🌟 本地修复：区分横竖屏（平板与手机）模式，动态应用 Padding 🌟
+        libraryViewModel.getMiniPlayerMargin().observe(this) { margin ->
+            val bottomMargin = margin.getWithSpace()
+            // 判断当前是否为横屏/平板模式
+            val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            
+            if (isLandscape) {
+                // 平板/横屏模式（侧边栏）：底部垫高，防止侧边栏底部的图标被 Mini 播放条遮挡
+                navigationView.setPadding(
+                    navigationView.paddingLeft, 
+                    navigationView.paddingTop, 
+                    navigationView.paddingRight, 
+                    bottomMargin
+                )
+            } else {
+                // 竖屏模式（底部导航栏）：不能加 bottom padding，否则底部导航栏拉高会反向遮盖 Mini 播放条
+                navigationView.setPadding(
+                    navigationView.paddingLeft, 
+                    navigationView.paddingTop, 
+                    navigationView.paddingRight, 
+                    0
+                )
+            }
+        }
+
         val shortcutManager = getSystemService<ShortcutManager>()
         shortcutManager?.removeDynamicShortcuts(OLD_SHORTCUT_IDS)
 
@@ -194,10 +220,23 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
 
     private fun handlePlaybackIntent(intent: Intent, canRestorePlayback: Boolean) {
         when (intent.action) {
+            // 🌟 作者新增：外部通过 Intent 直接跳转至特定的分类/列表内容页
             ACTION_SHOW_CONTENT -> {
                 intent.getStringExtra(EXTRA_CONTENT_TYPE)?.toEnum<ContentType>()?.let { type ->
                     whichFragment<NavHostFragment>(R.id.fragment_container).navController
                         .navigate(R.id.nav_detail_list, detailArgs(type))
+                }
+                setIntent(Intent())
+            }
+
+            // 🌟 本地修改：新增拦截小爱同学 Activity 级别语音搜索广播
+            android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH -> {
+                val query = intent.getStringExtra(android.app.SearchManager.QUERY) ?: ""
+                if (query.isNotBlank()) {
+                    // 拦截成功！小爱唤起了 App。
+                    showToast("语音唤醒搜索: $query")
+                    // TODO: 在这里通知你的 libraryViewModel 或 playerViewModel 去执行搜索并播放
+                    // libraryViewModel.searchAndPlay(query)
                 }
                 setIntent(Intent())
             }
@@ -274,6 +313,7 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
     }
 
     companion object {
+        // 🌟 作者新增：页面内容跳转所使用的系统静态标识
         const val ACTION_SHOW_CONTENT = "com.mardous.booming.action.SHOW_CONTENT"
         const val EXTRA_CONTENT_TYPE = "com.mardous.booming.extra.CONTENT_TYPE"
 
