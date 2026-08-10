@@ -1,5 +1,6 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
+import androidx.core.view.updatePadding
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
