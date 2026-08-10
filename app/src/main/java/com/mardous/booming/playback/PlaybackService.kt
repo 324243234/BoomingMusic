@@ -31,6 +31,7 @@ import androidx.core.content.getSystemService
 import androidx.core.os.postDelayed
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
+import androidx.media.utils.MediaConstants
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -54,6 +55,7 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSession.ConnectionResult.AcceptedResultBuilder
 import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
@@ -79,7 +81,6 @@ import com.mardous.booming.core.model.player.MetadataField
 import com.mardous.booming.core.palette.PaletteProcessor
 import com.mardous.booming.data.local.MediaStoreObserver
 import com.mardous.booming.data.local.ReplayGainTagExtractor
-import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.data.local.repository.Repository
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.network.NetworkFeature
@@ -101,6 +102,7 @@ import com.mardous.booming.util.IGNORE_AUDIO_FOCUS
 import com.mardous.booming.util.MP3_INDEX_SEEKING
 import com.mardous.booming.util.PAUSE_ON_ZERO_VOLUME
 import com.mardous.booming.util.PLAY_ON_STARTUP_MODE
+import com.mardous.booming.util.PackageValidator
 import com.mardous.booming.util.PlayOnStartupMode
 import com.mardous.booming.util.Preferences
 import com.mardous.booming.util.Preferences.requireString
@@ -113,8 +115,15 @@ import com.mardous.booming.util.WIDGET_DYNAMIC_COLORS
 import com.mardous.booming.util.WIDGET_IMAGE_CORNER_RADIUS
 import com.mardous.booming.util.WIDGET_SMALL_LAYOUT_STYLE
 import com.mardous.booming.util.WIDGET_THIRD_LINE_CONTENT
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Dispatchers.Main
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.ByteArrayOutputStream
 import kotlin.random.Random
@@ -126,7 +135,7 @@ class PlaybackService :
     Player.Listener,
     SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private val serviceScope = CoroutineScope(Job() + Dispatchers.Main)
+    private val serviceScope = CoroutineScope(Job() + Main)
     private val uiHandler = Handler(Looper.getMainLooper())
 
     private val glanceManager by lazy { GlanceAppWidgetManager(applicationContext) }
@@ -136,86 +145,6 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
-    private val lyricsRepository: LyricsRepository by inject()
-
-    private lateinit var bluetoothLyricManager: BluetoothLyricManager
-
-    private var currentCarWithLrc: String? = null
-    private var transitionJob: Job? = null
-    private var isCurrentSongFavorite = false
-    private var currentRawLyricsData: String? = null
-
-    private fun processLrcAndInterlude(lrc: String?): String {
-        if (lrc.isNullOrBlank()) return ""
-        val lines = lrc.lines().filter { it.contains("[") && it.contains("]") }
-        if (lines.isEmpty()) return ""
-
-        val showTranslation = preferences.getBoolean("lyrics_show_translation", true)
-        
-        val timeMap = mutableMapOf<Long, String>()
-        val timeKeys = mutableListOf<Long>()
-
-        for (line in lines) {
-            val textPart = line.substringAfter("]").trim()
-            if (textPart.isEmpty()) continue
-
-            val adjustedTime = parseLrcTimeMsSafe(line)
-            if (adjustedTime <= 0L && !line.startsWith("[00:00")) continue
-
-            if (timeMap.containsKey(adjustedTime)) {
-                if (showTranslation) {
-                    timeMap[adjustedTime] = timeMap[adjustedTime] + " ｜ " + textPart
-                }
-            } else {
-                timeMap[adjustedTime] = textPart
-                timeKeys.add(adjustedTime)
-            }
-        }
-
-        timeKeys.sort()
-        val result = java.lang.StringBuilder()
-        for (i in 0 until timeKeys.size) {
-            val t = timeKeys[i]
-            result.append("[${formatLrcTimeMsSafe(t)}]").append(timeMap[t]).append("\n")
-            if (i < timeKeys.size - 1) {
-                val nextT = timeKeys[i+1]
-                if (nextT - t > 8000) {
-                    val midTime = t + 3000
-                    result.append("[${formatLrcTimeMsSafe(midTime)}] ♪ ♪ ♪\n")
-                }
-            }
-        }
-        return result.toString()
-    }
-
-    private fun parseLrcTimeMsSafe(line: String): Long {
-        return try {
-            val timeStr = line.substringAfter("[").substringBefore("]")
-            val parts = timeStr.split(":")
-            if (parts.size < 2) return 0L
-            val min = parts[0].toLong()
-            val secParts = parts[1].split(".")
-            val sec = secParts[0].toLong()
-            val ms = if (secParts.size > 1) secParts[1].padEnd(3, '0').toLong() else 0L
-            min * 60000L + sec * 1000L + ms
-        } catch (e: Exception) {
-            0L
-        }
-    }
-
-    private fun formatLrcTimeMsSafe(ms: Long): String {
-        val min = ms / 60000
-        val sec = (ms % 60000) / 1000
-        val millis = (ms % 1000) / 10
-        return String.format("%02d:%02d.%02d", min, sec, millis)
-    }
-
-    private val favoriteCommand: CommandButton
-        get() = CommandButton.Builder()
-            .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
-            .setIconResId(if (isCurrentSongFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
-            .setDisplayName(getString(R.string.toggle_favorite))
-            .build()
 
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
@@ -230,6 +159,7 @@ class PlaybackService :
     private val balanceProcessor: BalanceAudioProcessor by inject()
     private val replayGainProcessor: ReplayGainAudioProcessor by inject()
 
+    private lateinit var packageValidator: PackageValidator
     private lateinit var nm: NotificationManager
     private lateinit var persistentStorage: PersistentStorage
     private lateinit var customCommands: List<CommandButton>
@@ -295,6 +225,8 @@ class PlaybackService :
         nm = requireNotNull(getSystemService<NotificationManager>())
         createNotificationChannel()
 
+        packageValidator = PackageValidator(this, R.xml.allowed_media_browser_callers)
+
         customCommands = listOf(
             CommandButton.Builder(CommandButton.ICON_SHUFFLE_OFF)
                 .setDisplayName(getString(R.string.shuffle_mode))
@@ -332,19 +264,7 @@ class PlaybackService :
                     BoomingMusicRenderersFactory(this, balanceProcessor, replayGainProcessor)
                         .setEnableAudioFloatOutput(equalizerManager.audioFloatOutput.value)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                        .setMediaCodecSelector(object : androidx.media3.exoplayer.mediacodec.MediaCodecSelector {
-                            val originalSelector = AlacWorkaroundCodecSelector()
-                            override fun getDecoderInfos(
-                                mimeType: String,
-                                requiresSecureDecoder: Boolean,
-                                requiresTunnelingDecoder: Boolean
-                            ): MutableList<androidx.media3.exoplayer.mediacodec.MediaCodecInfo> {
-                                if (mimeType == androidx.media3.common.MimeTypes.AUDIO_FLAC) {
-                                    return mutableListOf() 
-                                }
-                                return originalSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder).toMutableList()
-                            }
-                        })
+                        .setMediaCodecSelector(AlacWorkaroundCodecSelector())
                         .setEnableDecoderFallback(true)
                 )
                 .setMediaSourceFactory(
@@ -371,13 +291,11 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-
-        mediaSession = with(MediaLibrarySession.Builder(this, player, this)) {
-            setId(packageName)
-            setSessionActivity(createSessionActivityIntent())
-            build()
-        }
+        mediaSession = MediaLibrarySession.Builder(this, player, this)
+            .setId(packageName)
+            .setSessionActivity(createSessionActivityIntent())
+            .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this@PlaybackService)))
+            .build()
 
         setForegroundServiceTimeoutMs(FOREGROUND_SERVICE_TIMEOUT)
         setMediaNotificationProvider(
@@ -473,40 +391,31 @@ class PlaybackService :
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
-        return mediaSession
+        return if ("android.media.session.MediaController" == controllerInfo.packageName
+            || packageValidator.isKnownCaller(controllerInfo.packageName, controllerInfo.uid)) {
+            mediaSession
+        } else null
     }
 
-    override fun onConnect(
+    override fun onConnectAsync(
         session: MediaSession,
         controller: MediaSession.ControllerInfo
-    ): MediaSession.ConnectionResult {
-        val connectionResult = super.onConnect(session, controller)
-        val availableCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
-            .buildUpon()
-
-        availableCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.TOGGLE_SHUFFLE, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.RESTORE_PLAYBACK, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
-        availableCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
-
-        val playerCommands = connectionResult.availablePlayerCommands.buildUpon()
-            .add(Player.COMMAND_PLAY_PAUSE)
-            .add(Player.COMMAND_SEEK_TO_NEXT)
-            .add(Player.COMMAND_SEEK_TO_PREVIOUS)
-            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-            .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-            .add(Player.COMMAND_STOP)
-            .add(Player.COMMAND_SET_SHUFFLE_MODE)
-            .add(Player.COMMAND_SET_REPEAT_MODE)
-            .build()
-
-        return MediaSession.ConnectionResult.accept(
-            availableCommands.build(),
-            playerCommands
+    ): ListenableFuture<MediaSession.ConnectionResult> {
+        val connectionResult = AcceptedResultBuilder(session, controller).build()
+        val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+        if (controller.uid == Process.myUid()) {
+            availableSessionCommands.add(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY))
+            availableSessionCommands.add(SessionCommand(Playback.TOGGLE_SHUFFLE, Bundle.EMPTY))
+            availableSessionCommands.add(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
+            availableSessionCommands.add(SessionCommand(Playback.RESTORE_PLAYBACK, Bundle.EMPTY))
+            availableSessionCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
+            availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
+        }
+        return Futures.immediateFuture(
+            MediaSession.ConnectionResult.accept(
+                availableSessionCommands.build(),
+                connectionResult.availablePlayerCommands
+            )
         )
     }
 
@@ -516,35 +425,17 @@ class PlaybackService :
         intent: Intent
     ): Boolean {
         val ke = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-        if (ke != null) {
-            when (ke.keyCode) {
-                KeyEvent.KEYCODE_HEADSETHOOK, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                        headsetClickCount++
-                        uiHandler.removeCallbacks(headsetClickRunnable)
-                        if (headsetClickCount >= 3) {
-                            uiHandler.post(headsetClickRunnable)
-                        } else {
-                            uiHandler.postDelayed(headsetClickRunnable, 300)
-                        }
-                    }
-                    return true
-                }
-                
-                KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                        player.seekToNext()
-                    }
-                    return true
-                }
-                
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                        player.seekToPrevious()
-                    }
-                    return true
+        if (ke != null && (ke.keyCode == KeyEvent.KEYCODE_HEADSETHOOK || ke.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)) {
+            if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                headsetClickCount++
+                uiHandler.removeCallbacks(headsetClickRunnable)
+                if (headsetClickCount >= 3) {
+                    uiHandler.post(headsetClickRunnable)
+                } else {
+                    uiHandler.postDelayed(headsetClickRunnable, 300)
                 }
             }
+            return true
         }
         return super.onMediaButtonEvent(session, controllerInfo, intent)
     }
@@ -558,36 +449,44 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
+        val isKnownCaller = packageValidator.isKnownCaller(browser.packageName, browser.uid)
+        val outExtras = Bundle().apply {
+            putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, isKnownCaller)
+        }
         val libraryParams = LibraryParams.Builder()
             .setOffline(true)
-            .setRecent(true)
-            .setSuggested(false)
+            .setExtras(outExtras)
             .build()
-        val mediaItem = when {
-            params?.isRecent == true -> {
-                MediaItem.Builder()
-                    .setMediaId(MediaIDs.RECENT_SONGS)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                            .setIsBrowsable(true)
-                            .setIsPlayable(false)
-                            .build()
-                    )
-                    .build()
+        val mediaItem = if (isKnownCaller) {
+            when {
+                params?.isRecent == true -> {
+                    MediaItem.Builder()
+                        .setMediaId(MediaIDs.RECENT_SONGS)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                                .setIsBrowsable(true)
+                                .setIsPlayable(false)
+                                .build()
+                        )
+                        .build()
+                }
+
+                else -> {
+                    MediaItem.Builder()
+                        .setMediaId(MediaIDs.ROOT)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                                .setIsBrowsable(true)
+                                .setIsPlayable(false)
+                                .build()
+                        )
+                        .build()
+                }
             }
-            else -> {
-                MediaItem.Builder()
-                    .setMediaId(MediaIDs.ROOT)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                            .setIsBrowsable(true)
-                            .setIsPlayable(false)
-                            .build()
-                    )
-                    .build()
-            }
+        } else {
+            MediaItem.EMPTY
         }
         return Futures.immediateFuture(LibraryResult.ofItem(mediaItem, libraryParams))
     }
@@ -600,7 +499,7 @@ class PlaybackService :
         pageSize: Int,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-        return serviceScope.future(Dispatchers.IO) {
+        return serviceScope.future(IO) {
             val result = runCatching {
                 libraryProvider.getChildren(this@PlaybackService, parentId)
             }
@@ -617,7 +516,7 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         mediaId: String
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        return serviceScope.future(Dispatchers.IO) {
+        return serviceScope.future(IO) {
             val mediaItem = runCatching { libraryProvider.getItem(mediaId) }
                 .getOrDefault(MediaItem.EMPTY)
             if (mediaItem != MediaItem.EMPTY) {
@@ -634,7 +533,7 @@ class PlaybackService :
         query: String,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
-        return serviceScope.future(Dispatchers.IO) {
+        return serviceScope.future(IO) {
             runCatching { libraryProvider.search(query) }
                 .onSuccess { session.notifySearchResultChanged(browser, query, it.size, params) }
 
@@ -660,46 +559,9 @@ class PlaybackService :
         controller: MediaSession.ControllerInfo,
         mediaItems: List<MediaItem>
     ): ListenableFuture<List<MediaItem>> {
-        return serviceScope.future(Dispatchers.IO) {
-            val firstItem = mediaItems.firstOrNull()
-            val searchQuery = firstItem?.requestMetadata?.searchQuery
-                ?: firstItem?.mediaMetadata?.title?.toString()
-
-            if (!searchQuery.isNullOrBlank()) {
-                withContext(Dispatchers.Main) { showToast("正在为您检索本地歌曲: $searchQuery") }
-                
-                val matchedItems = runCatching {
-                    libraryProvider.search(searchQuery)
-                    val results = libraryProvider.searchResult
-                    
-                    if (results.isNotEmpty()) {
-                        libraryProvider.getMediaItemsForPlayback(
-                            mediaItems = results,
-                            tryToResolveComplexPaths = true
-                        )
-                    } else {
-                        emptyList()
-                    }
-                }.getOrDefault(emptyList())
-
-                if (matchedItems.isNotEmpty()) {
-                    return@future matchedItems
-                } else {
-                    withContext(Dispatchers.Main) { showToast("本地未找到该歌曲: $searchQuery") }
-                }
-            }
-
-            runCatching {
-                if (mediaSession.isAutomotiveController(controller) ||
-                    mediaSession.isAutoCompanionController(controller)) {
-                    libraryProvider.getMediaItemsForAAOSPlayback(mediaItems)?.first ?: emptyList()
-                } else {
-                    libraryProvider.getMediaItemsForPlayback(
-                        mediaItems = mediaItems,
-                        tryToResolveComplexPaths = true
-                    )
-                }
-            }.getOrDefault(emptyList())
+        return serviceScope.future(IO) {
+            runCatching { libraryProvider.getMediaItemsForPlayback(mediaItems) }
+                .getOrDefault(emptyList())
         }
     }
 
@@ -724,7 +586,7 @@ class PlaybackService :
 
             hasSetUnshuffledOrder = false
         }
-        return serviceScope.future(Dispatchers.IO) {
+        return serviceScope.future(IO) {
             if (mediaSession.isAutomotiveController(controller) ||
                 mediaSession.isAutoCompanionController(controller)) {
                 runCatching { libraryProvider.getMediaItemsForAAOSPlayback(mediaItems) }
@@ -766,25 +628,6 @@ class PlaybackService :
         args: Bundle
     ): ListenableFuture<SessionResult> {
         return when (customCommand.customAction) {
-            CARWITH_ACTION_COLLECT -> {
-                toggleFavorite()
-                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-            }
-            CARWITH_ACTION_PLAY_MODE -> {
-                if (player.shuffleModeEnabled) {
-                    player.shuffleModeEnabled = false
-                    player.repeatMode = Player.REPEAT_MODE_ONE
-                } else if (player.repeatMode == Player.REPEAT_MODE_ONE) {
-                    player.shuffleModeEnabled = false
-                    player.repeatMode = Player.REPEAT_MODE_ALL
-                } else {
-                    player.shuffleModeEnabled = true
-                    player.repeatMode = Player.REPEAT_MODE_ALL
-                }
-                serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
-                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-            }
-
             Playback.TOGGLE_SHUFFLE -> {
                 toggleShuffle()
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -915,111 +758,57 @@ class PlaybackService :
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
         persistentStorage.saveState()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         updateWidgets()
         refreshMediaButtonCustomLayout()
-        serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
         persistentStorage.saveState()
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
 
-        transitionJob?.cancel()
+        serviceScope.launch(IO) {
+            val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
+            if (newSong != Song.emptySong) {
+                replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
+            }
 
-        transitionJob = serviceScope.launch(Dispatchers.IO) {
-            val newSong = repository.songByMediaItem(mediaItem)
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
             songPlayCountHelper.notifySongChanged(newSong, isPlaying)
 
-            if (newSong != Song.emptySong) {
-                replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
+            val enableHistory = preferences.getBoolean(ENABLE_HISTORY, true)
+            if (enableHistory && newSong != Song.emptySong && !newSong.resolvedFromFile) {
                 if (preferences.getBoolean(ENABLE_HISTORY, true)) {
                     repository.upsertSongInHistory(newSong)
                 }
-                if (NetworkFeature.Lastfm.NowPlaying.isAvailable) {
-                    repository.updateNowPlaying(ScrobblingService.Lastfm, newSong)
+                if (!NetworkFeature.Lastfm.NowPlaying.isAvailable) {
+                    launch { repository.updateNowPlaying(ScrobblingService.Lastfm, newSong) }
                 }
                 if (NetworkFeature.ListenBrainz.NowPlaying.isAvailable) {
-                    repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong)
+                    launch { repository.updateNowPlaying(ScrobblingService.ListenBrainz, newSong) }
                 }
             }
-            if (previousSong != Song.emptySong) {
+            if (enableHistory && previousSong != Song.emptySong && !previousSong.resolvedFromFile) {
                 val timestampMillis = System.currentTimeMillis()
                 val timestampSeconds = (timestampMillis / 1000)
                 if (shouldBumpPlayCount) {
-                    repository.insertOrIncrementPlayCount(previousSong, timestampMillis)
-                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds)
-                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds)
+                    repository.insertOrIncrementPlayCount(
+                        song = previousSong,
+                        timePlayed = timestampMillis
+                    )
+                    if (NetworkFeature.Lastfm.Scrobbling.isAvailable) {
+                        launch { repository.scrobble(ScrobblingService.Lastfm, previousSong, timestampSeconds) }
+                    }
+                    if (NetworkFeature.ListenBrainz.Scrobbling.isAvailable) {
+                        launch { repository.scrobble(ScrobblingService.ListenBrainz, previousSong, timestampSeconds) }
+                    }
                 } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
                     repository.insertOrIncrementSkipCount(previousSong)
                 }
-            }
-
-            isCurrentSongFavorite = if (newSong != Song.emptySong) repository.isSongFavorite(newSong.id) else false
-
-            var rawLyricsText: String? = null
-            if (newSong != Song.emptySong) {
-                // 1. 优先向本地目录硬抓取 .lrc 文件（无视 APP 当前正在渲染什么格式）
-                var localLrcText: String? = null
-                try {
-                    val songFile = java.io.File(newSong.data)
-                    val parentDir = songFile.parentFile
-                    if (parentDir != null && parentDir.exists()) {
-                        val possibleNames = listOf(
-                            "${songFile.nameWithoutExtension}.lrc",
-                            "${newSong.artistName} - ${newSong.title}.lrc"
-                        ).filter { it.isNotBlank() }
-                        
-                        // 🌟 核心修复：彻底消灭 listFiles()，采用 O(1) 直接穿透查询！
-                        var lrcFile: java.io.File? = null
-                        for (name in possibleNames) {
-                            val targetFile = java.io.File(parentDir, name)
-                            if (targetFile.exists() && targetFile.isFile) {
-                                lrcFile = targetFile
-                                break // 找到了就立刻停止
-                            }
-                        }
-
-                        if (lrcFile != null) {
-                            val bytes = lrcFile.readBytes()
-                            val charset = if (isUtf8(bytes)) Charsets.UTF_8 else java.nio.charset.Charset.forName("GBK")
-                            localLrcText = String(bytes, charset).replace("\uFEFF", "").trim()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("PlaybackService", "Read local LRC for CarWith failed", e)
-                }
-
-                // 2. 逻辑分流：有本地 LRC 就直接用；没有本地 LRC，再向 APP 数据库请求兜底
-                if (!localLrcText.isNullOrBlank()) {
-                    rawLyricsText = localLrcText
-                } else {
-                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                        ?: lyricsRepository.embeddedLyrics(newSong)
-                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                    
-                    rawLyricsText = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
-                }
-            }
-
-            currentRawLyricsData = rawLyricsText
-            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-            val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-            withContext(Dispatchers.Main) {
-                if (isBtLyricsEnabled) {
-                    bluetoothLyricManager.loadLyricsForSong(newSong)
-                } else {
-                    bluetoothLyricManager.stopLyrics()
-                }
-                
-                refreshMediaButtonCustomLayout()
-                requestCarWithSilentBroadcast(currentCarWithLrc ?: "") 
             }
         }
 
@@ -1029,43 +818,6 @@ class PlaybackService :
 
         persistentStorage.saveState()
         updateWidgets(force = true)
-    }
-
-    private suspend fun requestCarWithSilentBroadcast(targetLrc: String) {
-        val (targetPlayMode, targetCollectStatus, targetCollectLong) = withContext(Dispatchers.Main) {
-            val playMode = when {
-                player.shuffleModeEnabled -> 0L
-                player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
-                else -> 2L
-            }
-            val collectStatus = if (isCurrentSongFavorite) "1" else "0"
-            val collectLong = if (isCurrentSongFavorite) 1L else 0L
-            Triple(playMode, collectStatus, collectLong)
-        }
-
-        val newExtras = Bundle().apply {
-            putString(CARWITH_LYRICS_WHOLE, targetLrc)
-            putString(CARWITH_LYRICS_LINE, "")
-            putLong(CARWITH_LYRICS_STATUS, if (targetLrc.isNotEmpty()) 0L else 3L)
-            putLong(CARWITH_PLAY_MODE, targetPlayMode)
-            
-            putLong(CARWITH_COLLECT, targetCollectLong)
-            putString(CARWITH_COLLECT, targetCollectStatus)
-            putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
-            putLong(CARWITH_COLLECT_STATUS, targetCollectLong)
-            
-            putLong("carwith_timestamp", System.currentTimeMillis())
-        }
-
-        withContext(Dispatchers.Main) {
-            try {
-                mediaSession?.setSessionExtras(newExtras)
-                val triggerMetadata = MediaMetadata.Builder().setExtras(newExtras).build()
-                mediaSession?.player?.playlistMetadata = triggerMetadata
-            } catch (e: Exception) {
-                Log.e("PlaybackService", "Silent CarWith broadcast failed", e)
-            }
-        }
     }
 
     override fun onPlayerError(error: PlaybackException) {
@@ -1102,41 +854,37 @@ class PlaybackService :
         }
     }
 
-    override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
-        when (key) {
-            "lyrics_show_translation" -> {
-                if (!currentRawLyricsData.isNullOrBlank()) {
-                    currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    serviceScope.launch { requestCarWithSilentBroadcast(currentCarWithLrc ?: "") }
-                }
-            }
-            
-            "enable_bluetooth_lyrics" -> {
-                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                
-                serviceScope.launch(Dispatchers.Main) {
-                    val currentItem = player.currentMediaItem
-                    if (isBtLyricsEnabled) {
-                        withContext(Dispatchers.IO) {
-                            val song = repository.songByMediaItem(currentItem)
-                            withContext(Dispatchers.Main) {
-                                bluetoothLyricManager.loadLyricsForSong(song)
-                            }
-                        }
-                    } else {
-                        bluetoothLyricManager.stopLyrics()
+    /*
+    override fun onTracksChanged(tracks: Tracks) {
+        var sampleRate = -1
+        var channelCount = -1
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    if (group.isTrackSelected(i)) {
+                        val format = group.getTrackFormat(i)
+                        sampleRate = format.sampleRate
+                        channelCount = format.channelCount
+                        break
                     }
                 }
             }
+        }
+        audioOutputObserver.updatePlaybackFormat(sampleRate, channelCount)
+    }
+     */
 
+    override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
+        when (key) {
             QUEUE_NEXT_MODE -> {
                 player.setSequentialTimelineEnabled(sequentialTimeline)
             }
 
             ENABLE_HISTORY -> {
                 if (!preferences.getBoolean(key, true)) {
-                    serviceScope.launch(Dispatchers.IO) {
+                    serviceScope.launch(IO) {
                         repository.clearSongHistory()
+                        repository.clearPlayCount()
                     }
                 }
             }
@@ -1176,24 +924,22 @@ class PlaybackService :
         }
     }
 
-    private fun toggleFavorite() = serviceScope.launch(Dispatchers.Main) {
-        val currentMediaItem = player.currentMediaItem ?: return@launch
+    private fun toggleFavorite() = serviceScope.launch {
+        val currentMediaItem = player.currentMediaItem
+            ?: return@launch
 
-        withContext(Dispatchers.IO) {
-            val song = repository.songByMediaItem(currentMediaItem)
+        withContext(IO) {
+            val song = repository.songByMediaItem(currentMediaItem, ignoreBlacklist = false)
             repository.toggleFavorite(song)
-            isCurrentSongFavorite = repository.isSongFavorite(song.id)
         }
 
         updateWidgets()
+
         refreshMediaButtonCustomLayout()
-        
         mediaSession?.broadcastCustomCommand(
             SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
-        
-        requestCarWithSilentBroadcast(currentCarWithLrc ?: "")
     }
 
     private suspend fun buildPlaybackState(isForeground: Boolean): PlaybackState {
@@ -1204,7 +950,7 @@ class PlaybackService :
         val isPlaying = player.isPlaying
         val isShuffleMode = player.shuffleModeEnabled
         val repeatMode = player.repeatMode
-        return withContext(Dispatchers.IO) {
+        return withContext(IO) {
             val song = repository.songById(id)
             val isFavorite = repository.isSongFavorite(song.id)
             val result = SingletonImageLoader.get(this@PlaybackService).execute(
@@ -1232,7 +978,6 @@ class PlaybackService :
                     WidgetTheme(paletteColor.backgroundColor)
                 } else null
             } else null
-
             val additionalInfo = MetadataField.getMetadataValue(
                 song = song,
                 fields = Preferences.getExtraInfoContent(
@@ -1259,10 +1004,9 @@ class PlaybackService :
 
     private fun updateWidgets(force: Boolean = false, isForeground: Boolean = isPlaybackOngoing) {
         widgetUpdateJob?.cancel()
-        widgetUpdateJob = serviceScope.launch(Dispatchers.Main) {
-            if (!hasActiveGlanceWidgets()) return@launch
-
+        widgetUpdateJob = serviceScope.launch {
             if (!force) delay(WIDGET_UPDATE_DEBOUNCE)
+
             val state = buildPlaybackState(isForeground)
             if (lastPlaybackState != state) {
                 lastPlaybackState = state
@@ -1271,18 +1015,7 @@ class PlaybackService :
         }
     }
 
-    private suspend fun hasActiveGlanceWidgets(): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val boomingWidgetIds = glanceManager.getGlanceIds(BoomingGlanceWidget::class.java)
-            val cardWidgetIds = glanceManager.getGlanceIds(CardWidget::class.java)
-            val fullWidgetIds = glanceManager.getGlanceIds(FullWidget::class.java)
-            boomingWidgetIds.isNotEmpty() || cardWidgetIds.isNotEmpty() || fullWidgetIds.isNotEmpty()
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    private suspend fun updateGlanceWidgets(playbackState: PlaybackState) = withContext(Dispatchers.IO) {
+    private suspend fun updateGlanceWidgets(playbackState: PlaybackState) = withContext(IO) {
         try {
             val boomingWidget = BoomingGlanceWidget()
             val boomingWidgetIds = glanceManager.getGlanceIds(boomingWidget.javaClass)
@@ -1349,7 +1082,7 @@ class PlaybackService :
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
             if (mediaSession?.isRemoteController(controllerInfo) == true) {
                 val buttonLayout = if (hasTimeline) {
-                    ImmutableList.of(favoriteCommand, repeatCommand, shuffleCommand)
+                    ImmutableList.of(repeatCommand, shuffleCommand)
                 } else {
                     emptyList()
                 }
@@ -1431,6 +1164,7 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1510,6 +1244,7 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
+                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
@@ -1520,26 +1255,6 @@ class PlaybackService :
                 }
             }
         }
-    }
-	
-    private fun isUtf8(bytes: ByteArray): Boolean {
-        var i = 0
-        while (i < bytes.size) {
-            val b = bytes[i].toInt() and 0xFF
-            if (b <= 0x7F) { i++; continue }
-            val count = when {
-                b in 0xC0..0xDF -> 1
-                b in 0xE0..0xEF -> 2
-                b in 0xF0..0xF7 -> 3
-                else -> return false
-            }
-            if (i + count >= bytes.size) return true
-            for (j in 1..count) {
-                if ((bytes[i + j].toInt() and 0xC0) != 0x80) return false
-            }
-            i += count + 1
-        }
-        return true
     }
 
     companion object {
@@ -1557,14 +1272,5 @@ class PlaybackService :
         private const val REWIND_INSTEAD_PREVIOUS_MILLIS = 5000L
 
         private const val FOREGROUND_SERVICE_TIMEOUT = (60 * 1000) * 2L
-
-        private const val CARWITH_LYRICS_WHOLE = "ucar.media.metadata.LYRICS_WHOLE"
-        private const val CARWITH_LYRICS_LINE = "ucar.media.metadata.LYRICS_LINE"
-        private const val CARWITH_LYRICS_STATUS = "ucar.media.metadata.LYRICS_STATUS"
-        private const val CARWITH_PLAY_MODE = "ucar.media.metadata.PLAY_MODE"
-        private const val CARWITH_COLLECT = "ucar.media.metadata.COLLECT"
-        private const val CARWITH_ACTION_COLLECT = "ucar.media.action.COLLECT"
-        private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT_STATE"
-        private const val CARWITH_ACTION_PLAY_MODE = "ucar.media.action.PLAY_MODE"
     }
 }
