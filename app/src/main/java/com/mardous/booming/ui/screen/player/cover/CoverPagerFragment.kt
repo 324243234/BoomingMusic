@@ -328,12 +328,6 @@ class CoverPagerFragment : Fragment(R.layout.fragment_player_album_cover),
         fun onLyricsVisibilityChange(animatorSet: AnimatorSet, lyricsVisible: Boolean)
     }
 	
-	// 准确定位并提取当前处于激活状态的 ViewPager 页面内的动态视频控件
-    fun getCurrentPlayerView(): androidx.media3.ui.PlayerView? {
-        val adapter = viewPager.adapter as? AlbumCoverPagerAdapter ?: return null
-        val currentFragment = adapter.instantiateItem(viewPager, viewPager.currentItem) as? Fragment
-        return currentFragment?.view?.findViewById(R.id.canvasPlayerView)
-    }
 
     companion object {
         const val TAG = "PlayerAlbumCoverFragment"

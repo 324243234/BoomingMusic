@@ -15,8 +15,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (高可用线性防线 + 下载缓存版)
- * 特性: LRU 内存缓存、严格主歌手匹配防乱入、智能画质选择(480优先)、残缺文件清理
+ * 动态专辑画布引擎 (严格匹配版 + 下载缓存版)
  */
 object AnimatedCanvasFetcher {
 
@@ -39,6 +38,7 @@ object AnimatedCanvasFetcher {
 
         yield()
 
+        // 🌟 1. 本地最高优先：先找同名视频
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
             val safeTitle = getSafeFilename(song.title)
@@ -57,23 +57,22 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 🌟 1. 歌名清洗
+        // 🌟 2. 字段严格清洗
         val rawTitle = song.title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
             .replace(Regex("""\(.*?(Remaster|Live|翻唱|伴奏|现场|DJ).*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "").trim()
             
-        // 🌟 2. 歌手清洗：遇到多歌手（/,&,、），只提取第一位核心歌手，防止搜索引擎错乱
+        // 🌟 3. 多歌手严格处理：只要第一位核心歌手
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
         val primaryArtist = rawArtist.split(Regex("[/&,、]| and ")).firstOrNull()?.trim() ?: ""
         
-        // 🌟 3. 专辑清洗
         val rawAlbum = (song.albumName ?: "")
             .replace(Regex("""\(.*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "")
             .trim()
 
         // ==========================================
-        // 🌟 严格匹配流：宁缺毋滥，主歌手 + 歌名 + 专辑名
+        // 🌟 4. 第一梯队严格匹配：歌手 + 歌名 + 专辑名
         // ==========================================
         val strictQueryParts = mutableListOf<String>()
         if (primaryArtist.isNotBlank()) strictQueryParts.add(primaryArtist)
@@ -84,12 +83,12 @@ object AnimatedCanvasFetcher {
             
         val cover1 = fetchAndDownloadFromNetwork(strictQuery, song, parentDir)
         if (cover1 != null) {
-            Log.d(TAG, "🎯 严格匹配命中: $strictQuery")
+            Log.d(TAG, "🎯 严格匹配命中 (歌手+歌名+专辑): $strictQuery")
             return@withContext cacheAndReturn(cacheKey, cover1)
         }
 
         // ==========================================
-        // 🌟 降级匹配流：抛弃专辑名，仅主歌手 + 歌名
+        // 🌟 5. 第二梯队降级匹配：歌手 + 歌名 (仅在有专辑名时才执行降级)
         // ==========================================
         if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
             val fallbackQuery = listOf(primaryArtist, rawTitle).filter { it.isNotBlank() }.joinToString(" ")
@@ -97,12 +96,12 @@ object AnimatedCanvasFetcher {
                 
             val cover2 = fetchAndDownloadFromNetwork(fallbackQuery, song, parentDir)
             if (cover2 != null) {
-                Log.d(TAG, "🎯 降级命中: $fallbackQuery")
+                Log.d(TAG, "🎯 降级匹配命中 (歌手+歌名): $fallbackQuery")
                 return@withContext cacheAndReturn(cacheKey, cover2)
             }
         }
 
-        Log.d(TAG, "💔 宁缺毋滥，全网未找到匹配动态封面: ${song.title}")
+        Log.d(TAG, "💔 宁缺毋滥，未找到匹配动态封面: ${song.title}")
         return@withContext null
     }
 
@@ -285,7 +284,6 @@ object AnimatedCanvasFetcher {
             
             val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
             
-            // 优先级锁定，彻底扼杀过高的发热分辨率
             val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
             var selectedResolutionKey: String? = null
             
@@ -305,7 +303,6 @@ object AnimatedCanvasFetcher {
                 if (urlList != null && urlList.length() > 0) {
                     val finalUrl = urlList.optString(0)
                     if (finalUrl.isNotBlank()) {
-                        Log.d(TAG, "🎬 成功获取QQ音乐动态封面 (最优画质: $selectedResolutionKey): $finalUrl")
                         return finalUrl
                     }
                 }

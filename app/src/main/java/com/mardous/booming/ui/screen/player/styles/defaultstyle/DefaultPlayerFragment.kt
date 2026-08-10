@@ -51,7 +51,6 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
-import com.mardous.booming.ui.screen.player.cover.CoverPagerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
@@ -85,8 +84,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
     
-    private var activePlayerView: PlayerView? = null
-
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
@@ -129,9 +126,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_OFF 
                 volume = 0f 
-                playbackParameters = PlaybackParameters(0.85f) // 电影感微慢放
+                playbackParameters = PlaybackParameters(0.85f) 
                 
-                // 🌟 性能大杀器：完全阉割音频流解析，彻底屏蔽后台发热源！
+                // 🌟 性能大杀器：完全阉割音频流解析，彻底限制分辨率，物理阻断资源浪费与发热！
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
                     .setMaxVideoSize(854, 480)
@@ -139,27 +136,40 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     
                 addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
-                        activePlayerView?.let { playerView ->
-                            if (playerView.alpha < 1f) {
-                                playerView.animate().alpha(1f).setDuration(800).start()
-                            }
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                        if (playerView?.alpha ?: 1f < 1f) {
+                            // 第一帧真确画出后，800ms 柔和淡入
+                            playerView?.animate()?.alpha(1f)?.setDuration(800)?.start()
                         }
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) {
-                            activePlayerView?.let { playerView ->
-                                // 🌟 1 秒主流呼吸感逻辑：淡出后停留 1 秒，让设备彻底冷静并展现原底图，之后重播
-                                playerView.animate().alpha(0f).setDuration(600).withEndAction {
-                                    playerView.postDelayed({
-                                        canvasExoPlayer?.seekTo(0)
-                                        canvasExoPlayer?.play()
-                                    }, 1000) 
-                                }.start()
-                            }
+                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                            // 🌟 绝对听从指令复刻网易云：
+                            // 600ms 淡出显露底层静态图 -> 精准停留 1秒钟 -> 拉回开头重播
+                            playerView?.animate()?.alpha(0f)?.setDuration(600)?.withEndAction {
+                                playerView.postDelayed({
+                                    canvasExoPlayer?.seekTo(0)
+                                    canvasExoPlayer?.play()
+                                }, 1000) 
+                            }?.start()
                         }
                     }
                 })
+            }
+            
+            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
+                player = canvasExoPlayer
+                useController = false 
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
+                
+                isClickable = false
+                isFocusable = false
+                isFocusableInTouchMode = false
+                isLongClickable = false
+                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                setOnTouchListener { _, _ -> false }
             }
         }
 
@@ -184,10 +194,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         canvasExoPlayer?.stop() 
                         canvasExoPlayer?.clearMediaItems() 
                         
-                        activePlayerView?.animate()?.cancel()
-                        activePlayerView?.alpha = 0f
-                        activePlayerView?.player = null
-                        activePlayerView = null
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                        playerView?.animate()?.cancel()
+                        playerView?.alpha = 0f
 
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
@@ -214,40 +223,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
                                             withContext(Dispatchers.Main) {
-                                                val newPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
-                                                
-                                                var targetPlayerView: PlayerView? = null
-                                                for (i in 1..15) {
-                                                    targetPlayerView = newPager?.getCurrentPlayerView()
-                                                    if (targetPlayerView != null) break
-                                                    delay(100)
-                                                }
-
-                                                if (targetPlayerView != null) {
-                                                    activePlayerView = targetPlayerView
-                                                    targetPlayerView.player = canvasExoPlayer
-                                                    targetPlayerView.useController = false
-                                                    targetPlayerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                    
-                                                    targetPlayerView.clipToOutline = true
-                                                    targetPlayerView.outlineProvider = object : android.view.ViewOutlineProvider() {
-                                                        override fun getOutline(view: View, outline: android.graphics.Outline) {
-                                                            val radius = view.context.resources.displayMetrics.density * 20f 
-                                                            outline.setRoundRect(0, 0, view.width, view.height, radius)
-                                                        }
-                                                    }
-                                                    
-                                                    targetPlayerView.isClickable = false
-                                                    targetPlayerView.isFocusable = false
-                                                    targetPlayerView.isFocusableInTouchMode = false
-                                                    targetPlayerView.isLongClickable = false
-                                                    targetPlayerView.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                                                    targetPlayerView.setOnTouchListener { _, _ -> false }
-
-                                                    canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
-                                                    canvasExoPlayer?.prepare()
-                                                    canvasExoPlayer?.play()
-                                                }
+                                                canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                                canvasExoPlayer?.prepare()
+                                                canvasExoPlayer?.play()
                                             }
                                         }
                                     }
@@ -339,11 +317,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 viewPager?.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
                     override fun onPageScrollStateChanged(state: Int) {
                         if (state == ViewPager.SCROLL_STATE_DRAGGING) {
-                            activePlayerView?.animate()?.cancel()
-                            activePlayerView?.alpha = 0f
+                            val playerView = rootView.findViewById<PlayerView>(R.id.canvasPlayerView)
+                            playerView?.animate()?.cancel()
+                            playerView?.alpha = 0f
                         } else if (state == ViewPager.SCROLL_STATE_IDLE) {
-                            if (canvasExoPlayer?.playbackState == Player.STATE_READY) {
-                                activePlayerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
+                            if (canvasExoPlayer?.playbackState == Player.STATE_READY || canvasExoPlayer?.playbackState == Player.STATE_ENDED) {
+                                val playerView = rootView.findViewById<PlayerView>(R.id.canvasPlayerView)
+                                playerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
                             }
                         }
                     }
@@ -625,10 +605,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         videoFetchJob = null
         canvasExoPlayer?.release()
         canvasExoPlayer = null
-        
-        activePlayerView?.player = null
-        activePlayerView = null
-        
         super.onDestroyView()
         _binding = null
     }
