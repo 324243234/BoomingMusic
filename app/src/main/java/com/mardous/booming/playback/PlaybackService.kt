@@ -671,7 +671,7 @@ class PlaybackService :
                     
                     if (results.isNotEmpty()) {
                         libraryProvider.getMediaItemsForPlayback(
-                            uid = controller.uid,
+                            controller.uid,
                             mediaItems = results,
                             tryToResolveComplexPaths = true
                         )
@@ -693,7 +693,7 @@ class PlaybackService :
                     libraryProvider.getMediaItemsForAAOSPlayback(controller.uid, mediaItems)?.first ?: emptyList()
                 } else {
                     libraryProvider.getMediaItemsForPlayback(
-                        uid = controller.uid,
+                        controller.uid,
                         mediaItems = mediaItems,
                         tryToResolveComplexPaths = true
                     )
@@ -1115,7 +1115,7 @@ class PlaybackService :
                     val currentItem = player.currentMediaItem
                     if (isBtLyricsEnabled && currentItem != null) {
                         withContext(IO) {
-                            val song = repository.songByMediaItem(currentItem)
+                            val song = repository.songByMediaItem(currentItem, ignoreBlacklist = true)
                             withContext(Main) {
                                 bluetoothLyricManager.loadLyricsForSong(song)
                             }
