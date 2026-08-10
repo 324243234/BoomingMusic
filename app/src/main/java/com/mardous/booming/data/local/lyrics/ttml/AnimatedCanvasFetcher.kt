@@ -151,9 +151,9 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    private suspend fun downloadToLocal(urlStr: String, parentDir: File, songTitle: String): String? {
+    private suspend fun downloadToLocal(urlStr: String, parentDir: File, audioFileName: String): String? {
         if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) {
-            return urlStr 
+            return urlStr
         }
 
         return withContext(Dispatchers.IO) {
