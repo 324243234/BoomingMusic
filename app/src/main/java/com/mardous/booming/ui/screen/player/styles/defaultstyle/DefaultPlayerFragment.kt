@@ -214,9 +214,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                             playerView?.apply {
                                                 useController = false
                                                 setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                isVisible = true
+                                                visibility = View.VISIBLE // 显示视频
                                             }
-                                            staticCoverFragment?.isVisible = false
+                                            // 🌟 核心修复：必须用 INVISIBLE 占位，绝不能用 GONE，否则布局塌陷！
+                                           staticCoverFragment?.visibility = View.INVISIBLE
                                         } else {
                                             canvasExoPlayer?.stop()
                                             playerView?.isVisible = false
