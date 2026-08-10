@@ -16,8 +16,7 @@ import java.net.URL
 
 /**
  * 动态专辑画布引擎 (高可用线性防线 + 下载缓存版)
- * 优先级: 本地资产 -> Apple Music -> 网易云官方 -> QQ 音乐
- * 特性: LRU 内存缓存、自动重定向追踪下载、智能画质选择(480优先)、残缺文件清理
+ * 特性: LRU 内存缓存、严格主歌手匹配防乱入、智能画质选择(480优先)、残缺文件清理
  */
 object AnimatedCanvasFetcher {
 
@@ -58,40 +57,58 @@ object AnimatedCanvasFetcher {
 
         yield()
 
+        // 🌟 1. 歌名清洗
         val rawTitle = song.title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
             .replace(Regex("""\(.*?(Remaster|Live|翻唱|伴奏|现场|DJ).*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "").trim()
             
+        // 🌟 2. 歌手清洗：遇到多歌手（/,&,、），只提取第一位核心歌手，防止搜索引擎错乱
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
+        val primaryArtist = rawArtist.split(Regex("[/&,、]| and ")).firstOrNull()?.trim() ?: ""
         
+        // 🌟 3. 专辑清洗
         val rawAlbum = (song.albumName ?: "")
             .replace(Regex("""\(.*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "")
             .trim()
 
-        val query1 = (if (rawArtist.isBlank()) rawTitle else "$rawArtist $rawTitle")
-            .replace(Regex("""[-_／/]"""), " ").trim()
+        // ==========================================
+        // 🌟 严格匹配流：宁缺毋滥，主歌手 + 歌名 + 专辑名
+        // ==========================================
+        val strictQueryParts = mutableListOf<String>()
+        if (primaryArtist.isNotBlank()) strictQueryParts.add(primaryArtist)
+        if (rawTitle.isNotBlank()) strictQueryParts.add(rawTitle)
+        if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) strictQueryParts.add(rawAlbum)
+        
+        val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
             
-        val cover1 = fetchAndDownloadFromNetwork(query1, song, parentDir)
+        val cover1 = fetchAndDownloadFromNetwork(strictQuery, song, parentDir)
         if (cover1 != null) {
-            Log.d(TAG, "🎯 策略1命中: $query1")
+            Log.d(TAG, "🎯 严格匹配命中: $strictQuery")
             return@withContext cacheAndReturn(cacheKey, cover1)
         }
 
+        // ==========================================
+        // 🌟 降级匹配流：抛弃专辑名，仅主歌手 + 歌名
+        // ==========================================
         if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
-            val query2 = "$rawTitle $rawAlbum".replace(Regex("""[-_／/]"""), " ").trim()
-            val cover2 = fetchAndDownloadFromNetwork(query2, song, parentDir)
+            val fallbackQuery = listOf(primaryArtist, rawTitle).filter { it.isNotBlank() }.joinToString(" ")
+                .replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
+                
+            val cover2 = fetchAndDownloadFromNetwork(fallbackQuery, song, parentDir)
             if (cover2 != null) {
-                Log.d(TAG, "🎯 策略2降级命中: $query2")
+                Log.d(TAG, "🎯 降级命中: $fallbackQuery")
                 return@withContext cacheAndReturn(cacheKey, cover2)
             }
         }
 
-        Log.d(TAG, "💔 彻底放弃，没有动态封面: ${song.title}")
+        Log.d(TAG, "💔 宁缺毋滥，全网未找到匹配动态封面: ${song.title}")
         return@withContext null
     }
 
     private suspend fun fetchAndDownloadFromNetwork(query: String, song: Song, parentDir: File?): String? {
+        if (query.isBlank()) return null
+        
         var networkUrl = fetchAppleMusicCover(query)
         
         if (networkUrl == null) {
@@ -268,8 +285,7 @@ object AnimatedCanvasFetcher {
             
             val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
             
-            // 🌟 核心修改：QQ 音乐优先级倒置
-            // 强制优先获取 480p，没有 480 降级到 720，再不行用 360，1080p 留作最后的无奈兜底
+            // 优先级锁定，彻底扼杀过高的发热分辨率
             val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
             var selectedResolutionKey: String? = null
             

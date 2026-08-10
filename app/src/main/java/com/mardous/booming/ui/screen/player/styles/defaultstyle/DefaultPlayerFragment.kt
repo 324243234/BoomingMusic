@@ -1,6 +1,5 @@
 package com.mardous.booming.ui.screen.player.styles.defaultstyle
 
-import androidx.core.view.updatePadding
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
@@ -21,7 +20,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isInvisible
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackParameters
@@ -50,6 +51,7 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
+import com.mardous.booming.ui.screen.player.cover.CoverPagerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +84,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
+    
+    private var activePlayerView: PlayerView? = null
 
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
@@ -99,7 +103,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     override val playerControlsFragment: AbsPlayerControlsFragment get() = controlsFragment
     override val colorSchemeMode: PlayerColorSchemeMode get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Default)
     override val playerToolbar: Toolbar get() = binding.toolbar
-    override val blurView: ImageView get() = binding.blur
     private var primaryControlColor: Int = 0
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -121,50 +124,42 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
         if (isLandscape) {
-            setupSlidingGhostMode(view) // 启用“滑动隐身”黑科技
+            setupSlidingGhostMode(view) 
             
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_OFF 
                 volume = 0f 
-                playbackParameters = PlaybackParameters(0.85f)
-                trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoSize(854, 480).build()
+                playbackParameters = PlaybackParameters(0.85f) // 电影感微慢放
+                
+                // 🌟 性能大杀器：完全阉割音频流解析，彻底屏蔽后台发热源！
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                    .setMaxVideoSize(854, 480)
+                    .build()
                     
                 addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                        // 🌟 彻底消灭黑场：第一帧画面真正画好后，执行柔和淡入
-                        if (playerView?.alpha ?: 1f < 1f) {
-                            playerView?.animate()?.alpha(1f)?.setDuration(800)?.start()
+                        activePlayerView?.let { playerView ->
+                            if (playerView.alpha < 1f) {
+                                playerView.animate().alpha(1f).setDuration(800).start()
+                            }
                         }
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) {
-                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                            // 🌟 呼吸感与降温：播完淡出，给底图 1.5 秒展示时间，硬解器休息冷却
-                            playerView?.animate()?.alpha(0f)?.setDuration(600)?.withEndAction {
-                                playerView.postDelayed({
-                                    canvasExoPlayer?.seekTo(0)
-                                    canvasExoPlayer?.play()
-                                }, 1500) 
-                            }?.start()
+                            activePlayerView?.let { playerView ->
+                                // 🌟 1 秒主流呼吸感逻辑：淡出后停留 1 秒，让设备彻底冷静并展现原底图，之后重播
+                                playerView.animate().alpha(0f).setDuration(600).withEndAction {
+                                    playerView.postDelayed({
+                                        canvasExoPlayer?.seekTo(0)
+                                        canvasExoPlayer?.play()
+                                    }, 1000) 
+                                }.start()
+                            }
                         }
                     }
                 })
-            }
-            
-            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
-                player = canvasExoPlayer
-                useController = false 
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
-                
-                // 由于外部使用了 MaterialCardView 包裹进行圆角切割，PlayerView 内部无需再处理圆角
-                isClickable = false
-                isFocusable = false
-                isFocusableInTouchMode = false
-                isLongClickable = false
-                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                setOnTouchListener { _, _ -> false }
             }
         }
 
@@ -189,10 +184,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         canvasExoPlayer?.stop() 
                         canvasExoPlayer?.clearMediaItems() 
                         
-                        // 切歌瞬间截断残影
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                        playerView?.animate()?.cancel()
-                        playerView?.alpha = 0f
+                        activePlayerView?.animate()?.cancel()
+                        activePlayerView?.alpha = 0f
+                        activePlayerView?.player = null
+                        activePlayerView = null
 
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
@@ -210,7 +205,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
-                                    delay(300) // 防抖
+                                    delay(300) 
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
                                     }
@@ -218,9 +213,42 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
-                                            canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
-                                            canvasExoPlayer?.prepare()
-                                            canvasExoPlayer?.play()
+                                            withContext(Dispatchers.Main) {
+                                                val newPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
+                                                
+                                                var targetPlayerView: PlayerView? = null
+                                                for (i in 1..15) {
+                                                    targetPlayerView = newPager?.getCurrentPlayerView()
+                                                    if (targetPlayerView != null) break
+                                                    delay(100)
+                                                }
+
+                                                if (targetPlayerView != null) {
+                                                    activePlayerView = targetPlayerView
+                                                    targetPlayerView.player = canvasExoPlayer
+                                                    targetPlayerView.useController = false
+                                                    targetPlayerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+                                                    
+                                                    targetPlayerView.clipToOutline = true
+                                                    targetPlayerView.outlineProvider = object : android.view.ViewOutlineProvider() {
+                                                        override fun getOutline(view: View, outline: android.graphics.Outline) {
+                                                            val radius = view.context.resources.displayMetrics.density * 20f 
+                                                            outline.setRoundRect(0, 0, view.width, view.height, radius)
+                                                        }
+                                                    }
+                                                    
+                                                    targetPlayerView.isClickable = false
+                                                    targetPlayerView.isFocusable = false
+                                                    targetPlayerView.isFocusableInTouchMode = false
+                                                    targetPlayerView.isLongClickable = false
+                                                    targetPlayerView.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                                                    targetPlayerView.setOnTouchListener { _, _ -> false }
+
+                                                    canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                                    canvasExoPlayer?.prepare()
+                                                    canvasExoPlayer?.play()
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -302,22 +330,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // ==========================================
-    // 🌟 解决滑动割裂感的核心：滑动隐身黑科技
-    // ==========================================
     private fun setupSlidingGhostMode(rootView: View) {
         viewLifecycleOwner.lifecycleScope.launch {
-            delay(500) // 稍等内层 ViewPager 初始化完毕
+            delay(500) 
             val coverFragment = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment)
             coverFragment?.view?.let { innerView ->
                 val viewPager = findViewPager(innerView)
                 viewPager?.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
                     override fun onPageScrollStateChanged(state: Int) {
                         if (state == ViewPager.SCROLL_STATE_DRAGGING) {
-                            // 当用户手指一碰开始拖拽切歌时，视频瞬间隐身！露出底层的原生画廊视差动画
-                            rootView.findViewById<PlayerView>(R.id.canvasPlayerView)?.let { pv ->
-                                pv.animate().cancel()
-                                pv.alpha = 0f
+                            activePlayerView?.animate()?.cancel()
+                            activePlayerView?.alpha = 0f
+                        } else if (state == ViewPager.SCROLL_STATE_IDLE) {
+                            if (canvasExoPlayer?.playbackState == Player.STATE_READY) {
+                                activePlayerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
                             }
                         }
                     }
@@ -599,6 +625,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         videoFetchJob = null
         canvasExoPlayer?.release()
         canvasExoPlayer = null
+        
+        activePlayerView?.player = null
+        activePlayerView = null
+        
         super.onDestroyView()
         _binding = null
     }

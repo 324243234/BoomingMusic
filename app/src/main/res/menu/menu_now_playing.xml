@@ -57,7 +57,7 @@
 	<!-- 🌟 新增：视频封面显示开关 (仅在横屏/平板的隐藏菜单中生效) -->
     <item
         android:id="@+id/action_toggle_video_cover"
-        android:title="视频封面: 开"
+        android:title="动态封面: 关"
         android:icon="@drawable/ic_album_24dp"
         app:showAsAction="never"/>
 	<item
