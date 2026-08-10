@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- 1. 原作者的静态图片底图 (完全保持不变) -->
+    <!-- 原作者的静态底图 (完全保持不变) -->
     <com.google.android.material.imageview.ShapeableImageView
         android:id="@+id/player_image"
         android:layout_width="0dp"
@@ -21,32 +21,22 @@
         tools:ignore="ContentDescription,UnusedAttribute"
         tools:srcCompat="@tools:sample/backgrounds/scenic" />
 
-    <!-- 2. 🌟 潜入的动态视频层 (跟随原作者滑动特效，且被卡片强行裁切同等圆角) -->
-    <com.google.android.material.card.MaterialCardView
+    <!-- 🌟 新增：最纯粹的动态视频层 (没有额外包裹，直接依赖代码切圆角) -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/canvasPlayerView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:layout_margin="@dimen/player_cover_margin"
-        app:shapeAppearanceOverlay="?shapeAppearanceCornerExtraLarge"
-        app:strokeWidth="0dp"
-        app:cardBackgroundColor="@android:color/transparent"
-        app:cardElevation="0dp"
+        android:alpha="0"
+        android:visibility="invisible"
+        android:clickable="false"
+        android:focusable="false"
+        app:use_controller="false"
+        app:surface_type="texture_view"
         app:layout_constraintDimensionRatio="1:1"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <!-- 事件必须全部穿透，交给最外层去处理双击等手势 -->
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/canvasPlayerView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:alpha="0"
-            android:visibility="invisible"
-            android:clickable="false"
-            android:focusable="false"
-            app:use_controller="false"
-            app:surface_type="texture_view" />
-    </com.google.android.material.card.MaterialCardView>
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
