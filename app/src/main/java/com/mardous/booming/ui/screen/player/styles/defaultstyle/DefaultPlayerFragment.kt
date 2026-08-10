@@ -128,7 +128,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
-        // 🌟 极致优化点：只有横屏才会去分配解码器运存！竖屏时解码器为 null，零内存消耗！
+       // 🌟 极致优化点：只有横屏才会去分配解码器运存！竖屏时解码器为 null，零内存消耗！
         if (isLandscape) {
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_ALL
@@ -138,6 +138,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 player = canvasExoPlayer
                 useController = false // 动态关闭控制器
                 setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM) // 动态设置等比缩放填充
+                
+                // ==========================================
+                // 🌟 核心手势优化：彻底封死视频涂层对事件的拦截
+                // ==========================================
+                isClickable = false
+                isFocusable = false
+                isFocusableInTouchMode = false
+                isLongClickable = false
+                
+                // 强制要求内部子 View 也不得拦截触摸事件
+                descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                
+                // 兜底防御：强制让触摸事件返回 false，使其穿透到下层 Activity/Fragment 的 GestureDetector 中
+                setOnTouchListener { _, _ -> false }
             }
         }
 

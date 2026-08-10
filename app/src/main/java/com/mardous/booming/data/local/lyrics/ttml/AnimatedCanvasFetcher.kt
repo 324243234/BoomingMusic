@@ -28,7 +28,7 @@ object AnimatedCanvasFetcher {
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
     // 网易云 API 域名 (已接入 Cloudflare 稳定中转站)
-    private const val NETEASE_API_DOMAIN = "https://wangyi-proxy.huate1.workers.dev"
+    private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
 
     // 支持的本地视频格式
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
@@ -162,35 +162,44 @@ object AnimatedCanvasFetcher {
     }
 
     private suspend fun fetchNeteaseCover(query: String): String? {
-        try {
-            // 第一步：搜歌拿 ID
-            val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=1"
-            val searchRes = httpGet(searchUrl) ?: return null
-            
-            val songs = JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs")
-            if (songs == null || songs.length() == 0) return null
-            
-            val songId = songs.getJSONObject(0).optLong("id", 0L)
-            if (songId == 0L) return null
+    try {
+        // 第一步：搜歌拿 ID
+        val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=1"
+        val searchRes = httpGet(searchUrl) ?: return null
+        
+        val songs = JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs")
+        if (songs == null || songs.length() == 0) return null
+        
+        val songId = songs.getJSONObject(0).optLong("id", 0L)
+        if (songId == 0L) return null
 
-            yield() 
+        yield() 
 
-            // 第二步：请求网易云官方动态封面
-            val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=$songId"
-            val dynamicRes = httpGet(dynamicCoverUrl)
-            
-            if (dynamicRes != null) {
-                val coverUrl = JSONObject(dynamicRes).optJSONObject("data")?.optString("url")
+        // 第二步：请求网易云官方动态封面
+        val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=$songId"
+        val dynamicRes = httpGet(dynamicCoverUrl)
+        
+        if (dynamicRes != null) {
+            val dataObj = JSONObject(dynamicRes).optJSONObject("data")
+            if (dataObj != null) {
+                // 🌟 优先提取 videoPlayUrl，提取不到再回退提取 url
+                var coverUrl = dataObj.optString("videoPlayUrl")
+                if (coverUrl.isNullOrBlank()) {
+                    coverUrl = dataObj.optString("url")
+                }
+
                 if (!coverUrl.isNullOrBlank()) {
+                    Log.d(TAG, "🎬 成功解析网易云动态封面: $coverUrl")
                     return coverUrl.replace("http://", "https://")
                 }
             }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.e(TAG, "Netease fetch error", e)
         }
-        return null
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Log.e(TAG, "Netease fetch error", e)
     }
+    return null
+}
 
     @Throws(Exception::class)
     private suspend fun httpGet(urlString: String, useAuth: Boolean = false): String? {
