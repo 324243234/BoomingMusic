@@ -78,27 +78,18 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     
     private lateinit var controlsFragment: DefaultPlayerControlsFragment
 
-    // 🌟 核心引擎：动态封面播放器
     private var canvasExoPlayer: ExoPlayer? = null
-
-    // 🌟 独占式任务句柄：用于切歌时秒杀历史残余网络和 IO 任务，防止协程堆积和内存泄漏
     private var videoFetchJob: Job? = null
 
-    // 使用 lazy 懒加载。仅在第一次用到时向系统索要服务，零开销！
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
-    // 🌟 核心探针：温控与电量检测 (智能降级版)
     private fun isDeviceStressed(): Boolean {
-        // 1. 省电模式绝对优先
         if (powerManager.isPowerSaveMode) return true
         
-        // 2. 电量低于 20% (放宽容忍度，留有余地)
         val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (batteryLevel <= 20) return true
         
-        // 3. 严重发热降级 (从 MODERATE 改为 SEVERE)
-        // SEVERE 代表系统已经开始物理降频限制性能，此时必须关掉视频缓解 CPU
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
                 return true
@@ -143,13 +134,18 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_ALL
                 volume = 0f 
+                
+                // 🌟 新增：强制限制 HLS (Apple Music) 流的最高分辨率
+                // 设定最高为 480p 级别 (854x480 或 720x480)，强力拦截 1080p 切片，极致省电不发热
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setMaxVideoSize(854, 480) 
+                    .build()
             }
             view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
                 player = canvasExoPlayer
                 useController = false 
                 setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
                 
-                // 彻底封死事件拦截
                 isClickable = false
                 isFocusable = false
                 isFocusableInTouchMode = false
@@ -179,21 +175,19 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
                         
-                        // ==========================================
-                        // 🌟 快速切歌终极防线：状态瞬间截断
-                        // ==========================================
-                        videoFetchJob?.cancel() // 秒杀未完成的网络请求或下载
-                        canvasExoPlayer?.stop() // 停止上一首视频解码
-                        canvasExoPlayer?.clearMediaItems() // 清除内存中的流句柄 (极其关键，防止内存泄漏)
+                        videoFetchJob?.cancel() 
+                        canvasExoPlayer?.stop() 
+                        canvasExoPlayer?.clearMediaItems() 
                         
                         val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
                         val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
                         
-                        // 切歌瞬间，强制将 UI 归位为静态封面，避免看到上一首的残留动态
+                        playerView?.animate()?.cancel()
                         playerView?.visibility = View.INVISIBLE
+                        playerView?.alpha = 0f
+                        
                         staticCoverFragment?.visibility = View.VISIBLE
 
-                        // 轻量级 UI 文本更新 (无需防抖，立即反馈)
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
 
@@ -211,24 +205,17 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             }
                         }
 
-                        // ==========================================
-                        // 🌟 防抖获取动态封面流
-                        // ==========================================
                         if (isLandscape) {
                             val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
 
                             if (isVideoEnabled && !isDeviceStressed()) {
-                                videoFetchJob = launch { // 抛在当前作用域
-                                    // 🌟 核心防抖：0.3秒缓冲期。如果用户疯狂点下一首，
-                                    // 这个 delay 还没跑完，协程就被上方的 cancel() 杀死了，
-                                    // 从而彻底阻断底层的 IO 读取和网络请求浪费。
-                                    delay(300) 
+                                videoFetchJob = launch { 
+                                    delay(300)
 
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
                                     }
 
-                                    // 🌟 安全检查：如果在此期间被 cancel 了，或者手机已经严重发热，放弃渲染
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
@@ -239,9 +226,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                             playerView?.apply {
                                                 useController = false
                                                 setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                visibility = View.VISIBLE 
+                                                
+                                                alpha = 0f
+                                                visibility = View.VISIBLE
+                                                animate().alpha(1f).setDuration(500).start()
                                             }
-                                            staticCoverFragment?.visibility = View.INVISIBLE
+                                            
+                                            staticCoverFragment?.visibility = View.VISIBLE
                                         }
                                     }
                                 }
@@ -452,6 +443,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val songFile = File(song.data)
                 val parentDir = songFile.parentFile ?: return@launch
                 
+                // 收集所有可能的同名匹配组合（转小写）
                 val possibleNamesLower = listOf(
                     songFile.nameWithoutExtension.lowercase(),
                     "${song.artistName} - ${song.title}".lowercase(),
@@ -459,35 +451,40 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 ).filter { it.isNotBlank() }
                 
                 var deletedTtml = false
-                var deletedLrc = false
+                var deletedOther = false
                 
                 val filesInDir = parentDir.listFiles() ?: emptyArray()
+                
+                // 🌟 核心升级：根据操作类型动态划定要清理的文件扩展名圈子
+                val targetExtensions = if (onlyTtml) {
+                    listOf("ttml") 
+                } else {
+                    listOf("ttml", "lrc", "mp4", "webm") // 包含歌词与动态视频封面
+                }
                 
                 for (file in filesInDir) {
                     if (!file.isFile) continue
                     
                     val ext = file.extension.lowercase()
-                    if (ext != "ttml" && ext != "lrc") continue
+                    if (!targetExtensions.contains(ext)) continue // 不是目标扩展名，跳过
                     
                     val fileNameLower = file.nameWithoutExtension.lowercase()
                     
+                    // 只要文件名匹配上，格杀勿论
                     if (possibleNamesLower.contains(fileNameLower)) {
-                        if (ext == "ttml") {
-                            runCatching { file.writeText("") } 
-                            if (file.delete() || !file.exists()) {
-                                deletedTtml = true
-                            } else if (file.length() == 0L) {
-                                deletedTtml = true 
+                        // 暴力清空防死锁：文本文件写空字符串，媒体文件写 0 字节
+                        runCatching { 
+                            if (ext == "mp4" || ext == "webm") {
+                                file.writeBytes(ByteArray(0))
+                            } else {
+                                file.writeText("") 
                             }
-                        }
+                        } 
                         
-                        if (!onlyTtml && ext == "lrc") {
-                            runCatching { file.writeText("") }
-                            if (file.delete() || !file.exists()) {
-                                deletedLrc = true
-                            } else if (file.length() == 0L) {
-                                deletedLrc = true
-                            }
+                        // 执行物理删除，或判断是否已经被成功掏空成 0kb
+                        if (file.delete() || !file.exists() || file.length() == 0L) {
+                            if (ext == "ttml") deletedTtml = true
+                            else deletedOther = true
                         }
                     }
                 }
@@ -502,7 +499,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
-                        if (deletedTtml || deletedLrc) {
+                        // 如果是随同歌曲一起删除的，静默清理内存缓存即可，系统原有的删除吐司会提示
+                        if (deletedTtml || deletedOther) {
                             lyricsRepository.clearMemoryCache()
                         }
                     }
@@ -510,7 +508,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    context?.let { Toast.makeText(it, "删除失败，存储读写异常", Toast.LENGTH_SHORT).show() }
+                    context?.let { Toast.makeText(it, "关联文件清理失败，存储读写异常", Toast.LENGTH_SHORT).show() }
                 }
             }
         }
@@ -651,7 +649,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     override fun onDestroyView() {
         Preferences.unregisterOnSharedPreferenceChangeListener(this)
         
-        // 🌟 彻底清除任务和播放器引用，保证 Fragment 销毁时绝对干净
         videoFetchJob?.cancel()
         videoFetchJob = null
         canvasExoPlayer?.release()

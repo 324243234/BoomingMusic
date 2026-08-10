@@ -17,7 +17,7 @@ import java.net.URL
 /**
  * 动态专辑画布引擎 (高可用线性防线 + 下载缓存版)
  * 优先级: 本地资产 -> Apple Music -> 网易云官方 -> QQ 音乐
- * 特性: LRU 内存缓存、协作式协程取消防抖、MP4 自动下载到歌曲同级目录
+ * 特性: LRU 内存缓存、自动重定向追踪下载、智能画质选择(480优先)、残缺文件清理
  */
 object AnimatedCanvasFetcher {
 
@@ -25,7 +25,6 @@ object AnimatedCanvasFetcher {
     
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
-    // 你部署的专属 API
     private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
     private const val QQ_MUSIC_API_DOMAIN = "https://my-qqmusic-api.onrender.com"
 
@@ -41,7 +40,6 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 1. 本地资产检索 (检查是否已经下载过同名 mp4)
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
             val safeTitle = getSafeFilename(song.title)
@@ -60,7 +58,6 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 清洗检索词
         val rawTitle = song.title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
             .replace(Regex("""\(.*?(Remaster|Live|翻唱|伴奏|现场|DJ).*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "").trim()
@@ -72,9 +69,6 @@ object AnimatedCanvasFetcher {
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "")
             .trim()
 
-        // ==========================================
-        // 核心检索流开始
-        // ==========================================
         val query1 = (if (rawArtist.isBlank()) rawTitle else "$rawArtist $rawTitle")
             .replace(Regex("""[-_／/]"""), " ").trim()
             
@@ -97,27 +91,19 @@ object AnimatedCanvasFetcher {
         return@withContext null
     }
 
-    /**
-     * 依次从 Apple -> 网易云 -> QQ 音乐 检索。
-     * 如果检索到的是 mp4，直接下载到与歌曲相同目录并返回本地路径。
-     */
     private suspend fun fetchAndDownloadFromNetwork(query: String, song: Song, parentDir: File?): String? {
-        // 1. Apple Music (返回多为 .m3u8 串流，不下载直接播)
         var networkUrl = fetchAppleMusicCover(query)
         
-        // 2. 网易云
         if (networkUrl == null) {
             yield()
             networkUrl = fetchNeteaseCover(query)
         }
 
-        // 3. QQ 音乐
         if (networkUrl == null) {
             yield()
             networkUrl = fetchQQMusicCover(query)
         }
 
-        // 如果找到了封面，且有本地歌曲目录，则尝试下载（过滤 HLS）
         if (networkUrl != null && parentDir != null) {
             return downloadToLocal(networkUrl, parentDir, song.title)
         }
@@ -143,47 +129,58 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    /**
-     * 将 MP4 下载到歌曲同级目录，实现完美本地化
-     */
     private suspend fun downloadToLocal(urlStr: String, parentDir: File, songTitle: String): String? {
-        // Apple Music 等使用的 m3u8 是切片流，无法简单作为单文件下载，直接返回原链接交由 ExoPlayer 缓存
         if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) {
             return urlStr 
         }
 
         return withContext(Dispatchers.IO) {
+            val safeTitle = getSafeFilename(songTitle)
+            val targetFile = File(parentDir, "$safeTitle.mp4")
+
             try {
-                val safeTitle = getSafeFilename(songTitle)
-                val targetFile = File(parentDir, "$safeTitle.mp4")
-                
-                // 如果其他任务已经下载完毕，直接返回
                 if (targetFile.exists() && targetFile.length() > 0) {
                     return@withContext targetFile.absolutePath
                 }
 
-                Log.d(TAG, "⬇️ 开始下载动态封面至本地: ${targetFile.absolutePath}")
-                val url = URL(urlStr)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 5000 
-                conn.readTimeout = 15000
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-                
-                if (conn.responseCode == 200 || conn.responseCode == 206) {
-                    conn.inputStream.use { input ->
-                        targetFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
+                var currentUrl = urlStr
+                var redirectCount = 0
+                var conn: HttpURLConnection
+
+                while (redirectCount < 5) {
+                    conn = URL(currentUrl).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 3000
+                    conn.readTimeout = 10000
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    conn.instanceFollowRedirects = false 
+
+                    val responseCode = conn.responseCode
+                    if (responseCode in 300..399) {
+                        currentUrl = conn.getHeaderField("Location") ?: break
+                        redirectCount++
+                        conn.disconnect()
+                        continue
                     }
-                    Log.d(TAG, "✅ 动态封面下载完成！")
-                    return@withContext targetFile.absolutePath
+
+                    if (responseCode == 200 || responseCode == 206) {
+                        Log.d(TAG, "⬇️ 开始下载动态封面至本地: ${targetFile.absolutePath}")
+                        conn.inputStream.use { input ->
+                            targetFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        Log.d(TAG, "✅ 动态封面下载完成！")
+                        return@withContext targetFile.absolutePath
+                    } else {
+                        break 
+                    }
                 }
             } catch (e: Exception) {
                 if (e !is CancellationException) {
                     Log.e(TAG, "视频下载失败，回退使用网络 URL", e)
+                    if (targetFile.exists()) targetFile.delete() 
                 }
             }
-            // 下载失败则退化为在线播放
             return@withContext urlStr
         }
     }
@@ -254,35 +251,45 @@ object AnimatedCanvasFetcher {
 
     private suspend fun fetchQQMusicCover(query: String): String? {
         try {
-            // 1. 搜索拿 QQ 音乐的 mid 或 vid
             val searchUrl = "$QQ_MUSIC_API_DOMAIN/api/search?key=${Uri.encode(query)}"
             val searchRes = httpGet(searchUrl) ?: return null
             
             val list = JSONObject(searchRes).optJSONObject("data")?.optJSONArray("list")
             if (list == null || list.length() == 0) return null
 
-            // 获取第一首搜索结果中的 MV ID
             val songObj = list.getJSONObject(0)
             val vid = songObj.optString("vid", "")
             if (vid.isBlank()) return null
 
             yield()
 
-            // 2. 获取 MV 链接作为动态封面
             val mvUrl = "$QQ_MUSIC_API_DOMAIN/api/mv?id=$vid"
             val mvRes = httpGet(mvUrl) ?: return null
             
-            // 解析 QQ API 返回的 MP4 地址 (大部分 Node API 返回 mp4 URL)
             val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
-            // 优先拿清晰度较高的 720p 或 480p 等，没有则遍历拿第一个
-            val keys = urlsObj.keys()
-            if (keys.hasNext()) {
-                val firstKey = keys.next()
-                val urlList = urlsObj.optJSONArray(firstKey)
+            
+            // 🌟 核心修改：QQ 音乐优先级倒置
+            // 强制优先获取 480p，没有 480 降级到 720，再不行用 360，1080p 留作最后的无奈兜底
+            val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
+            var selectedResolutionKey: String? = null
+            
+            for (pref in preferredKeys) {
+                if (urlsObj.has(pref)) {
+                    selectedResolutionKey = pref
+                    break
+                }
+            }
+            
+            if (selectedResolutionKey == null && urlsObj.keys().hasNext()) {
+                selectedResolutionKey = urlsObj.keys().next()
+            }
+
+            if (selectedResolutionKey != null) {
+                val urlList = urlsObj.optJSONArray(selectedResolutionKey)
                 if (urlList != null && urlList.length() > 0) {
                     val finalUrl = urlList.optString(0)
                     if (finalUrl.isNotBlank()) {
-                        Log.d(TAG, "🎬 成功解析QQ音乐动态封面: $finalUrl")
+                        Log.d(TAG, "🎬 成功获取QQ音乐动态封面 (最优画质: $selectedResolutionKey): $finalUrl")
                         return finalUrl
                     }
                 }
