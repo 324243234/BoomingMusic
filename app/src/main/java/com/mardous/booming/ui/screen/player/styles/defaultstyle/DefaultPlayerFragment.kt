@@ -49,6 +49,7 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
+import com.mardous.booming.ui.screen.player.cover.CoverPagerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
@@ -87,30 +88,18 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     private fun isDeviceStressed(): Boolean {
         if (powerManager.isPowerSaveMode) return true
-        
         val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (batteryLevel <= 20) return true
-        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
-                return true
-            }
+            if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) return true
         }
         return false
     }
 
-    override val playerControlsFragment: AbsPlayerControlsFragment
-        get() = controlsFragment
-
-    override val colorSchemeMode: PlayerColorSchemeMode
-        get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Default)
-
-    override val playerToolbar: Toolbar
-        get() = binding.toolbar
-
-    override val blurView: ImageView
-        get() = binding.blur
-
+    override val playerControlsFragment: AbsPlayerControlsFragment get() = controlsFragment
+    override val colorSchemeMode: PlayerColorSchemeMode get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Default)
+    override val playerToolbar: Toolbar get() = binding.toolbar
+    override val blurView: ImageView get() = binding.blur
     private var primaryControlColor: Int = 0
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -133,56 +122,41 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         
         if (isLandscape) {
             // ==========================================
-            // 🌟 重构引擎层：开启梦幻呼吸循环与防发热降级
+            // 🌟 解码器架构重塑：无缝衔接呼吸循环，游牧式渲染
             // ==========================================
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
-                repeatMode = Player.REPEAT_MODE_OFF // 严禁原生循环，防止黑帧硬闪
+                repeatMode = Player.REPEAT_MODE_OFF 
                 volume = 0f 
-                
-                // 植入网易云同款电影感慢放 (降低 15% 播放速度)，视觉更优雅且降低解码器压力
+                // 植入 0.85 倍电影慢放，有效减缓短视频高频切断和发热
                 playbackParameters = PlaybackParameters(0.85f)
-                
-                trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setMaxVideoSize(854, 480) 
-                    .build()
+                trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoSize(854, 480).build()
                     
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView) ?: return
+                        // 动态捕捉 ViewPager 中当前激活的页面，获取它的画布
+                        val coverPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
+                        val playerView = coverPager?.getCurrentPlayerView() ?: return
+
                         when (playbackState) {
                             Player.STATE_READY -> {
-                                // 🌟 极限防闪策略：底层证实第一帧已经画好了，才开始柔和淡入！
+                                // 只有在解码器准备好，底层第一帧实打实绘制完毕后，才触发渐隐柔和覆盖！彻底消灭黑场！
                                 if (playerView.alpha < 1f || playerView.visibility != View.VISIBLE) {
                                     playerView.visibility = View.VISIBLE
                                     playerView.animate().alpha(1f).setDuration(800).start()
                                 }
                             }
                             Player.STATE_ENDED -> {
-                                // 🌟 呼吸逻辑：播完不要立刻切回去。先用 600ms 淡出，露出底下的静态图片
+                                // 🌟 呼吸感与降温机制：播完淡出，给底图 1.5 秒的静态展示沉浸时间，此时硬解器休息冷却
                                 playerView.animate().alpha(0f).setDuration(600).withEndAction {
-                                    // 给静态图片 1.5 秒的沉浸时间
                                     playerView.postDelayed({
                                         canvasExoPlayer?.seekTo(0)
                                         canvasExoPlayer?.play()
-                                        // 注：这里只调 play，真正的淡入全权交由上方 STATE_READY 接管，绝不越权
-                                    }, 1500)
+                                    }, 1500) 
                                 }.start()
                             }
                         }
                     }
                 })
-            }
-            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
-                player = canvasExoPlayer
-                useController = false 
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
-                
-                isClickable = false
-                isFocusable = false
-                isFocusableInTouchMode = false
-                isLongClickable = false
-                descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                setOnTouchListener { _, _ -> false }
             }
         }
 
@@ -196,10 +170,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 requireContext().startService(intent)
             } catch (e: Exception) { e.printStackTrace() }
         }
-        
-        binding.leftNextButton?.setOnClickListener {
-            playerViewModel.seekToNext()
-        }
+        binding.leftNextButton?.setOnClickListener { playerViewModel.seekToNext() }
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             launch {
@@ -210,33 +181,23 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         canvasExoPlayer?.stop() 
                         canvasExoPlayer?.clearMediaItems() 
                         
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                        val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
+                        // 🌟 切歌瞬间的残影截断：直接清理掉上一页和当前新页面的残缺视频展示
+                        val coverPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
+                        val currentPlayerView = coverPager?.getCurrentPlayerView()
                         
-                        // ==========================================
-                        // 切歌瞬间暴力隐身，切断任何残余动画的念想
-                        // ==========================================
-                        playerView?.animate()?.cancel()
-                        playerView?.alpha = 0f
-                        playerView?.visibility = View.INVISIBLE
-                        
-                        staticCoverFragment?.visibility = View.VISIBLE
+                        currentPlayerView?.animate()?.cancel()
+                        currentPlayerView?.alpha = 0f
+                        currentPlayerView?.visibility = View.INVISIBLE
 
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
 
-                        val artist = if (Preferences.preferAlbumArtistName) {
-                            song.albumArtistName().displayArtistName()
-                        } else {
-                            song.displayArtistName()
-                        }
+                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
                         binding.leftSongArtistText?.text = "- $artist"
 
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
-                            withContext(Dispatchers.Main) {
-                                updateFavoriteIcon(isFav)
-                            }
+                            withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
                         }
 
                         if (isLandscape) {
@@ -244,8 +205,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
-                                    delay(300)
-
+                                    delay(300) // 防抖
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
                                     }
@@ -253,19 +213,33 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
-                                            // 🌟 此处极简：仅塞入链接和准备播放，渲染与渐显全盘托管给回调。
-                                            // 此时 playerView 的 alpha 依然是 0f
-                                            canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
-                                            canvasExoPlayer?.prepare()
-                                            canvasExoPlayer?.play()
-                                            
-                                            staticCoverFragment?.visibility = View.VISIBLE
+                                            withContext(Dispatchers.Main) {
+                                                // 当网络请求或本地 IO 完成时，页面早已切换完毕。精准将解码器挂载给新的页面内部！
+                                                val newPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
+                                                val targetPlayerView = newPager?.getCurrentPlayerView()
+                                                
+                                                if (targetPlayerView != null && targetPlayerView.player != canvasExoPlayer) {
+                                                    targetPlayerView.player = canvasExoPlayer
+                                                    targetPlayerView.useController = false
+                                                    targetPlayerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+                                                    
+                                                    targetPlayerView.isClickable = false
+                                                    targetPlayerView.isFocusable = false
+                                                    targetPlayerView.isFocusableInTouchMode = false
+                                                    targetPlayerView.isLongClickable = false
+                                                    targetPlayerView.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                                                    targetPlayerView.setOnTouchListener { _, _ -> false }
+                                                }
+
+                                                canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                                canvasExoPlayer?.prepare()
+                                                canvasExoPlayer?.play()
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-
                         lastProcessedSongId = song.id
                     }
                 }
@@ -278,9 +252,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         if (currentSong != null && currentSong.id != 0L) {
                             launch(Dispatchers.IO) {
                                 val isFav = repository.isSongFavorite(currentSong.id)
-                                withContext(Dispatchers.Main) {
-                                    updateFavoriteIcon(isFav)
-                                }
+                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
                             }
                         }
                     }
@@ -289,24 +261,16 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
 
         binding.inlineProgressSlider?.setOnTouchListener { v, event ->
-            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
-                v.parent?.requestDisallowInterceptTouchEvent(true)
-            }
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
             false 
         }
 
         binding.inlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                isDraggingInlineSlider = true
-            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                seekBar?.progress?.let { progress ->
-                    playerViewModel.seekTo(progress.toLong())
-                }
-                seekBar?.postDelayed({
-                    isDraggingInlineSlider = false
-                }, 500)
+                seekBar?.progress?.let { playerViewModel.seekTo(it.toLong()) }
+                seekBar?.postDelayed({ isDraggingInlineSlider = false }, 500)
             }
         })
 
@@ -316,42 +280,39 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             val rightTotTime = view.findViewById<TextView>(R.id.songTotalTime)
             val leftCurrTime = view.findViewById<TextView>(R.id.leftCurrentTime)
             val leftTotTime = view.findViewById<TextView>(R.id.leftTotalTime)
-
             var lastAppliedColor = android.graphics.Color.TRANSPARENT
 
-            playerViewModel.progressFlow
-                .sample(60L) 
-                .collect { progress ->
-                    if (!isDraggingInlineSlider) {
-                        binding.inlineProgressSlider?.let { slider ->
-                            val currentProgress = progress.toInt()
+            playerViewModel.progressFlow.sample(60L).collect { progress ->
+                if (!isDraggingInlineSlider) {
+                    binding.inlineProgressSlider?.let { slider ->
+                        val currentProgress = progress.toInt()
 
-                            mainSlider?.let { main ->
-                                val max = main.valueTo.toInt()
-                                if (slider.max != max) {
-                                    slider.max = max
-                                    leftTotTime?.text = rightTotTime?.text
-                                }
-                            
-                                val mainColor = main.currentColor
-                                if (mainColor != android.graphics.Color.TRANSPARENT && mainColor != lastAppliedColor) {
-                                    lastAppliedColor = mainColor 
-                                    slider.applyColor(mainColor)
-                                    val timeColor = mainColor.withAlpha(0.6f)
-                                    leftCurrTime?.applyColor(timeColor)
-                                    leftTotTime?.applyColor(timeColor)
-                                }
+                        mainSlider?.let { main ->
+                            val max = main.valueTo.toInt()
+                            if (slider.max != max) {
+                                slider.max = max
+                                leftTotTime?.text = rightTotTime?.text
                             }
-                            slider.progress = currentProgress
+                        
+                            val mainColor = main.currentColor
+                            if (mainColor != android.graphics.Color.TRANSPARENT && mainColor != lastAppliedColor) {
+                                lastAppliedColor = mainColor 
+                                slider.applyColor(mainColor)
+                                val timeColor = mainColor.withAlpha(0.6f)
+                                leftCurrTime?.applyColor(timeColor)
+                                leftTotTime?.applyColor(timeColor)
+                            }
+                        }
+                        slider.progress = currentProgress
 
-                            rightCurrTime?.text?.let { rightText ->
-                                if (leftCurrTime != null && leftCurrTime.text != rightText) {
-                                    leftCurrTime.text = rightText
-                                }
+                        rightCurrTime?.text?.let { rightText ->
+                            if (leftCurrTime != null && leftCurrTime.text != rightText) {
+                                leftCurrTime.text = rightText
                             }
                         }
                     }
                 }
+            }
         }
     }
 
@@ -372,14 +333,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
                 is GestureType.DoubleTap -> {
                     when (gestureType.type) {
-                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> {
-                            playerViewModel.seekToPrevious()
-                            return true
-                        }
-                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> {
-                            playerViewModel.seekToNext()
-                            return true
-                        }
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
                         else -> {}
                     }
                 }
@@ -390,18 +345,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     private fun handleCoverClick() {
-        val isLyricsCurrentlyVisible = binding.rightLyricsFragment?.isInvisible == false
-        val willShowLyrics = !isLyricsCurrentlyVisible
-        
+        val willShowLyrics = binding.rightLyricsFragment?.isInvisible != false
         binding.rightLyricsFragment?.isInvisible = !willShowLyrics
         binding.playbackControlsFragment?.isInvisible = willShowLyrics
         binding.toolbar.isInvisible = willShowLyrics
     }
 
     private fun setupToolbar() {
-        playerToolbar.setNavigationOnClickListener {
-            onQuickActionEvent(NowPlayingAction.SoundSettings)
-        }
+        playerToolbar.setNavigationOnClickListener { onQuickActionEvent(NowPlayingAction.SoundSettings) }
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
@@ -413,19 +364,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             binding.toolbar.tintTarget(oldPrimaryControlColor, scheme.onSurfaceColor)
         )
         
-        binding.leftSongTitleText?.let { titleText ->
-            targets.add(titleText.tintTarget(titleText.currentTextColor, scheme.onSurfaceColor))
-        }
-        binding.leftSongArtistText?.let { artistText ->
-            val secondaryColor = scheme.onSurfaceColor.withAlpha(0.7f) 
-            targets.add(artistText.tintTarget(artistText.currentTextColor, secondaryColor))
-        }
-        binding.leftFavoriteButton?.let { favBtn ->
-            targets.add(favBtn.tintTarget(favBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
-        }
-        binding.leftNextButton?.let { nextBtn ->
-            targets.add(nextBtn.tintTarget(nextBtn.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor))
-        }
+        binding.leftSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
+        binding.leftSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
+        binding.leftFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor)) }
+        binding.leftNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor)) }
 
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
@@ -436,18 +378,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         
-        sharedPreferences.edit(commit = true) {
-            putString("preferred_lyrics_file_format", newFormat)
-        }
-        
-        val toastText = if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词"
-        context?.let { Toast.makeText(it, toastText, Toast.LENGTH_SHORT).show() }
+        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
+        context?.let { Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
         playerToolbar.menu?.let { updateMenuTitle(it) }
         
         lyricsRepository.clearMemoryCache()
-        playerViewModel.currentSongFlow.value?.let { currentSong ->
-            lyricsViewModel.updateSong(currentSong)
-        }
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
     
     private fun updateMenuTitle(menu: Menu) {
@@ -480,16 +416,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 var deletedOther = false
                 
                 val filesInDir = parentDir.listFiles() ?: emptyArray()
-                
-                val targetExtensions = if (onlyTtml) {
-                    listOf("ttml") 
-                } else {
-                    listOf("ttml", "lrc", "mp4", "webm") 
-                }
+                val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
                 
                 for (file in filesInDir) {
                     if (!file.isFile) continue
-                    
                     val ext = file.extension.lowercase()
                     if (!targetExtensions.contains(ext)) continue 
                     
@@ -497,11 +427,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     
                     if (possibleNamesLower.contains(fileNameLower)) {
                         runCatching { 
-                            if (ext == "mp4" || ext == "webm") {
-                                file.writeBytes(ByteArray(0))
-                            } else {
-                                file.writeText("") 
-                            }
+                            if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
+                            else file.writeText("") 
                         } 
                         
                         if (file.delete() || !file.exists() || file.length() == 0L) {
@@ -515,15 +442,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     if (onlyTtml) {
                         val msg = if (deletedTtml) "TTML 歌词文件已彻底删除" else "未找到匹配的本地 TTML 文件"
                         context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
-                        
                         if (deletedTtml) {
                             lyricsRepository.clearMemoryCache()
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
-                        if (deletedTtml || deletedOther) {
-                            lyricsRepository.clearMemoryCache()
-                        }
+                        if (deletedTtml || deletedOther) lyricsRepository.clearMemoryCache()
                     }
                 }
             } catch (e: Exception) {
@@ -544,10 +468,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
-        toggleItem?.setOnMenuItemClickListener {
-            toggleLyricsFormat()
-            true
-        }
+        toggleItem?.setOnMenuItemClickListener { toggleLyricsFormat(); true }
 
         val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
         if (isLandscapeOrTablet) {
@@ -559,7 +480,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
                 sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
                 videoToggleItem.title = if (newState) "视频封面: 开启" else "视频封面: 关闭"
-                
                 playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
                 true
             }
@@ -574,7 +494,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
-                    
                     withContext(Dispatchers.Main) {
                         toast.cancel()
                         if (!ttmlContent.isNullOrBlank()) {
@@ -582,16 +501,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 val songFile = File(currentSong.data)
                                 val parentDir = songFile.parentFile
                                 if (parentDir != null && parentDir.exists()) {
-                                    val ttmlFile = File(parentDir, "${songFile.nameWithoutExtension}.ttml")
-                                    ttmlFile.writeText(ttmlContent)
-                                    
+                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
                                     Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
                                     lyricsRepository.clearMemoryCache()
                                     lyricsViewModel.updateSong(currentSong)
                                 }
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show()
-                            }
+                            } catch (e: Exception) { Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show() }
                         } else {
                             Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
                         }
@@ -602,16 +517,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
         
         menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { currentSong ->
-                deleteAssociatedLyricsFiles(currentSong, onlyTtml = true)
-            }
+            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = true) }
             true 
         }
 
         menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { currentSong ->
-                deleteAssociatedLyricsFiles(currentSong, onlyTtml = false)
-            }
+            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = false) }
             false 
         }
 
@@ -620,21 +531,15 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_equalizer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-            toggleItem?.apply {
-                isVisible = true
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            }
+            toggleItem?.apply { isVisible = true; setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
         } else {
             menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.findItem(R.id.action_go_to_album)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_go_to_artist)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-            
             toggleItem?.isVisible = false
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         }
-        
         updateMenuTitle(menu)
         setupQueueMenuItem(menu)
     }
@@ -652,9 +557,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-        if (key == DISPLAY_NEXT_SONG) {
-            setupQueueMenuItem()
-        }
+        if (key == DISPLAY_NEXT_SONG) setupQueueMenuItem()
     }
 
     override fun onResume() {
@@ -669,12 +572,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     override fun onDestroyView() {
         Preferences.unregisterOnSharedPreferenceChangeListener(this)
-        
         videoFetchJob?.cancel()
         videoFetchJob = null
         canvasExoPlayer?.release()
         canvasExoPlayer = null
-        
         super.onDestroyView()
         _binding = null
     }
