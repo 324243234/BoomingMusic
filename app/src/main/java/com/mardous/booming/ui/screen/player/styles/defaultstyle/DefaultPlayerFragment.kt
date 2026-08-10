@@ -24,6 +24,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -131,15 +132,45 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
         if (isLandscape) {
+            // ==========================================
+            // 🌟 重构引擎层：开启梦幻呼吸循环与防发热降级
+            // ==========================================
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
-                repeatMode = Player.REPEAT_MODE_ALL
+                repeatMode = Player.REPEAT_MODE_OFF // 严禁原生循环，防止黑帧硬闪
                 volume = 0f 
                 
-                // 🌟 新增：强制限制 HLS (Apple Music) 流的最高分辨率
-                // 设定最高为 480p 级别 (854x480 或 720x480)，强力拦截 1080p 切片，极致省电不发热
+                // 植入网易云同款电影感慢放 (降低 15% 播放速度)，视觉更优雅且降低解码器压力
+                playbackParameters = PlaybackParameters(0.85f)
+                
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setMaxVideoSize(854, 480) 
                     .build()
+                    
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView) ?: return
+                        when (playbackState) {
+                            Player.STATE_READY -> {
+                                // 🌟 极限防闪策略：底层证实第一帧已经画好了，才开始柔和淡入！
+                                if (playerView.alpha < 1f || playerView.visibility != View.VISIBLE) {
+                                    playerView.visibility = View.VISIBLE
+                                    playerView.animate().alpha(1f).setDuration(800).start()
+                                }
+                            }
+                            Player.STATE_ENDED -> {
+                                // 🌟 呼吸逻辑：播完不要立刻切回去。先用 600ms 淡出，露出底下的静态图片
+                                playerView.animate().alpha(0f).setDuration(600).withEndAction {
+                                    // 给静态图片 1.5 秒的沉浸时间
+                                    playerView.postDelayed({
+                                        canvasExoPlayer?.seekTo(0)
+                                        canvasExoPlayer?.play()
+                                        // 注：这里只调 play，真正的淡入全权交由上方 STATE_READY 接管，绝不越权
+                                    }, 1500)
+                                }.start()
+                            }
+                        }
+                    }
+                })
             }
             view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
                 player = canvasExoPlayer
@@ -182,9 +213,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
                         val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
                         
+                        // ==========================================
+                        // 切歌瞬间暴力隐身，切断任何残余动画的念想
+                        // ==========================================
                         playerView?.animate()?.cancel()
-                        playerView?.visibility = View.INVISIBLE
                         playerView?.alpha = 0f
+                        playerView?.visibility = View.INVISIBLE
                         
                         staticCoverFragment?.visibility = View.VISIBLE
 
@@ -219,18 +253,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
+                                            // 🌟 此处极简：仅塞入链接和准备播放，渲染与渐显全盘托管给回调。
+                                            // 此时 playerView 的 alpha 依然是 0f
                                             canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
                                             canvasExoPlayer?.prepare()
                                             canvasExoPlayer?.play()
-                                            
-                                            playerView?.apply {
-                                                useController = false
-                                                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                
-                                                alpha = 0f
-                                                visibility = View.VISIBLE
-                                                animate().alpha(1f).setDuration(500).start()
-                                            }
                                             
                                             staticCoverFragment?.visibility = View.VISIBLE
                                         }
@@ -443,7 +470,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 val songFile = File(song.data)
                 val parentDir = songFile.parentFile ?: return@launch
                 
-                // 收集所有可能的同名匹配组合（转小写）
                 val possibleNamesLower = listOf(
                     songFile.nameWithoutExtension.lowercase(),
                     "${song.artistName} - ${song.title}".lowercase(),
@@ -455,24 +481,21 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 
                 val filesInDir = parentDir.listFiles() ?: emptyArray()
                 
-                // 🌟 核心升级：根据操作类型动态划定要清理的文件扩展名圈子
                 val targetExtensions = if (onlyTtml) {
                     listOf("ttml") 
                 } else {
-                    listOf("ttml", "lrc", "mp4", "webm") // 包含歌词与动态视频封面
+                    listOf("ttml", "lrc", "mp4", "webm") 
                 }
                 
                 for (file in filesInDir) {
                     if (!file.isFile) continue
                     
                     val ext = file.extension.lowercase()
-                    if (!targetExtensions.contains(ext)) continue // 不是目标扩展名，跳过
+                    if (!targetExtensions.contains(ext)) continue 
                     
                     val fileNameLower = file.nameWithoutExtension.lowercase()
                     
-                    // 只要文件名匹配上，格杀勿论
                     if (possibleNamesLower.contains(fileNameLower)) {
-                        // 暴力清空防死锁：文本文件写空字符串，媒体文件写 0 字节
                         runCatching { 
                             if (ext == "mp4" || ext == "webm") {
                                 file.writeBytes(ByteArray(0))
@@ -481,7 +504,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             }
                         } 
                         
-                        // 执行物理删除，或判断是否已经被成功掏空成 0kb
                         if (file.delete() || !file.exists() || file.length() == 0L) {
                             if (ext == "ttml") deletedTtml = true
                             else deletedOther = true
@@ -499,7 +521,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
-                        // 如果是随同歌曲一起删除的，静默清理内存缓存即可，系统原有的删除吐司会提示
                         if (deletedTtml || deletedOther) {
                             lyricsRepository.clearMemoryCache()
                         }
