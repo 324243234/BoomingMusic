@@ -17,8 +17,7 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (零冗余、直通解析、极致轻量版)
- * 优先级：Apple Music / AMLL -> QQ 音乐 / QRC -> 网易云音乐 / YRC
+ * TTML 级联网络获取引擎 (优先级: Apple Music -> 网易云音乐 -> QQ音乐)
  */
 object TtmlFetcher {
 
@@ -60,7 +59,7 @@ object TtmlFetcher {
 
         try {
             // ========================================================
-            // 通道一：Apple Music (CN & US) + AMLL DB 并发获取 (绝对信任，直通)
+            // 通道一：Apple Music (CN & US) + AMLL DB 并发获取
             // ========================================================
             for (country in listOf("cn", "us")) {
                 val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=5&country=$country"
@@ -95,7 +94,6 @@ object TtmlFetcher {
                                             async { fetchAppleOfficial(trackId, country) },
                                             async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
                                         )
-                                        // 没有任何多余校验，拿到就用
                                         tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                     }
                                     if (ttmlResult != null) return@withContext ttmlResult
@@ -108,7 +106,57 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道二：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 并发获取 (绝对信任，直通)
+            // 通道二：网易云音乐搜索 + YRC 转译 (已提升至 QQ 音乐之前)
+            // ========================================================
+            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
+            val neteaseSearchRes = httpGet(neteaseSearchUrl)
+            if (neteaseSearchRes != null) {
+                val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs")
+                if (songs != null && songs.length() > 0) {
+                    for (i in 0 until songs.length()) {
+                        val item = songs.getJSONObject(i)
+                        val songId = item.optInt("id", 0)
+                        val songName = item.optString("name")
+                        val artists = item.optJSONArray("artists")
+                        val remoteArtistStr = if (artists != null) {
+                            (0 until artists.length()).joinToString("") { normalizeStr(artists.getJSONObject(it).optString("name")) }
+                        } else ""
+                        
+                        val isRemoteLive = songName.contains("live", ignoreCase = true) || songName.contains("现场")
+                        val isRemoteRemix = songName.contains("remix", ignoreCase = true) || songName.contains("dj", ignoreCase = true) || songName.contains("版")
+
+                        if (!isLocalLive && isRemoteLive) continue
+                        if (!isLocalRemix && isRemoteRemix) continue
+
+                        val normTrack = normalizeStr(songName)
+                        val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
+                        
+                        var isArtistMatch = targetArtists.isEmpty()
+                        if (targetArtists.isNotEmpty()) {
+                            val primaryArtist = targetArtists[0]
+                            val isPrimaryMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr)
+                            val hasAnyMatch = targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
+                            isArtistMatch = isPrimaryMatch || hasAnyMatch
+                        }
+
+                        if (isTitleMatch && isArtistMatch && songId != 0) {
+                            val yrcUrl = "https://music.163.com/api/song/lyric?id=$songId&lv=-1&kv=-1&tv=-1&yv=1"
+                            val yrcRes = httpGet(yrcUrl)
+                            if (yrcRes != null) {
+                                val yrcData = JSONObject(yrcRes).optJSONObject("yrc")?.optString("lyric")
+                                if (!yrcData.isNullOrBlank()) {
+                                    val ttmlResult = parseYrcToTtml(yrcData)
+                                    if (ttmlResult != null) return@withContext ttmlResult
+                                }
+                            }
+                            break 
+                        }
+                    }
+                }
+            }
+
+            // ========================================================
+            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 兜底
             // ========================================================
             val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
@@ -161,7 +209,6 @@ object TtmlFetcher {
                                                     val qrcHex = fetchQqQrc(item)
                                                     if (!qrcHex.isNullOrBlank()) {
                                                         val rawQrc = decryptQrc(qrcHex)
-                                                        // 解密完直接送去解析，绝不犹豫
                                                         if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc) else null
                                                     } else null
                                                 }
@@ -173,57 +220,6 @@ object TtmlFetcher {
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
-
-            // ========================================================
-            // 通道三：网易云音乐搜索 + YRC 转译 (绝对信任，直通)
-            // ========================================================
-            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
-            val neteaseSearchRes = httpGet(neteaseSearchUrl)
-            if (neteaseSearchRes != null) {
-                val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs")
-                if (songs != null && songs.length() > 0) {
-                    for (i in 0 until songs.length()) {
-                        val item = songs.getJSONObject(i)
-                        val songId = item.optInt("id", 0)
-                        val songName = item.optString("name")
-                        val artists = item.optJSONArray("artists")
-                        val remoteArtistStr = if (artists != null) {
-                            (0 until artists.length()).joinToString("") { normalizeStr(artists.getJSONObject(it).optString("name")) }
-                        } else ""
-                        
-                        val isRemoteLive = songName.contains("live", ignoreCase = true) || songName.contains("现场")
-                        val isRemoteRemix = songName.contains("remix", ignoreCase = true) || songName.contains("dj", ignoreCase = true) || songName.contains("版")
-
-                        if (!isLocalLive && isRemoteLive) continue
-                        if (!isLocalRemix && isRemoteRemix) continue
-
-                        val normTrack = normalizeStr(songName)
-                        val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
-                        
-                        var isArtistMatch = targetArtists.isEmpty()
-                        if (targetArtists.isNotEmpty()) {
-                            val primaryArtist = targetArtists[0]
-                            val isPrimaryMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr)
-                            val hasAnyMatch = targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
-                            isArtistMatch = isPrimaryMatch || hasAnyMatch
-                        }
-
-                        if (isTitleMatch && isArtistMatch && songId != 0) {
-                            val yrcUrl = "https://music.163.com/api/song/lyric?id=$songId&lv=-1&kv=-1&tv=-1&yv=1"
-                            val yrcRes = httpGet(yrcUrl)
-                            if (yrcRes != null) {
-                                val yrcData = JSONObject(yrcRes).optJSONObject("yrc")?.optString("lyric")
-                                if (!yrcData.isNullOrBlank()) {
-                                    // 直接交由 YRC 转译器，零预检拦截
-                                    val ttmlResult = parseYrcToTtml(yrcData)
-                                    if (ttmlResult != null) return@withContext ttmlResult
-                                }
-                            }
-                            break 
                         }
                     }
                 }
@@ -297,8 +293,8 @@ object TtmlFetcher {
         if (ttmlParagraphs.isEmpty()) return null
 
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
-               "\n    </div>\n  </body>\n</tt>"
+                ttmlParagraphs.joinToString("\n") +
+                "\n    </div>\n  </body>\n</tt>"
     }
 
     private fun parseQrcToTtmlDirectly(rawQrcText: String): String? {
@@ -359,8 +355,8 @@ object TtmlFetcher {
         if (ttmlParagraphs.isEmpty()) return null
 
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
-               "\n    </div>\n  </body>\n</tt>"
+                ttmlParagraphs.joinToString("\n") +
+                "\n    </div>\n  </body>\n</tt>"
     }
 
     private fun msToTimeStr(ms: Long): String {

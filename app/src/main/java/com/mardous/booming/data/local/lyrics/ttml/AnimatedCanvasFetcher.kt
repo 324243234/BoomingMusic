@@ -16,7 +16,7 @@ import java.net.URL
 
 /**
  * 动态专辑画布引擎 (高可用线性防线版)
- * 优先级: 本地资产 -> Apple Music -> 网易云官方动态封面
+ * 优先级: 本地资产 -> Apple Music -> 网易云官方动态封面 (通过 Cloudflare 中转)
  * 检索降级策略: 优先 [歌手+歌名] -> 查不到则降级 [歌名+专辑名]
  * 特性: LRU 内存缓存、协作式协程取消防抖、严格连接池释放
  */
@@ -27,8 +27,8 @@ object AnimatedCanvasFetcher {
     // Apple Music Auth Token
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
-    // 网易云 API 域名
-    private const val NETEASE_API_DOMAIN = "https://my-wangymusic-api.vercel.app"
+    // 网易云 API 域名 (已接入 Cloudflare 稳定中转站)
+    private const val NETEASE_API_DOMAIN = "https://wangyi-proxy.huate1.workers.dev"
 
     // 支持的本地视频格式
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
@@ -69,14 +69,13 @@ object AnimatedCanvasFetcher {
             
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
         
-        // 🌟 清洗专辑名（去除类似 "(Deluxe Edition)" 等后缀干扰，提高命中率）
         val rawAlbum = (song.albumName ?: "")
             .replace(Regex("""\(.*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "")
             .trim()
 
         // ==========================================
-        // 🌟 检索策略 1：[歌手 + 歌名]
+        // 检索策略 1：[歌手 + 歌名]
         // ==========================================
         val query1 = (if (rawArtist.isBlank()) rawTitle else "$rawArtist $rawTitle")
             .replace(Regex("""[-_／/]"""), " ").trim()
@@ -88,7 +87,7 @@ object AnimatedCanvasFetcher {
         }
 
         // ==========================================
-        // 🌟 检索策略 2：降级使用 [歌名 + 专辑名]
+        // 检索策略 2：降级使用 [歌名 + 专辑名]
         // ==========================================
         if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
             val query2 = "$rawTitle $rawAlbum".replace(Regex("""[-_／/]"""), " ").trim()
@@ -103,9 +102,6 @@ object AnimatedCanvasFetcher {
         return@withContext null
     }
 
-    /**
-     * 核心网络轮询逻辑（被不同的检索策略复用）
-     */
     private suspend fun fetchFromNetwork(query: String): String? {
         // 优先去 Apple Music 找高质量无损视频
         val appleCover = fetchAppleMusicCover(query)
