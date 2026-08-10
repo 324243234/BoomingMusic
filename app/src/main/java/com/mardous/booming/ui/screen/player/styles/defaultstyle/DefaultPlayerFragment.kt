@@ -148,11 +148,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
                             // 🌟 绝对听从指令复刻网易云：
                             // 600ms 淡出显露底层静态图 -> 精准停留 1秒钟 -> 拉回开头重播
-                            playerView?.animate()?.alpha(0f)?.setDuration(600)?.withEndAction {
+                            playerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction {
                                 playerView.postDelayed({
                                     canvasExoPlayer?.seekTo(0)
                                     canvasExoPlayer?.play()
-                                }, 1000) 
+                                }, 800) 
                             }?.start()
                         }
                     }
@@ -503,12 +503,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscapeOrTablet) {
             videoToggleItem?.isVisible = true
             val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-            videoToggleItem?.title = if (isVideoEnabled) "视频封面: 开启" else "视频封面: 关闭"
+            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 开启" else "动态封面: 关闭"
             
             videoToggleItem?.setOnMenuItemClickListener {
                 val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
                 sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-                videoToggleItem.title = if (newState) "视频封面: 开启" else "视频封面: 关闭"
+                videoToggleItem.title = if (newState) "动态封面: 开启" else "动态封面: 关闭"
                 playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
                 true
             }
