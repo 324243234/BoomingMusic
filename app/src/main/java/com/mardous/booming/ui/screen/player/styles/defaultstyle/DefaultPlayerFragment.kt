@@ -54,6 +54,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
@@ -78,18 +81,26 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     // 🌟 核心引擎：动态封面播放器
     private var canvasExoPlayer: ExoPlayer? = null
 
-    // 🌟 优化：使用 lazy 懒加载。仅在第一次横屏用到时才去向系统索要服务，之后永久复用，零开销！
+    // 🌟 独占式任务句柄：用于切歌时秒杀历史残余网络和 IO 任务，防止协程堆积和内存泄漏
+    private var videoFetchJob: Job? = null
+
+    // 使用 lazy 懒加载。仅在第一次用到时向系统索要服务，零开销！
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
-    // 🌟 核心探针：温控与电量检测 (极致版)
+    // 🌟 核心探针：温控与电量检测 (智能降级版)
     private fun isDeviceStressed(): Boolean {
-        val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        if (batteryLevel <= 30) return true
+        // 1. 省电模式绝对优先
         if (powerManager.isPowerSaveMode) return true
         
+        // 2. 电量低于 20% (放宽容忍度，留有余地)
+        val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (batteryLevel <= 20) return true
+        
+        // 3. 严重发热降级 (从 MODERATE 改为 SEVERE)
+        // SEVERE 代表系统已经开始物理降频限制性能，此时必须关掉视频缓解 CPU
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
+            if (powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
                 return true
             }
         }
@@ -128,29 +139,22 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
-       // 🌟 极致优化点：只有横屏才会去分配解码器运存！竖屏时解码器为 null，零内存消耗！
         if (isLandscape) {
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_ALL
-                volume = 0f // 强制静音，绝不干扰音频流
+                volume = 0f 
             }
             view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
                 player = canvasExoPlayer
-                useController = false // 动态关闭控制器
-                setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM) // 动态设置等比缩放填充
+                useController = false 
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
                 
-                // ==========================================
-                // 🌟 核心手势优化：彻底封死视频涂层对事件的拦截
-                // ==========================================
+                // 彻底封死事件拦截
                 isClickable = false
                 isFocusable = false
                 isFocusableInTouchMode = false
                 isLongClickable = false
-                
-                // 强制要求内部子 View 也不得拦截触摸事件
                 descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                
-                // 兜底防御：强制让触摸事件返回 false，使其穿透到下层 Activity/Fragment 的 GestureDetector 中
                 setOnTouchListener { _, _ -> false }
             }
         }
@@ -174,8 +178,22 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        kotlinx.coroutines.delay(80)
                         
+                        // ==========================================
+                        // 🌟 快速切歌终极防线：状态瞬间截断
+                        // ==========================================
+                        videoFetchJob?.cancel() // 秒杀未完成的网络请求或下载
+                        canvasExoPlayer?.stop() // 停止上一首视频解码
+                        canvasExoPlayer?.clearMediaItems() // 清除内存中的流句柄 (极其关键，防止内存泄漏)
+                        
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                        val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
+                        
+                        // 切歌瞬间，强制将 UI 归位为静态封面，避免看到上一首的残留动态
+                        playerView?.visibility = View.INVISIBLE
+                        staticCoverFragment?.visibility = View.VISIBLE
+
+                        // 轻量级 UI 文本更新 (无需防抖，立即反馈)
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
 
@@ -193,42 +211,40 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             }
                         }
 
-                        // 🌟 横屏专属：动态封面静默获取与智能播放逻辑
+                        // ==========================================
+                        // 🌟 防抖获取动态封面流
+                        // ==========================================
                         if (isLandscape) {
                             val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                            val isStressed = isDeviceStressed()
-                            
-                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                            val staticCoverFragment = view.findViewById<View>(R.id.playerAlbumCoverFragment)
 
-                            if (isVideoEnabled && !isStressed) {
-                                launch(Dispatchers.IO) {
-                                    val videoUri = com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
-                                    withContext(Dispatchers.Main) {
+                            if (isVideoEnabled && !isDeviceStressed()) {
+                                videoFetchJob = launch { // 抛在当前作用域
+                                    // 🌟 核心防抖：0.3秒缓冲期。如果用户疯狂点下一首，
+                                    // 这个 delay 还没跑完，协程就被上方的 cancel() 杀死了，
+                                    // 从而彻底阻断底层的 IO 读取和网络请求浪费。
+                                    delay(300) 
+
+                                    val videoUri = withContext(Dispatchers.IO) {
+                                        com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
+                                    }
+
+                                    // 🌟 安全检查：如果在此期间被 cancel 了，或者手机已经严重发热，放弃渲染
+                                    if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                                        if (!videoUri.isNullOrBlank() && recheckEnabled && !isDeviceStressed()) {
+                                        if (recheckEnabled) {
                                             canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
                                             canvasExoPlayer?.prepare()
                                             canvasExoPlayer?.play()
                                             
                                             playerView?.apply {
                                                 useController = false
-                                                setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                visibility = View.VISIBLE // 显示视频
+                                                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+                                                visibility = View.VISIBLE 
                                             }
-                                            // 🌟 核心修复：必须用 INVISIBLE 占位，绝不能用 GONE，否则布局塌陷！
-                                           staticCoverFragment?.visibility = View.INVISIBLE
-                                        } else {
-                                            canvasExoPlayer?.stop()
-                                            playerView?.isVisible = false
-                                            staticCoverFragment?.isVisible = true
+                                            staticCoverFragment?.visibility = View.INVISIBLE
                                         }
                                     }
                                 }
-                            } else {
-                                canvasExoPlayer?.stop()
-                                playerView?.isVisible = false
-                                staticCoverFragment?.isVisible = true
                             }
                         }
 
@@ -430,7 +446,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // 🌟 增强功能：忽略大小写 + 暴力清空防死锁的本地物理删除链路
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -458,7 +473,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     
                     if (possibleNamesLower.contains(fileNameLower)) {
                         if (ext == "ttml") {
-                            runCatching { file.writeText("") } // 暴力写空破除系统占用锁
+                            runCatching { file.writeText("") } 
                             if (file.delete() || !file.exists()) {
                                 deletedTtml = true
                             } else if (file.length() == 0L) {
@@ -509,14 +524,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
-        // 孤立绑定：格式切换按钮
         val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
         toggleItem?.setOnMenuItemClickListener {
             toggleLyricsFormat()
             true
         }
 
-        // 🌟 视频封面开关控制逻辑
         val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
         if (isLandscapeOrTablet) {
             videoToggleItem?.isVisible = true
@@ -535,7 +548,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             videoToggleItem?.isVisible = false
         }
 
-        // 获取 TTML 按钮逻辑
         menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
@@ -570,7 +582,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             true 
         }
         
-        // 删除 TTML 按钮
         menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 deleteAssociatedLyricsFiles(currentSong, onlyTtml = true)
@@ -578,7 +589,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             true 
         }
 
-        // 完美挂钩系统原有的“删除歌曲”按钮
         menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { currentSong ->
                 deleteAssociatedLyricsFiles(currentSong, onlyTtml = false)
@@ -628,9 +638,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
-    // ==========================================
-    // 🌟 生命线的最后护盾：防止后台漏电
-    // ==========================================
     override fun onResume() {
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play()
@@ -643,8 +650,13 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     override fun onDestroyView() {
         Preferences.unregisterOnSharedPreferenceChangeListener(this)
+        
+        // 🌟 彻底清除任务和播放器引用，保证 Fragment 销毁时绝对干净
+        videoFetchJob?.cancel()
+        videoFetchJob = null
         canvasExoPlayer?.release()
         canvasExoPlayer = null
+        
         super.onDestroyView()
         _binding = null
     }
