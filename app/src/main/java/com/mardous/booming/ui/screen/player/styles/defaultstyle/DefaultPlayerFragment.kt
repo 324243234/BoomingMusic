@@ -503,12 +503,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         if (isLandscapeOrTablet) {
             videoToggleItem?.isVisible = true
             val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 开启" else "动态封面: 关闭"
+            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
             
             videoToggleItem?.setOnMenuItemClickListener {
                 val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
                 sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-                videoToggleItem.title = if (newState) "动态封面: 开启" else "动态封面: 关闭"
+                videoToggleItem.title = if (newState) "动态封面: 关闭" else "动态封面: 开启"
                 playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
                 true
             }
