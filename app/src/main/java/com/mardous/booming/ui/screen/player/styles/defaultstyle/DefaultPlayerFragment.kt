@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -19,8 +20,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isInvisible
-import androidx.core.view.isVisible
-import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -28,6 +27,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.viewpager.widget.ViewPager
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
@@ -49,7 +49,6 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
-import com.mardous.booming.ui.screen.player.cover.CoverPagerFragment
 import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
@@ -82,9 +81,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
-    
-    // 🌟 核心：永远追踪当前被激活的播放视图，防止生命周期错乱导致闪烁
-    private var activePlayerView: PlayerView? = null
 
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
@@ -124,39 +120,50 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         
         if (isLandscape) {
+            setupSlidingGhostMode(view) // 启用“滑动隐身”黑科技
+            
             canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
                 repeatMode = Player.REPEAT_MODE_OFF 
                 volume = 0f 
-                // 植入 0.85 倍电影慢放
                 playbackParameters = PlaybackParameters(0.85f)
                 trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoSize(854, 480).build()
                     
                 addListener(object : Player.Listener {
+                    override fun onRenderedFirstFrame() {
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                        // 🌟 彻底消灭黑场：第一帧画面真正画好后，执行柔和淡入
+                        if (playerView?.alpha ?: 1f < 1f) {
+                            playerView?.animate()?.alpha(1f)?.setDuration(800)?.start()
+                        }
+                    }
+
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        when (playbackState) {
-                            Player.STATE_READY -> {
-                                // 🌟 精准施法：只动画当前绑定的视图！
-                                activePlayerView?.let { view ->
-                                    if (view.alpha < 1f || view.visibility != View.VISIBLE) {
-                                        view.visibility = View.VISIBLE
-                                        view.animate().alpha(1f).setDuration(800).start()
-                                    }
-                                }
-                            }
-                            Player.STATE_ENDED -> {
-                                // 🌟 呼吸感与降温机制：播完淡出，给底图 1.5 秒的静态展示沉浸时间，此时硬解器休息
-                                activePlayerView?.let { view ->
-                                    view.animate().alpha(0f).setDuration(600).withEndAction {
-                                        view.postDelayed({
-                                            canvasExoPlayer?.seekTo(0)
-                                            canvasExoPlayer?.play()
-                                        }, 1500) 
-                                    }.start()
-                                }
-                            }
+                        if (playbackState == Player.STATE_ENDED) {
+                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                            // 🌟 呼吸感与降温：播完淡出，给底图 1.5 秒展示时间，硬解器休息冷却
+                            playerView?.animate()?.alpha(0f)?.setDuration(600)?.withEndAction {
+                                playerView.postDelayed({
+                                    canvasExoPlayer?.seekTo(0)
+                                    canvasExoPlayer?.play()
+                                }, 1500) 
+                            }?.start()
                         }
                     }
                 })
+            }
+            
+            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
+                player = canvasExoPlayer
+                useController = false 
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
+                
+                // 由于外部使用了 MaterialCardView 包裹进行圆角切割，PlayerView 内部无需再处理圆角
+                isClickable = false
+                isFocusable = false
+                isFocusableInTouchMode = false
+                isLongClickable = false
+                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                setOnTouchListener { _, _ -> false }
             }
         }
 
@@ -181,12 +188,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                         canvasExoPlayer?.stop() 
                         canvasExoPlayer?.clearMediaItems() 
                         
-                        // 🌟 切歌瞬间的残影截断：直接清理追踪的旧视图
-                        activePlayerView?.animate()?.cancel()
-                        activePlayerView?.alpha = 0f
-                        activePlayerView?.visibility = View.INVISIBLE
-                        activePlayerView?.player = null
-                        activePlayerView = null
+                        // 切歌瞬间截断残影
+                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
+                        playerView?.animate()?.cancel()
+                        playerView?.alpha = 0f
 
                         binding.leftSongTitleText?.text = song.title
                         binding.leftSongTitleText?.let { setMarquee(it, marquee = true) }
@@ -204,7 +209,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
-                                    delay(300) 
+                                    delay(300) // 防抖
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
                                     }
@@ -212,45 +217,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
                                         val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                         if (recheckEnabled) {
-                                            withContext(Dispatchers.Main) {
-                                                val newPager = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment) as? CoverPagerFragment
-                                                
-                                                // 🌟 核心防空指针机制：给 ViewPager 最多 1 秒的缓冲时间来渲染新 UI
-                                                var targetPlayerView: PlayerView? = null
-                                                for (i in 1..10) {
-                                                    targetPlayerView = newPager?.getCurrentPlayerView()
-                                                    if (targetPlayerView != null) break
-                                                    delay(100) // 挂起等待 UI 绘制
-                                                }
-
-                                                if (targetPlayerView != null) {
-                                                    activePlayerView = targetPlayerView
-                                                    targetPlayerView.player = canvasExoPlayer
-                                                    targetPlayerView.useController = false
-                                                    targetPlayerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
-                                                    
-                                                    // 完美切出原图一样的圆角
-                                                    targetPlayerView.clipToOutline = true
-                                                    targetPlayerView.outlineProvider = object : android.view.ViewOutlineProvider() {
-                                                        override fun getOutline(view: View, outline: android.graphics.Outline) {
-                                                            val radius = view.context.resources.displayMetrics.density * 16f 
-                                                            outline.setRoundRect(0, 0, view.width, view.height, radius)
-                                                        }
-                                                    }
-                                                    
-                                                    // 彻底释放点击焦点，绝不阻挡手势滑动
-                                                    targetPlayerView.isClickable = false
-                                                    targetPlayerView.isFocusable = false
-                                                    targetPlayerView.isFocusableInTouchMode = false
-                                                    targetPlayerView.isLongClickable = false
-                                                    targetPlayerView.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                                                    targetPlayerView.setOnTouchListener { _, _ -> false }
-
-                                                    canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
-                                                    canvasExoPlayer?.prepare()
-                                                    canvasExoPlayer?.play()
-                                                }
-                                            }
+                                            canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                            canvasExoPlayer?.prepare()
+                                            canvasExoPlayer?.play()
                                         }
                                     }
                                 }
@@ -330,6 +299,43 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
         }
+    }
+
+    // ==========================================
+    // 🌟 解决滑动割裂感的核心：滑动隐身黑科技
+    // ==========================================
+    private fun setupSlidingGhostMode(rootView: View) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(500) // 稍等内层 ViewPager 初始化完毕
+            val coverFragment = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment)
+            coverFragment?.view?.let { innerView ->
+                val viewPager = findViewPager(innerView)
+                viewPager?.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
+                    override fun onPageScrollStateChanged(state: Int) {
+                        if (state == ViewPager.SCROLL_STATE_DRAGGING) {
+                            // 当用户手指一碰开始拖拽切歌时，视频瞬间隐身！露出底层的原生画廊视差动画
+                            rootView.findViewById<PlayerView>(R.id.canvasPlayerView)?.let { pv ->
+                                pv.animate().cancel()
+                                pv.alpha = 0f
+                            }
+                        }
+                    }
+                    override fun onPageScrolled(p0: Int, p1: Float, p2: Int) {}
+                    override fun onPageSelected(p0: Int) {}
+                })
+            }
+        }
+    }
+
+    private fun findViewPager(view: View): ViewPager? {
+        if (view is ViewPager) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val found = findViewPager(view.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     private fun updateFavoriteIcon(isFavorite: Boolean) {
@@ -592,10 +598,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         videoFetchJob = null
         canvasExoPlayer?.release()
         canvasExoPlayer = null
-        
-        activePlayerView?.player = null
-        activePlayerView = null
-        
         super.onDestroyView()
         _binding = null
     }
