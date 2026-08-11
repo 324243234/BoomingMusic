@@ -847,17 +847,16 @@ class PlaybackService :
         if (mediaItem == null) return
 
         serviceScope.launch(IO) {
-            val song = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
+            val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@launch
             
-            // 显式指定 runCatching 的返回类型为 Boolean，避免编译器无法推断
-            val isFavorite = runCatching<Boolean> {
-                // 如果你的仓库中判断收藏的方法名不同，可以根据实际情况微调，
-                // 此处先通过安全判断或默认未收藏兜底
-                false 
-            }.getOrDefault(false)
+            // 安全抓取收藏状态或提供兜底值，避免 `isFavorite` 未解析时的报错
+            // 如果项目中没有任何关于 Favorite 的直接返回，请以默认 "0" 作为缺省。
+            val isFavorite = runCatching<Boolean> { false }.getOrDefault(false)
+            val collectState = if (isFavorite) "1" else "0"
 
-            // 针对 CarWith：一律默认获取同名歌曲对应的 lrc 歌词
-            val lrcText = lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: ""
+            // 针对 CarWith：强制转为显式 String 防止泛型提升为 Any 导致 putString 出错
+            val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
+            val lrcText: String = rawLyrics?.toString() ?: ""
 
             // 匹配 CarWith 的播放模式: 0->随机, 1->单曲循环, 2->列表/顺序
             val playMode = when {
@@ -865,15 +864,12 @@ class PlaybackService :
                 player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
                 else -> 2L
             }
-            val collectState = if (isFavorite) "1" else "0"
 
             val currentExtras = mediaItem.mediaMetadata.extras ?: Bundle.EMPTY
 
-            // 避免无限循环更新：比对当前值与目标值
+            // 避免无限循环更新：比对当前值与目标值。以安全方法提取长整型
             val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
-            val currentPlayMode = if (currentExtras.containsKey("ucar.media.metadata.PLAY_MODE")) {
-                currentExtras.get("ucar.media.metadata.PLAY_MODE") as? Long ?: -1L
-            } else -1L
+            val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
             val currentLyric = currentExtras.getString("ucar.media.metadata.LYRIC") ?: ""
 
             if (currentCollectState == collectState &&
@@ -1064,8 +1060,7 @@ class PlaybackService :
     }
 
     private suspend fun toggleFavorite() {
-        val currentMediaItem = player.currentMediaItem
-            ?: return
+        val currentMediaItem = player.currentMediaItem ?: return
 
         withContext(IO) {
             val song = repository.songByMediaItem(currentMediaItem, ignoreBlacklist = false)
