@@ -10,7 +10,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -128,7 +127,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 volume = 0f 
                 playbackParameters = PlaybackParameters(0.85f) 
                 
-                // 🌟 性能大杀器：完全阉割音频流解析，彻底限制分辨率，物理阻断资源浪费与发热！
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
                     .setMaxVideoSize(854, 480)
@@ -138,7 +136,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     override fun onRenderedFirstFrame() {
                         val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
                         if (playerView?.alpha ?: 1f < 1f) {
-                            // 第一帧真确画出后，800ms 柔和淡入
                             playerView?.animate()?.alpha(1f)?.setDuration(800)?.start()
                         }
                     }
@@ -146,13 +143,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) {
                             val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                            // 🌟 绝对听从指令复刻网易云：
-                            // 600ms 淡出显露底层静态图 -> 精准停留 1秒钟 -> 拉回开头重播
                             playerView?.animate()?.alpha(0f)?.setDuration(800)?.withEndAction {
                                 playerView.postDelayed({
                                     canvasExoPlayer?.seekTo(0)
-                                    canvasExoPlayer?.play()
-                                }, 600) 
+                                    // 🌟 防误播：重头开始时，也得看当前音乐是否在播放
+                                    if (playerViewModel.isPlaying.value == true) {
+                                        canvasExoPlayer?.play()
+                                    }
+                                }, 900) 
                             }?.start()
                         }
                     }
@@ -186,6 +184,20 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         binding.leftNextButton?.setOnClickListener { playerViewModel.seekToNext() }
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            
+            // 🌟 【核心新增】：实时监听播放状态（声画同步引擎）
+            launch {
+                playerViewModel.isPlaying.collect { isPlaying ->
+                    if (isPlaying && !isDeviceStressed()) {
+                        // 音乐播放时，视频恢复滚动
+                        canvasExoPlayer?.play()
+                    } else {
+                        // 音乐暂停或静音（触发服务级暂停）时，视频瞬间定格！
+                        canvasExoPlayer?.pause()
+                    }
+                }
+            }
+
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
@@ -225,7 +237,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                             withContext(Dispatchers.Main) {
                                                 canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
                                                 canvasExoPlayer?.prepare()
-                                                canvasExoPlayer?.play()
+                                                
+                                                // 🌟 拦截修改：视频下载解析完成后，绝不盲目播放！
+                                                // 只有判断主音频确实在播放时，才开始动；否则就定格在视频的第一帧。
+                                                if (playerViewModel.isPlaying.value == true) {
+                                                    canvasExoPlayer?.play()
+                                                } else {
+                                                    canvasExoPlayer?.pause()
+                                                }
                                             }
                                         }
                                     }
@@ -591,7 +610,10 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
     override fun onResume() {
         super.onResume()
-        if (!isDeviceStressed()) canvasExoPlayer?.play()
+        // 🌟 拦截修改：切回前台时，只有音乐确实在播放，视频才恢复滚动
+        if (!isDeviceStressed() && playerViewModel.isPlaying.value == true) {
+            canvasExoPlayer?.play()
+        }
     }
 
     override fun onPause() {
