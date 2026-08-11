@@ -91,8 +91,8 @@ android {
 
         // 🌟 保留本地修改：定制化 applicationId
         //applicationId = namespace
-        //applicationId = "com.luna.music"   
-        applicationId = "com.kugou.android"
+        applicationId = "com.luna.music"   
+        //applicationId = "com.kugou.android"
         
         // 🌟 同步作者更新：versionCode 升至 1400103
         versionCode = 1400103
