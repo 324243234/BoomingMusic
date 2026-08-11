@@ -51,6 +51,7 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:layout_margin="@dimen/player_cover_margin"
+		android:clipToOutline="true"
         android:clickable="false"
         android:focusable="false"
         app:cardBackgroundColor="@android:color/transparent"
