@@ -37,30 +37,35 @@ class BluetoothLyricManager(
     private var fetchJob: Job? = null
     private val progressObserver = ProgressObserver(250L)
 
-    init {
-        player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying && currentLyricsList.isNotEmpty()) {
+    
+	// 🌟 完美修正：把监听器声明为一个独立变量，方便注册和解绑
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && currentLyricsList.isNotEmpty()) {
+                syncLyrics()
+                progressObserver.start { syncLyrics() }
+            } else {
+                progressObserver.stop()
+                if (currentLyricsList.isNotEmpty()) {
                     syncLyrics()
-                    progressObserver.start { syncLyrics() }
-                } else {
-                    progressObserver.stop()
-                    if (currentLyricsList.isNotEmpty()) {
-                        syncLyrics()
-                    }
                 }
             }
+        }
 
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                if (mediaItem == null) {
-                    currentPlayingSongKey = ""
-                    progressObserver.stop()
-                    fetchJob?.cancel()
-                    currentLyricsList = emptyList()
-                    restoreOriginalMetadata()
-                }
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (mediaItem == null) {
+                currentPlayingSongKey = ""
+                progressObserver.stop()
+                fetchJob?.cancel()
+                currentLyricsList = emptyList()
+                restoreOriginalMetadata()
             }
-        })
+        }
+    }
+
+    init {
+        // 🌟 初始化时注册这个变量
+        player.addListener(playerListener)
     }
 
     private fun resetStateCache() {
@@ -281,4 +286,10 @@ class BluetoothLyricManager(
             restoreOriginalMetadata()
         }
     }
+	
+	 
+    fun release() {
+    stopLyrics() // 顺手停掉所有的定时器和协程
+    player.removeListener(playerListener) // 解绑监听器，做到 100% 内存干净
+}
 }
