@@ -46,5 +46,6 @@
     <dimen name="glance_widget_background_radius">16dp</dimen>
     <dimen name="widget_shape_button_radius">24dp</dimen>
     <dimen name="widget_shape_stadium_radius">1000dp</dimen>
+	<dimen name="player_cover_margin">16dp</dimen>
 	
 </resources>
