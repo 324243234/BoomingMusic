@@ -113,10 +113,10 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import org.koin.android.ext.android.inject
 import kotlin.coroutines.resume
 import kotlin.random.Random
-import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
 class PlaybackService :
@@ -152,6 +152,7 @@ class PlaybackService :
         )
     }
 
+    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -391,7 +392,7 @@ class PlaybackService :
         mediaStoreObserver.stop(this)
         mediaSession?.release()
         
-        bluetoothLyricManager.release() 
+        bluetoothLyricManager.release()
         player.removeListener(this)
         player.release()
         playerThread.quitSafely()
@@ -452,6 +453,7 @@ class PlaybackService :
         val connectionResult = AcceptedResultBuilder(session, controller).build()
         val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
         
+        // CarWith & System commands
         availableSessionCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
 
@@ -936,11 +938,9 @@ class PlaybackService :
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-        // 🌟 物理护盾1：拦住蓝牙循环
         if (mediaItem?.mediaMetadata?.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
             return
         }
-        // 🌟 物理护盾2：拦住CarWith循环
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
             return
@@ -951,8 +951,6 @@ class PlaybackService :
         transitionJob?.cancel()
 
         transitionJob = serviceScope.launch(IO) {
-            delay(550) 
-            
             val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
@@ -1043,20 +1041,18 @@ class PlaybackService :
             }
 
             currentRawLyricsData = rawLyricsText
+            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
             
             withContext(Main) {
-                // 🌟 【终极回归】：百分百重构原版的极简互斥拦截，绝不抢占冲突！
                 if (isBtLyricsEnabled) {
-                    currentCarWithLrc = null // 掐断 CarWith 歌词大包！
                     bluetoothLyricManager.loadLyricsForSong(newSong)
-                    refreshMediaButtonCustomLayout()
                 } else {
-                    bluetoothLyricManager.stopLyrics() // 掐断 蓝牙高频推流！
-                    currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-                    refreshMediaButtonCustomLayout()
-                    requestCarWithUpdate(forceImageLoad = true, bustCache = false) 
+                    bluetoothLyricManager.stopLyrics()
                 }
+                
+                refreshMediaButtonCustomLayout()
+                requestCarWithUpdate(forceImageLoad = true, bustCache = false) 
             }
         }
 
@@ -1107,10 +1103,7 @@ class PlaybackService :
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
                     currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                    if (!isBtLyricsEnabled) {
-                        serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
-                    }
+                    serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
                 }
             }
             
@@ -1134,20 +1127,12 @@ class PlaybackService :
                                 currentItem
                             }
                             val song = repository.songByMediaItem(actualItem, ignoreBlacklist = true)
-                            
                             withContext(Main) {
-                                currentCarWithLrc = null // 掐断 CarWith
                                 bluetoothLyricManager.loadLyricsForSong(song)
-                                refreshMediaButtonCustomLayout()
                             }
                         }
                     } else {
-                        bluetoothLyricManager.stopLyrics() // 掐断蓝牙
-                        currentCarWithLrc = withContext(IO) {
-                            if (!currentRawLyricsData.isNullOrBlank()) processLrcAndInterlude(currentRawLyricsData) else null
-                        }
-                        refreshMediaButtonCustomLayout()
-                        requestCarWithUpdate(forceImageLoad = false, bustCache = true)
+                        bluetoothLyricManager.stopLyrics()
                     }
                 }
             }
@@ -1219,8 +1204,7 @@ class PlaybackService :
             Bundle.EMPTY
         )
         
-        // 即使开了蓝牙，点红心时也要更新状态给车机按键！这不会传歌词大包，非常安全。
-        requestCarWithUpdate(forceImageLoad = false, bustCache = false)
+        requestCarWithUpdate(forceImageLoad = true, bustCache = false)
     }
 
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
@@ -1462,7 +1446,6 @@ class PlaybackService :
         }
     }
     
-    // 🌟 核心原版方法：没有 setSessionExtras，只有 replaceMediaItem，绝对不触发 Binder 崩溃！
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1633,7 +1616,7 @@ class PlaybackService :
         private const val CHANNEL_ID = "playing_notification"
 
         private const val MAX_RETRY_COUNT_AFTER_ERROR = 3
-
+        private const val WIDGET_UPDATE_DEBOUNCE = 300L
         private const val REWIND_INSTEAD_PREVIOUS_MILLIS = 5000L
 
         private const val FOREGROUND_SERVICE_TIMEOUT = (60 * 1000) * 2L
@@ -1646,5 +1629,6 @@ class PlaybackService :
         private const val CARWITH_ACTION_COLLECT = "ucar.media.action.COLLECT"
         private const val CARWITH_COLLECT_STATUS = "ucar.media.metadata.COLLECT_STATE"
         private const val CARWITH_ACTION_PLAY_MODE = "ucar.media.action.PLAY_MODE"
+        private const val CARWITH_BUNDLE_PLAY_MODE = "ucar.media.bundle.PLAY_MODE"
     }
 }
