@@ -373,8 +373,7 @@ class PlaybackService :
 
     override fun onDestroy() {
         super.onDestroy()
-		
-		
+        
         widgets.stop()
         if (bluetoothConnectedRegistered) {
             unregisterReceiver(bluetoothReceiver)
@@ -392,8 +391,8 @@ class PlaybackService :
         audioOutputObserver.stopObserver()
         mediaStoreObserver.stop(this)
         mediaSession?.release()
-		
-		bluetoothLyricManager.release() // 🌟 加上这行，彻底闭环
+        
+        bluetoothLyricManager.release() 
         player.removeListener(this)
         player.release()
         playerThread.quitSafely()
@@ -940,14 +939,10 @@ class PlaybackService :
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         // 🚨 终极核心物理护盾：拦截由 BluetoothLyricManager 引起的虚假切歌广播！
-        // 作者更新后，repository.songByMediaItem 会直接受 mediaItem 的标题污染。
-        // 当蓝牙引擎把标题替换成 "🎵 🎵 🎵" 歌词时，触发此回调会导致底层判定为“切了一首未知的歌”，
-        // 进而引发引擎全线清空并无限重启。
         if (mediaItem?.mediaMetadata?.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
             return
         }
-		// 🌟 【新增修补】：恢复被作者删掉的 CarWith 无限递归拦截护盾！
-        // 如果是因为我们自己塞入歌词导致的 Playlist 更新，立刻拦截，防止死循环。
+        // 🌟 【新增修补】：恢复被作者删掉的 CarWith 无限递归拦截护盾！
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
             return
@@ -1462,7 +1457,7 @@ class PlaybackService :
         }
     }
     
-    // 🌟 替换掉无效的 SilentBroadcast，使用真正的 MediaItem 替换机制
+    // 🌟 核心修补版：既设置 SessionExtras，又触发 replaceMediaItem
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1496,6 +1491,10 @@ class PlaybackService :
                 putString(CARWITH_COLLECT_STATUS, targetCollectStatus)
                 putLong(CARWITH_COLLECT, targetCollectLong)
             }
+            
+            // 🌟 必须同步更新 SessionExtras 给车机读取
+            mediaSession?.setSessionExtras(flushExtras)
+            
             val flushItem = currentItem.buildUpon().setMediaMetadata(
                 currentItem.mediaMetadata.buildUpon().setExtras(flushExtras).build()
             ).build()
@@ -1528,7 +1527,10 @@ class PlaybackService :
             putLong("carwith_timestamp", System.currentTimeMillis())
         }
 
-        // 4. 重铸 MediaItem，强制触发底层 Android Session 刷新
+        // 🌟 【终极杀招】：把附加数据强行塞给全局 Session，供百度 CarLife 读取
+        mediaSession?.setSessionExtras(newExtras)
+
+        // 4. 重铸 MediaItem，强制触发底层 Android Session 刷新（扣动更新屏幕的扳机）
         val metadataBuilder = currentItemNow.mediaMetadata.buildUpon()
             .setUserRating(androidx.media3.common.HeartRating(isCurrentSongFavorite))
             .setExtras(newExtras)
