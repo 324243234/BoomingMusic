@@ -50,7 +50,7 @@
         android:id="@+id/videoCardContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_margin="@dimen/player_cover_margin"
+        android:layout_margin="0dp"
 		android:scaleX="0.9"
         android:scaleY="0.9"
         android:clickable="false"
