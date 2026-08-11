@@ -449,7 +449,7 @@ class PlaybackService :
     ): ListenableFuture<MediaSession.ConnectionResult> {
         val connectionResult = AcceptedResultBuilder(session, controller).build()
         val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
-
+        
         // CarWith & System commands
         availableSessionCommands.add(SessionCommand(CARWITH_ACTION_COLLECT, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(CARWITH_ACTION_PLAY_MODE, Bundle.EMPTY))
@@ -488,17 +488,35 @@ class PlaybackService :
         intent: Intent
     ): Boolean {
         val ke = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-        if (ke != null && (ke.keyCode == KeyEvent.KEYCODE_HEADSETHOOK || ke.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)) {
-            if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
-                headsetClickCount++
-                uiHandler.removeCallbacks(headsetClickRunnable)
-                if (headsetClickCount >= 3) {
-                    uiHandler.post(headsetClickRunnable)
-                } else {
-                    uiHandler.postDelayed(headsetClickRunnable, 300)
+        if (ke != null) {
+            when (ke.keyCode) {
+                KeyEvent.KEYCODE_HEADSETHOOK, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        headsetClickCount++
+                        uiHandler.removeCallbacks(headsetClickRunnable)
+                        if (headsetClickCount >= 3) {
+                            uiHandler.post(headsetClickRunnable)
+                        } else {
+                            uiHandler.postDelayed(headsetClickRunnable, 300)
+                        }
+                    }
+                    return true
+                }
+                
+                KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToNext()
+                    }
+                    return true
+                }
+                
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                        player.seekToPrevious()
+                    }
+                    return true
                 }
             }
-            return true
         }
         return super.onMediaButtonEvent(session, controllerInfo, intent)
     }
@@ -917,6 +935,14 @@ class PlaybackService :
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        // 🚨 终极核心物理护盾：拦截由 BluetoothLyricManager 引起的虚假切歌广播！
+        // 作者更新后，repository.songByMediaItem 会直接受 mediaItem 的标题污染。
+        // 当蓝牙引擎把标题替换成 "🎵 🎵 🎵" 歌词时，触发此回调会导致底层判定为“切了一首未知的歌”，
+        // 进而引发引擎全线清空并无限重启。
+        if (mediaItem?.mediaMetadata?.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
+            return
+        }
+
         val isPlaying = player.isPlaying
 
         transitionJob?.cancel()
@@ -1087,7 +1113,19 @@ class PlaybackService :
                     val currentItem = player.currentMediaItem
                     if (isBtLyricsEnabled && currentItem != null) {
                         withContext(IO) {
-                            val song = repository.songByMediaItem(currentItem, ignoreBlacklist = true)
+                            val actualItem = if (currentItem.mediaMetadata.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
+                                val extras = currentItem.mediaMetadata.extras!!
+                                currentItem.buildUpon().setMediaMetadata(
+                                    currentItem.mediaMetadata.buildUpon()
+                                        .setTitle(extras.getString("BT_ORIGINAL_TITLE"))
+                                        .setArtist(extras.getString("BT_ORIGINAL_ARTIST"))
+                                        .setAlbumTitle(extras.getString("BT_ORIGINAL_ALBUM"))
+                                        .build()
+                                ).build()
+                            } else {
+                                currentItem
+                            }
+                            val song = repository.songByMediaItem(actualItem, ignoreBlacklist = true)
                             withContext(Main) {
                                 bluetoothLyricManager.loadLyricsForSong(song)
                             }
