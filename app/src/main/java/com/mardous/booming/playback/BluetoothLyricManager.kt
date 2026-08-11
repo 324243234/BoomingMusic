@@ -13,8 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (精准防误杀 严谨编译版)
- * 修复：移除未定义的 song.artist 属性调用，解决编译报错
+ * 车载蓝牙歌词核心引擎 (纯净稳定版)
  */
 class BluetoothLyricManager(
     private val player: Player,
@@ -37,8 +36,6 @@ class BluetoothLyricManager(
     private var fetchJob: Job? = null
     private val progressObserver = ProgressObserver(250L)
 
-    
-	// 🌟 完美修正：把监听器声明为一个独立变量，方便注册和解绑
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying && currentLyricsList.isNotEmpty()) {
@@ -64,7 +61,6 @@ class BluetoothLyricManager(
     }
 
     init {
-        // 🌟 初始化时注册这个变量
         player.addListener(playerListener)
     }
 
@@ -77,7 +73,6 @@ class BluetoothLyricManager(
 
     fun loadLyricsForSong(song: Song) {
         coroutineScope.launch(Dispatchers.Main) {
-            // 【修改点】：严格只调用确定存在的属性，防止编译崩溃
             val uniqueSongKey = "${song.id}_${song.title}"
             if (uniqueSongKey == currentPlayingSongKey) {
                 return@launch
@@ -271,25 +266,19 @@ class BluetoothLyricManager(
         hookedIndex = -1
         resetStateCache()
     }
-    // 【新增】：对外暴露的急停方法。用于在开关关闭时主动还原真实的歌名，避免干扰车机
+
     fun stopLyrics() {
         coroutineScope.launch(Dispatchers.Main) {
-            // 1. 停止轮询和请求
             progressObserver.stop()
             fetchJob?.cancel()
-            
-            // 2. 清空歌词并重置当前标记
             currentLyricsList = emptyList()
             currentPlayingSongKey = "" 
-            
-            // 3. 彻底还原真实元数据
             restoreOriginalMetadata()
         }
     }
-	
-	 
+    
     fun release() {
-    stopLyrics() // 顺手停掉所有的定时器和协程
-    player.removeListener(playerListener) // 解绑监听器，做到 100% 内存干净
-}
+        stopLyrics()
+        player.removeListener(playerListener)
+    }
 }

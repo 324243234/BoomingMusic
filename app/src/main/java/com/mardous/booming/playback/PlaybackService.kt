@@ -116,6 +116,7 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import kotlin.coroutines.resume
 import kotlin.random.Random
+import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
 class PlaybackService :
@@ -761,7 +762,8 @@ class PlaybackService :
     ): ListenableFuture<SessionResult> {
         return when (customCommand.customAction) {
             CARWITH_ACTION_COLLECT -> {
-                toggleFavorite()
+                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                toggleFavorite(isBtLyricsEnabled)
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             CARWITH_ACTION_PLAY_MODE -> {
@@ -775,7 +777,11 @@ class PlaybackService :
                     player.shuffleModeEnabled = true
                     player.repeatMode = Player.REPEAT_MODE_ALL
                 }
-                serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+                
+                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                if (!isBtLyricsEnabled) {
+                    serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+                }
                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
 
@@ -795,7 +801,8 @@ class PlaybackService :
 
             Playback.TOGGLE_FAVORITE -> serviceScope.future(Main) {
                 awaitRestoration()
-                toggleFavorite()
+                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                toggleFavorite(isBtLyricsEnabled)
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
@@ -924,14 +931,22 @@ class PlaybackService :
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         widgets.refreshModes(shuffleModeEnabled, player.repeatMode)
         refreshMediaButtonCustomLayout()
-        serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+        
+        val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+        if (!isBtLyricsEnabled) {
+            serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+        }
         persistentStorage.saveState()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         widgets.refreshModes(player.shuffleModeEnabled, repeatMode)
         refreshMediaButtonCustomLayout()
-        serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+        
+        val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+        if (!isBtLyricsEnabled) {
+            serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = false) }
+        }
         persistentStorage.saveState()
     }
 
@@ -940,7 +955,7 @@ class PlaybackService :
         if (mediaItem?.mediaMetadata?.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
             return
         }
-        // 🌟 【新增修补】：恢复被作者删掉的 CarWith 无限递归拦截护盾！
+        // 🌟 CarWith 无限递归拦截护盾
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
             mediaItem?.mediaMetadata?.extras?.getBoolean("carwith_injected") == true) {
             return
@@ -951,6 +966,9 @@ class PlaybackService :
         transitionJob?.cancel()
 
         transitionJob = serviceScope.launch(IO) {
+            // 🌟 核心防抖：恢复 V1 极其重要的 550ms 缓冲，防止 Media3 底层高频跳曲导致崩溃
+            delay(550)
+            
             val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
             val previousSong = songPlayCountHelper.song
             val shouldBumpPlayCount = songPlayCountHelper.shouldBumpPlayCount()
@@ -1045,22 +1063,18 @@ class PlaybackService :
             currentRawLyricsData = rawLyricsText
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
             
-            // 🌟 核心排毒处理：只要蓝牙歌词开了，CarWith 歌词大包立刻清空断流！
-            if (isBtLyricsEnabled) {
-                currentCarWithLrc = null
-            } else {
-                currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
-            }
-            
             withContext(Main) {
+                // 🌟 终极隔离方案：绝对的互斥，避免 replaceMediaItem 底层竞争
                 if (isBtLyricsEnabled) {
+                    currentCarWithLrc = null
                     bluetoothLyricManager.loadLyricsForSong(newSong)
+                    refreshMediaButtonCustomLayout()
                 } else {
                     bluetoothLyricManager.stopLyrics()
+                    currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
+                    refreshMediaButtonCustomLayout()
+                    requestCarWithUpdate(forceImageLoad = true, bustCache = false) 
                 }
-                
-                refreshMediaButtonCustomLayout()
-                requestCarWithUpdate(forceImageLoad = true, bustCache = false) 
             }
         }
 
@@ -1072,144 +1086,7 @@ class PlaybackService :
         widgets.refresh()
     }
 
-    override fun onPlayerError(error: PlaybackException) {
-        val nextMediaIndex = player.nextMediaItemIndex
-        if (nextMediaIndex != C.INDEX_UNSET &&
-            errorRecoveryRetryCount < MAX_RETRY_COUNT_AFTER_ERROR) {
-            errorRecoveryRetryCount++
-            player.seekToNextMediaItem()
-            player.prepare()
-        }
-        showToast(getString(R.string.playback_error_code, error.errorCodeName))
-    }
-
-    override fun onEvents(player: Player, events: Player.Events) {
-        if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
-            events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
-            events.contains(Player.EVENT_TIMELINE_CHANGED)) {
-            if (player.isPlaying) errorRecoveryRetryCount = 0
-            cancelSleepTimerFadeOut()
-        }
-        if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) &&
-            !events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-            updateEqualizerSessionState(player.isPlaying)
-        }
-        if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) &&
-            !events.contains(Player.EVENT_TIMELINE_CHANGED)) {
-            if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
-                this.player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(
-                    firstIndex = player.currentMediaItemIndex,
-                    length = player.mediaItemCount,
-                    randomSeed = Random.nextLong()
-                )
-            }
-        }
-    }
-
-    override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
-        when (key) {
-            "lyrics_show_translation" -> {
-                if (!currentRawLyricsData.isNullOrBlank()) {
-                    val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                    if (!isBtLyricsEnabled) {
-                        currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                        serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
-                    }
-                }
-            }
-            
-            "enable_bluetooth_lyrics" -> {
-                val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                
-                serviceScope.launch(Main) {
-                    val currentItem = player.currentMediaItem
-                    if (isBtLyricsEnabled && currentItem != null) {
-                        withContext(IO) {
-                            val actualItem = if (currentItem.mediaMetadata.extras?.containsKey("BT_ORIGINAL_TITLE") == true) {
-                                val extras = currentItem.mediaMetadata.extras!!
-                                currentItem.buildUpon().setMediaMetadata(
-                                    currentItem.mediaMetadata.buildUpon()
-                                        .setTitle(extras.getString("BT_ORIGINAL_TITLE"))
-                                        .setArtist(extras.getString("BT_ORIGINAL_ARTIST"))
-                                        .setAlbumTitle(extras.getString("BT_ORIGINAL_ALBUM"))
-                                        .build()
-                                ).build()
-                            } else {
-                                currentItem
-                            }
-                            val song = repository.songByMediaItem(actualItem, ignoreBlacklist = true)
-                            
-                            // 🌟 开启蓝牙时：切断并清空 CarWith 歌词数据大包
-                            currentCarWithLrc = null
-                            
-                            withContext(Main) {
-                                bluetoothLyricManager.loadLyricsForSong(song)
-                                requestCarWithUpdate(forceImageLoad = false, bustCache = true)
-                            }
-                        }
-                    } else {
-                        // 🌟 关闭蓝牙时：阻断蓝牙引擎，立刻恢复 CarWith 歌词大包
-                        currentCarWithLrc = if (!currentRawLyricsData.isNullOrBlank()) processLrcAndInterlude(currentRawLyricsData) else null
-                        
-                        bluetoothLyricManager.stopLyrics()
-                        requestCarWithUpdate(forceImageLoad = false, bustCache = true)
-                    }
-                }
-            }
-
-            QUEUE_NEXT_MODE -> {
-                player.setSequentialTimelineEnabled(sequentialTimeline)
-            }
-
-            ENABLE_HISTORY -> {
-                if (!preferences.getBoolean(key, true)) {
-                    serviceScope.launch(IO) {
-                        repository.clearSongHistory()
-                        repository.clearPlayCount()
-                    }
-                }
-            }
-
-            IGNORE_AUDIO_FOCUS -> {
-                player.setAudioAttributes(player.audioAttributes, handleAudioFocus)
-            }
-
-            REWIND_WITH_BACK -> {
-                player.exoPlayer.setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
-            }
-
-            SEEK_INTERVAL -> {
-                player.exoPlayer.setSeekBackIncrementMs(seekInterval)
-                player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
-            }
-        }
-    }
-
-    private fun toggleShuffle() {
-        player.shuffleModeEnabled = !player.shuffleModeEnabled
-    }
-
-    private fun cycleRepeat() {
-        player.repeatMode = nextRepeatMode(player.repeatMode)
-    }
-
-    /** A command issued before the saved state lands has nothing to act on */
-    private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
-        persistentStorage.waitForRestoration { continuation.resume(Unit) }
-    }
-
-    /** The write is debounced */
-    private suspend fun awaitSavedState() {
-        persistentStorage.saveState()
-        persistentStorage.awaitPendingSave()
-    }
-
-    private fun modesBundle() = Bundle().apply {
-        putBoolean(Playback.EXTRA_SHUFFLE_MODE, player.shuffleModeEnabled)
-        putInt(Playback.EXTRA_REPEAT_MODE, player.repeatMode)
-    }
-
-    private fun toggleFavorite() = serviceScope.launch(Main) {
+    private fun toggleFavorite(isBtLyricsEnabled: Boolean) = serviceScope.launch(Main) {
         val currentMediaItem = player.currentMediaItem ?: return@launch
 
         withContext(IO) {
@@ -1226,7 +1103,10 @@ class PlaybackService :
             Bundle.EMPTY
         )
         
-        requestCarWithUpdate(forceImageLoad = true, bustCache = false)
+        // 🌟 隔离保护：开启蓝牙时，绝不能触发 CarWith 的卡片替换
+        if (!isBtLyricsEnabled) {
+            requestCarWithUpdate(forceImageLoad = true, bustCache = false)
+        }
     }
 
     /** Only the fields that genuinely come from the player; the rest is [WidgetDataSource]'s. */
@@ -1473,7 +1353,7 @@ class PlaybackService :
         }
     }
     
-    // 🌟 核心修补版：既设置 SessionExtras，又触发 replaceMediaItem
+    // 🌟 核心修补版：设置 SessionExtras 并触发 replaceMediaItem
     private suspend fun requestCarWithUpdate(forceImageLoad: Boolean, bustCache: Boolean) {
         val currentItem = player.currentMediaItem ?: return
 
@@ -1508,7 +1388,7 @@ class PlaybackService :
                 putLong(CARWITH_COLLECT, targetCollectLong)
             }
             
-            // 🌟 必须同步更新 SessionExtras 给车机读取
+            // 同步更新 SessionExtras 给车机读取
             mediaSession?.setSessionExtras(flushExtras)
             
             val flushItem = currentItem.buildUpon().setMediaMetadata(
@@ -1543,7 +1423,7 @@ class PlaybackService :
             putLong("carwith_timestamp", System.currentTimeMillis())
         }
 
-        // 🌟 【终极杀招】：把附加数据强行塞给全局 Session，供百度 CarLife 读取
+        // 把附加数据强行塞给全局 Session，供百度 CarLife 读取
         mediaSession?.setSessionExtras(newExtras)
 
         // 4. 重铸 MediaItem，强制触发底层 Android Session 刷新（扣动更新屏幕的扳机）
