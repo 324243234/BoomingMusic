@@ -848,7 +848,8 @@ class PlaybackService :
 
         serviceScope.launch(IO) {
             val song = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
-            val isFavorite = repository.isFavorite(song)
+            // 通过检查收藏列表或属性判断是否收藏
+            val isFavorite = runCatching { repository.isFavorite(song) }.getOrDefault(false)
 
             // 针对 CarWith：一律默认获取同名歌曲对应的 lrc 歌词
             val lrcText = lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: ""
@@ -864,9 +865,15 @@ class PlaybackService :
             val currentExtras = mediaItem.mediaMetadata.extras ?: Bundle.EMPTY
 
             // 避免无限循环更新：比对当前值与目标值
-            if (currentExtras.getString("ucar.media.metadata.COLLECT_STATE") == collectState &&
-                currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L) == playMode &&
-                currentExtras.getString("ucar.media.metadata.LYRIC") == lrcText) {
+            val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
+            val currentPlayMode = if (currentExtras.containsKey("ucar.media.metadata.PLAY_MODE")) {
+                currentExtras.get("ucar.media.metadata.PLAY_MODE") as? Long ?: -1L
+            } else -1L
+            val currentLyric = currentExtras.getString("ucar.media.metadata.LYRIC") ?: ""
+
+            if (currentCollectState == collectState &&
+                currentPlayMode == playMode &&
+                currentLyric == lrcText) {
                 return@launch
             }
 
