@@ -151,7 +151,6 @@ class PlaybackService :
         )
     }
 
-    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -373,7 +372,6 @@ class PlaybackService :
 
     override fun onDestroy() {
         super.onDestroy()
-        
         widgets.stop()
         if (bluetoothConnectedRegistered) {
             unregisterReceiver(bluetoothReceiver)
@@ -1045,8 +1043,14 @@ class PlaybackService :
             }
 
             currentRawLyricsData = rawLyricsText
-            currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
             val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+            
+            // 🌟 核心排毒处理：只要蓝牙歌词开了，CarWith 歌词大包立刻清空断流！
+            if (isBtLyricsEnabled) {
+                currentCarWithLrc = null
+            } else {
+                currentCarWithLrc = if (!rawLyricsText.isNullOrBlank()) processLrcAndInterlude(rawLyricsText) else null
+            }
             
             withContext(Main) {
                 if (isBtLyricsEnabled) {
@@ -1106,8 +1110,11 @@ class PlaybackService :
         when (key) {
             "lyrics_show_translation" -> {
                 if (!currentRawLyricsData.isNullOrBlank()) {
-                    currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
-                    serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
+                    val isBtLyricsEnabled = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                    if (!isBtLyricsEnabled) {
+                        currentCarWithLrc = processLrcAndInterlude(currentRawLyricsData)
+                        serviceScope.launch(Main) { requestCarWithUpdate(forceImageLoad = false, bustCache = true) }
+                    }
                 }
             }
             
@@ -1131,12 +1138,21 @@ class PlaybackService :
                                 currentItem
                             }
                             val song = repository.songByMediaItem(actualItem, ignoreBlacklist = true)
+                            
+                            // 🌟 开启蓝牙时：切断并清空 CarWith 歌词数据大包
+                            currentCarWithLrc = null
+                            
                             withContext(Main) {
                                 bluetoothLyricManager.loadLyricsForSong(song)
+                                requestCarWithUpdate(forceImageLoad = false, bustCache = true)
                             }
                         }
                     } else {
+                        // 🌟 关闭蓝牙时：阻断蓝牙引擎，立刻恢复 CarWith 歌词大包
+                        currentCarWithLrc = if (!currentRawLyricsData.isNullOrBlank()) processLrcAndInterlude(currentRawLyricsData) else null
+                        
                         bluetoothLyricManager.stopLyrics()
+                        requestCarWithUpdate(forceImageLoad = false, bustCache = true)
                     }
                 }
             }
