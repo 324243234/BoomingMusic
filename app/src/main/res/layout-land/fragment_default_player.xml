@@ -44,7 +44,7 @@
         app:layout_constraintBottom_toTopOf="@+id/leftSongInfoContainer"
         app:layout_constraintStart_toStartOf="parent" 
         tools:layout="@layout/fragment_album_cover_default"/>
-	<!-- 🌟 2. 视频遮罩层：绝对克隆底层的尺寸与圆角 -->
+	<!-- 🌟 2. 视频遮罩层：绝对克隆底层的尺寸与圆角layout_margin数值对齐dimens的 -->
     <!-- 约束完全锚定 角太圆滑、比静态封面大，就把数字减小（让它变尖）如果角太尖了，就把数字加大 -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/videoCardContainer"
@@ -57,7 +57,7 @@
         app:cardElevation="0dp"
         app:strokeWidth="0dp"
         app:shapeAppearanceOverlay="?shapeAppearanceCornerExtraLarge"
-		app:cardCornerRadius="12dp"
+		app:cardCornerRadius="13dp"
         app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
