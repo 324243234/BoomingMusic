@@ -2,14 +2,15 @@ package com.mardous.booming.ui.component.compose.lyrics
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -112,6 +113,7 @@ fun LyricsView(
                 val viewportHeight = with(layoutInfo) { viewportEndOffset - viewportStartOffset }
                 val bottomPadding = with(density) { contentPadding.calculateBottomPadding().toPx() }
                 val activeItem = layoutInfo.visibleItemsInfo.find { it.index == state.currentLineIndex }
+                
                 if (activeItem != null) {
                     val itemSize = activeItem.size
                     val targetOffset = if (settings.isCenterCurrentLine) {
@@ -119,16 +121,12 @@ fun LyricsView(
                     } else {
                         0f
                     }
+                    // ?? Apple Style 1: ¾ßÓĞÖØÁ¿¸ĞºÍµ¯ĞÔ×èÄáµÄÁĞ±í¹ö¶¯ÎïÀíÒıÇæ
                     listState.animateScrollBy(
                         value = activeItem.offset - targetOffset,
-                        animationSpec = tween(
-                            durationMillis = run {
-                                (state.lyrics?.lines?.getOrNull(state.currentLineIndex + 1)?.start ?: 0) -
-                                        (state.lyrics?.lines?.getOrNull(state.currentLineIndex)?.start ?: 0)
-                            }.let {
-                                (it / 2).coerceIn(100, 1000).toInt()
-                            },
-                            easing = FastOutSlowInEasing
+                        animationSpec = spring(
+                            dampingRatio = 0.85f, // ÂÔÎ¢Ç·×èÄá£¬Í£¶ÙÊ±ÓĞ¼«Î¢ÈõµÄ»Øµ¯¹ßĞÔ
+                            stiffness = Spring.StiffnessLow // ÒÆ¶¯½ÏÈáºÍ£¬·ûºÏ¸è´ÊÁ÷ÌÊ¸Ğ
                         )
                     )
                 } else {
@@ -177,7 +175,7 @@ fun LyricsView(
                 textStyle = textStyle,
                 lineSpacing = lineSpacing,
                 modifier = Modifier
-                    .animateItem(placementSpec = tween(durationMillis = 500)),
+                    .animateItem(placementSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow)),
                 onClick = { onSeekTo(line.start - (state.lyrics?.offset ?: 0)) }
             )
         }
@@ -223,9 +221,13 @@ private fun LyricsLineView(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    // ?? Apple Style 2: ·Å´ó¶¯»­Ê¹ÓÃµ¯»ÉÎïÀí£¬1.05fµÄ·Å´óÂÊ¸ü¼Ó¿ËÖÆºÍ¸ß¼¶
     val scale by animateFloatAsState(
-        targetValue = if (selectedLine) 1.1f else 1f,
-        animationSpec = tween(durationMillis = 700),
+        targetValue = if (selectedLine) 1.05f else 1f,
+        animationSpec = spring(
+            dampingRatio = 0.65f, // ·Å´óÊ±ÓĞÃ÷ÏÔµÄµ¯ĞÔºôÎü¸Ğ
+            stiffness = Spring.StiffnessLow
+        ),
         label = "current-line-scale-animation"
     )
 
@@ -384,12 +386,23 @@ fun LyricsLineContentView(
         progressMillis > endMillis -> 1f
         else -> ((progressMillis - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
     }
-
     val effectDuration = ((endMillis - startMillis) / 2).coerceAtMost(500).toInt()
+    val distance = abs(index - selectedIndex)
+
+    // ?? Apple Style 3: ÓÅ»¯ÊÓ³¡¿í¶È (·Å¿ª¾°ÉîÄ£ºı¶È)
+    // ¾àÀë 0~2 (µ±Ç°¼°Ç°ºóÁ½ĞĞ)£ºÇåÎúÎŞ±È (0 blur)
+    // ¾àÀë 3£ºÇáÎ¢Ä£ºıÔÍÄğ
+    // ¸üÔ¶£ºÉî¶ÈÄ£ºıÊÕÁ²
+    val blurTarget = when {
+        distance <= 2 -> 0f
+        distance == 3 -> 3.5f
+        else -> 8f
+    }
+    
     val blurRadius by animateFloatAsState(
-        targetValue = if (index == selectedIndex) 0f else
-                (abs(index - selectedIndex).toFloat() + 1.5f).coerceIn(0f, 10f),
-        animationSpec = tween(effectDuration)
+        targetValue = if (enableBlurEffect) blurTarget else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessLow), // Ä£ºıĞ§¹ûÒ²Ê¹ÓÃµ¯»ÉË³»¬¹ı¶É
+        label = "blur-depth"
     )
 
     val blurEffect = remember(enableBlurEffect, blurRadius) {
@@ -402,6 +415,23 @@ fun LyricsLineContentView(
         } else null
     }
 
+    // ?? Apple Style 4: Í³Ò»ÌáÀ­È«¾Ö Alpha Âß¼­ (·Å¿ªÍ¸Ã÷¶ÈÊÓ³¡)
+    // ¾à 0: 100% | ¾à 1~2: 60% (¸ß¿É¶Á) | ¾à 3: 30% | ÆäËü: 15%
+    val targetAlpha = when {
+        distance == 0 -> 1f
+        distance <= 2 -> 0.6f 
+        distance == 3 -> 0.3f
+        else -> 0.15f
+    }
+    val animatedAlpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(400),
+        label = "line-alpha"
+    )
+    
+    // Ô¤ÏÈ½« Alpha »ìÈë£¬´«¸øµ×²ãµÄÑÕÉ«ÒÑ¾­ÊÇ´øÍ¸Ã÷¶ÈµÄ£¬±ÜÃâË«ÖØ¼ÆËãºÄ·ÑĞÔÄÜ
+    val baseColorWithAlpha = contentColor.copy(alpha = contentColor.alpha * animatedAlpha)
+
     val mainSyllables = content.getSyllables(backgroundContent)
     val mainText = content.getText(backgroundContent)
 
@@ -413,7 +443,7 @@ fun LyricsLineContentView(
         enableShadowEffect = enableShadowEffect,
         progressiveColoring = progressiveColoring,
         selectedLine = selectedLine,
-        contentColor = contentColor,
+        contentColor = baseColorWithAlpha, // ´«Èë´¦ÀíºÃµÄÉîÉ«
         effectDuration = effectDuration,
         progressFraction = progressFraction,
         progressMillis = progressMillis,
@@ -433,7 +463,7 @@ fun LyricsLineContentView(
             enableShadowEffect = enableShadowEffect,
             progressiveColoring = progressiveColoring && mainSyllables.isEmpty(),
             selectedLine = selectedLine,
-            contentColor = contentColor,
+            contentColor = baseColorWithAlpha,
             effectDuration = effectDuration,
             progressFraction = progressFraction,
             progressMillis = progressMillis,
@@ -448,35 +478,28 @@ fun LyricsLineContentView(
         )
     }
 
-    // ğŸ é’ˆå¯¹ç¿»è¯‘æ­Œè¯çš„ Apple Music æ·±åº¦ä¼˜åŒ–é€»è¾‘
     if (translatedContent != null && !translatedContent.isEmpty) {
         val fontSizeDivider =
             if (transliterationContent != null && !transliterationContent.isEmpty) 1.60f else 1.40f
 
-        // ğŸŒŸ æ ¸å¿ƒä¿®æ”¹ 1ï¼šå»ºç«‹è‰²å½©å±‚çº§ã€‚å°†ç¿»è¯‘æ­Œè¯çš„åŸºå‡†é€æ˜åº¦å¼ºè¡Œå‹åˆ¶åˆ° 75%
-        val translationColor = contentColor.copy(alpha = contentColor.alpha * 0.75f)
+        // ·­Òë×ÖÌåÑÕÉ«Í¸Ã÷¶È½øÒ»²½½µµÍÖÁÖ÷¸è´ÊµÄ 75%£¬À­¿ªÖ÷´Î
+        val translationColor = baseColorWithAlpha.copy(alpha = baseColorWithAlpha.alpha * 0.75f)
 
         LineTextView(
             plainText = translatedContent.getText(backgroundContent),
             syllables = translatedContent.getSyllables(backgroundContent),
-
-            // ğŸŒŸ æ ¸å¿ƒä¿®æ”¹ 2ï¼šå¼ºè¡Œå…³é—­ç¿»è¯‘æ­Œè¯çš„é€å­—/KTVåŠ¨æ•ˆ
             enableSyllable = false,
             enableKaraokeStyle = false,
-
             enableShadowEffect = enableShadowEffect,
-
-            // ğŸŒŸ æ ¸å¿ƒä¿®æ”¹ 3ï¼šä¿ç•™æ•´è¡Œæ¸å˜æŸ“è‰²ï¼ˆLine fillï¼‰ï¼Œä½†ä»…åœ¨ä¸»æ­Œè¯æ²¡æœ‰é€å­—æ—¶é—´è½´æ—¶ç”Ÿæ•ˆ
             progressiveColoring = progressiveColoring && mainSyllables.isEmpty(),
-
             selectedLine = selectedLine,
-            contentColor = translationColor, // ä¼ å…¥é™çº§åçš„é¢œè‰²
+            contentColor = translationColor,
             effectDuration = effectDuration,
             progressFraction = progressFraction,
             progressMillis = progressMillis,
             style = style.copy(
                 fontSize = style.fontSize / fontSizeDivider,
-                fontWeight = FontWeight.Normal // å¼ºåˆ¶å¸¸è§„å­—é‡ï¼Œæ‹‰å¼€ä¸»æ¬¡ç²—ç»†å¯¹æ¯”
+                fontWeight = FontWeight.Normal
             ),
             align = align,
             modifier = modifier.graphicsLayer {
@@ -546,12 +569,6 @@ private fun LineSyncedView(
 ) {
     var textHeight by remember { mutableFloatStateOf(0f) }
 
-    val animatedAlpha by animateFloatAsState(
-        targetValue = if (selectedLine) 1f else .4f,
-        animationSpec = tween(400),
-        label = "current-line-alpha-animation"
-    )
-
     val animatedOrigin by animateFloatAsState(
         targetValue = if (selectedLine) progressFraction * textHeight else 0f,
         label = "line-gradient-origin"
@@ -559,7 +576,8 @@ private fun LineSyncedView(
 
     val shadowRadius by animateFloatAsState(
         targetValue = if (selectedLine) 10f * progressFraction else 0f,
-        animationSpec = tween(effectDuration)
+        animationSpec = tween(effectDuration),
+        label = "shadow-radius"
     )
 
     val shadow = if (shadowEffect && selectedLine) {
@@ -576,14 +594,15 @@ private fun LineSyncedView(
             if (progressiveColoring) {
                 style.copy(
                     brush = Brush.verticalGradient(
-                        colors = listOf(color, color.copy(alpha = .4f)),
+                        // ?? ĞŞÕı½¥±äÂß¼­£ºÒÑ²¥·Å²¿·ÖÈ«ÁÁ£¬Î´²¥·Å²¿·ÖÎª°µÉ«
+                        colors = listOf(color, color.copy(alpha = color.alpha * 0.4f)),
                         startY = animatedOrigin - 10f,
                         endY = animatedOrigin + 10f
                     )
                 )
             } else {
-                // ğŸŒŸ è¿™é‡Œå¿…é¡»æ˜¯ color.alpha * animatedAlphaï¼Œç¡®ä¿ä¼ å…¥çš„ 75% åŸºç¡€é€æ˜åº¦èƒ½æ­£ç¡®ç›¸ä¹˜
-                style.copy(color = color.copy(alpha = color.alpha * animatedAlpha))
+                // ÒòÎªÔÚÍâ²¿ÒÑ¾­¼ÆËã²¢¸³ÓèÁË Alpha£¬ÕâÀïÖ±½ÓÊ¹ÓÃÔ­É«£¬ÌŞ³ıÁËË«ÖØ±ä°µµÄ Bug
+                style.copy(color = color)
             }
         }
     }
