@@ -50,7 +50,7 @@
         android:id="@+id/videoCardContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_margin="10"
+        android:layout_margin="10dp"
         android:clickable="false"
         android:focusable="false"
         app:cardBackgroundColor="@android:color/transparent"
