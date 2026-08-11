@@ -152,7 +152,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                                 playerView.postDelayed({
                                     canvasExoPlayer?.seekTo(0)
                                     canvasExoPlayer?.play()
-                                }, 600) 
+                                }, 700) 
                             }?.start()
                         }
                     }
