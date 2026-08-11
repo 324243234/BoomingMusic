@@ -29,7 +29,17 @@ class LyricsViewState(val lyrics: SyncedLyrics?) {
     private var shouldCrossfade by mutableStateOf(false)
 
     fun updatePosition(newPosition: Long) {
-        position = (newPosition + (lyrics?.offset ?: 0))
+        val targetPosition = newPosition + (lyrics?.offset ?: 0)
+
+        // 🌟【终极防跳帧护盾：单调时间过滤】
+        // 如果底层传来的新时间比当前 UI 时间落后，且误差小于 400ms
+        // 说明这是 ExoPlayer 底层 AudioTrack 的时钟抖动回退，直接拦截！
+        // 绝不允许 K歌高亮往回缩水。只有相差 >400ms，才认为是用户真正的手动 Seek。
+        if (targetPosition < position && (position - targetPosition) < 400L) {
+            return
+        }
+
+        position = targetPosition
 
         val newLineIndex = findLineIndexAt(position)
         val lineJump = abs(newLineIndex - currentLineIndex)

@@ -148,7 +148,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
                             // 🌟 绝对听从指令复刻网易云：
                             // 600ms 淡出显露底层静态图 -> 精准停留 1秒钟 -> 拉回开头重播
-                            playerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction {
+                            playerView?.animate()?.alpha(0f)?.setDuration(800)?.withEndAction {
                                 playerView.postDelayed({
                                     canvasExoPlayer?.seekTo(0)
                                     canvasExoPlayer?.play()
