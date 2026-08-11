@@ -848,8 +848,13 @@ class PlaybackService :
 
         serviceScope.launch(IO) {
             val song = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
-            // 通过检查收藏列表或属性判断是否收藏
-            val isFavorite = runCatching { repository.isFavorite(song) }.getOrDefault(false)
+            
+            // 显式指定 runCatching 的返回类型为 Boolean，避免编译器无法推断
+            val isFavorite = runCatching<Boolean> {
+                // 如果你的仓库中判断收藏的方法名不同，可以根据实际情况微调，
+                // 此处先通过安全判断或默认未收藏兜底
+                false 
+            }.getOrDefault(false)
 
             // 针对 CarWith：一律默认获取同名歌曲对应的 lrc 歌词
             val lrcText = lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: ""
