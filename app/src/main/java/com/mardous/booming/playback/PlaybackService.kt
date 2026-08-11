@@ -409,7 +409,6 @@ class PlaybackService :
         sleepTimer.release()
     }
 
-    // Stays on the service: only a foreground start begins playback from cold, which a broadcast cannot.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY_SONG -> {
@@ -998,7 +997,7 @@ class PlaybackService :
 
             var rawLyricsText: String? = null
             if (newSong != Song.emptySong) {
-                // 1. 优先向本地目录硬抓取 .lrc 文件（无视 APP 当前正在渲染什么格式）
+                // 1. 优先向本地目录硬抓取 .lrc 文件
                 var localLrcText: String? = null
                 try {
                     val songFile = java.io.File(newSong.data)
@@ -1009,13 +1008,12 @@ class PlaybackService :
                             "${newSong.artistName} - ${newSong.title}.lrc"
                         ).filter { it.isNotBlank() }
                         
-                        // 🌟 核心修复：彻底消灭 listFiles()，采用 O(1) 直接穿透查询！
                         var lrcFile: java.io.File? = null
                         for (name in possibleNames) {
                             val targetFile = java.io.File(parentDir, name)
                             if (targetFile.exists() && targetFile.isFile) {
                                 lrcFile = targetFile
-                                break // 找到了就立刻停止
+                                break 
                             }
                         }
 
@@ -1029,15 +1027,19 @@ class PlaybackService :
                     Log.e("PlaybackService", "Read local LRC for CarWith failed", e)
                 }
 
-                // 2. 逻辑分流：有本地 LRC 就直接用；没有本地 LRC，再向 APP 数据库请求兜底
+                // 2. 兜底获取数据库歌词
                 if (!localLrcText.isNullOrBlank()) {
                     rawLyricsText = localLrcText
                 } else {
-                    val rawLyrics = lyricsRepository.fileLyrics(newSong)
-                        ?: lyricsRepository.embeddedLyrics(newSong)
-                        ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
-                    
-                    rawLyricsText = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
+                    try {
+                        val rawLyrics = lyricsRepository.fileLyrics(newSong)
+                            ?: lyricsRepository.embeddedLyrics(newSong)
+                            ?: lyricsRepository.storedLyrics(newSong, allowDownload = false)
+                        
+                        rawLyricsText = rawLyrics?.lyrics?.replace("\uFEFF", "")?.trim()
+                    } catch (e: Exception) {
+                        Log.e("PlaybackService", "Read repository LRC failed", e)
+                    }
                 }
             }
 
@@ -1113,7 +1115,8 @@ class PlaybackService :
                 
                 serviceScope.launch(Main) {
                     val currentItem = player.currentMediaItem
-                    if (isBtLyricsEnabled && currentItem != null) {
+                    // 🌟 修复：移除 `&& currentItem != null`，让空队列状态下也能正常初始化蓝牙歌词引擎！
+                    if (isBtLyricsEnabled) {
                         withContext(IO) {
                             val song = repository.songByMediaItem(currentItem, ignoreBlacklist = true)
                             withContext(Main) {
