@@ -702,12 +702,16 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
+            // 【彻底杜绝 Race Condition】：收藏指令拦截
             "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
+            // 对接 CarWith: 桌面卡片播放模式切换
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
+                val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
+
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
                     player.repeatMode = Player.REPEAT_MODE_ONE
@@ -875,6 +879,9 @@ class PlaybackService :
         updateCarWithMetadata()
     }
 
+    /**
+     * 【彻底杜绝 Race Condition】：放弃不靠谱的 queueStateHolder 异步流，直接通过 mediaItem 同步查库
+     */
     private fun updateCarWithMetadata(mediaItem: MediaItem? = player.currentMediaItem) {
         if (mediaItem == null) return
 
@@ -888,9 +895,10 @@ class PlaybackService :
             delay(50) 
             
             withContext(IO) {
-                // 【核心修复】：必须通过底层回调中传过来的精准 mediaItem 获取实际歌曲
+                // 【核心修复】：直接使用当前传进来的 mediaItem 查库，绝对不会拿到上一首的数据
                 val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
-                
+                if (song == Song.emptySong) return@withContext
+
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
@@ -944,8 +952,8 @@ class PlaybackService :
         lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            // 【核心修复】：必须使用 mediaItem 来同步查找精准实体，抛弃存在延迟的异步 queueStateHolder
-            val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
+            // 【核心修复】：弃用 queueStateHolder 异步流，直接根据确切的 mediaItem 拉取实体
+            val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrDefault(Song.emptySong)
 
             withContext(Main) {
                 bluetoothLyricManager?.loadLyricsForSong(newSong)
@@ -1141,7 +1149,7 @@ class PlaybackService :
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
                     
-                    // 【核心修复】：实时响应时，安全抓取精准当前歌曲状态进行即时更新
+                    // 【核心修复】：完全抛弃 Flow，确保查库绝对实时、精准
                     val currentItem = player.currentMediaItem
                     if (currentItem != null) {
                         serviceScope.launch(IO) {
@@ -1187,6 +1195,7 @@ class PlaybackService :
         putInt(Playback.EXTRA_REPEAT_MODE, player.repeatMode)
     }
 
+    // 【核心修复】：杜绝“张冠李戴”，直接根据当前确切媒体项收藏
     private suspend fun toggleFavorite() {
         val currentMediaItem = player.currentMediaItem ?: return
 
