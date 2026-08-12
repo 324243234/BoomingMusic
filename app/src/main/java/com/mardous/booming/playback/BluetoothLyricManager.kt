@@ -10,12 +10,13 @@ import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (极简安全版)
- * 彻底杜绝与 CarWith 状态同步的对象污染冲突
+ * 车载蓝牙歌词核心引擎 (高并发防爆版)
+ * 彻底杜绝由于高频拉取进度条引发的 System UI 崩溃 (TransactionTooLargeException)
  */
 @UnstableApi
 class BluetoothLyricManager(
@@ -39,6 +40,10 @@ class BluetoothLyricManager(
     private var fetchJob: Job? = null
     private val progressObserver = ProgressObserver(250L)
 
+    // 【防爆防护机制】：进度条拖动保护锁
+    private var isSeeking = false
+    private var seekTimeoutJob: Job? = null
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying && currentLyricsList.isNotEmpty()) {
@@ -47,6 +52,24 @@ class BluetoothLyricManager(
             } else {
                 progressObserver.stop()
                 if (currentLyricsList.isNotEmpty()) {
+                    syncLyrics()
+                }
+            }
+        }
+
+        // 监听拖动进度条，启动保护机制
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                isSeeking = true
+                seekTimeoutJob?.cancel()
+                // 拖动结束后，延迟 800ms 再恢复蓝牙歌词的推送，彻底切断 IPC 数据风暴
+                seekTimeoutJob = coroutineScope.launch(Dispatchers.Main) {
+                    delay(800)
+                    isSeeking = false
                     syncLyrics()
                 }
             }
@@ -89,7 +112,6 @@ class BluetoothLyricManager(
             currentLyricsList = emptyList()
             resetStateCache()
 
-            // 绑定当前处理的媒体 ID，防止越界推流
             hookedMediaId = song.id.toString()
             isHooked = true
 
@@ -132,6 +154,9 @@ class BluetoothLyricManager(
 
     private fun syncLyrics() {
         if (currentLyricsList.isEmpty()) return
+
+        // 【防爆防护机制】：正在拖动进度条，或者播放器处于缓冲状态时，严禁向系统发送高频对象
+        if (isSeeking || player.playbackState != Player.STATE_READY) return
 
         val latencyCompensationMs = if (player.isPlaying) 400L else 0L
         val compensatedPosition = player.currentPosition + latencyCompensationMs
@@ -196,12 +221,12 @@ class BluetoothLyricManager(
         val currentIndex = player.currentMediaItemIndex
         if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
         
-        // 绝对实时获取底层对象，避免覆写 CarWith 的变更
         val currentItem = player.getMediaItemAt(currentIndex)
         
-        // 【关键保护】如果已经切歌了，但缓冲期内的歌词还在发，坚决拦截
+        // 【防错位保护】：必须严格匹配 ID
         if (currentItem.mediaId != hookedMediaId) return
 
+        // 仅处理蓝牙歌词相关字段，不碰庞大的 LYRICS_WHOLE 文本
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
 
         val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
@@ -228,7 +253,6 @@ class BluetoothLyricManager(
         lastPushedTitle = titleText
         lastPushedArtist = artistText
 
-        // 直接作用于原生 player
         val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
         realPlayer.replaceMediaItem(currentIndex, updatedItem)
     }
@@ -287,6 +311,7 @@ class BluetoothLyricManager(
 
     fun stopLyrics() {
         coroutineScope.launch(Dispatchers.Main) {
+            seekTimeoutJob?.cancel()
             progressObserver.stop()
             fetchJob?.cancel()
             currentLyricsList = emptyList()
