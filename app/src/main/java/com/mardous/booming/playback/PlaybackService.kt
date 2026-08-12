@@ -343,8 +343,10 @@ class PlaybackService :
         }
 
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
-            bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
+            bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
         }
+		
+		
 
         preferences.registerOnSharedPreferenceChangeListener(this)
         audioOutputObserver.startObserver()
@@ -1159,11 +1161,32 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                 player.exoPlayer.setSeekBackIncrementMs(seekInterval)
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
+			
+			// 【新增】：监听 LRC/TTML 格式切换，瞬间重载蓝牙歌词与 CarWith 数据
+            "preferred_lyrics_file_format" -> {
+                val currentIndex = player.currentMediaItemIndex
+                if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                    val expectedId = player.getMediaItemAt(currentIndex).mediaId
+                    serviceScope.launch(IO) {
+                        val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
+                            queueStateHolder.currentSong.first { it.id.toString() == expectedId }
+                        }
+                        if (song != null && song != Song.emptySong) {
+                            // 1. 同步刷新蓝牙屏幕歌词
+                            withContext(Main) {
+                                bluetoothLyricManager?.loadLyricsForSong(song)
+                            }
+                        }
+                    }
+                }
+                // 2. 同步刷新 CarWith 车机大屏歌词
+                updateCarWithMetadata()
+            }
 
             "enable_bluetooth_lyrics" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
-                    bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
+                    bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
                     
                     val currentIndex = player.currentMediaItemIndex
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
@@ -1184,9 +1207,18 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                     bluetoothLyricManager = null
                 }
             }
+			
+			
 
-            "lyrics_show_translation" -> {
+            // 🌟 2. 关键：翻译开关和歌词格式切换时，瞬间贯通三端状态
+            "lyrics_show_translation", "preferred_lyrics_file_format" -> {
+                // 刷新 CarWith 大屏双语状态
                 updateCarWithMetadata()
+                
+                // 瞬间强制刷新蓝牙屏幕（无需等待播放进度走字）
+                uiHandler.post {
+                    bluetoothLyricManager?.forceInstantUpdate()
+                }
             }
         }
     }

@@ -143,11 +143,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED) {
                             val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                            playerView?.animate()?.alpha(0f)?.setDuration(800)?.withEndAction {
+                            playerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction {
                                 playerView.postDelayed({
                                     canvasExoPlayer?.seekTo(0)
                                     canvasExoPlayer?.play()
-                                }, 1000) 
+                                }, 900) 
                             }?.start()
                         }
                     }
@@ -209,7 +209,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
 
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
-                                    delay(300) 
+                                    delay(400) 
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
                                     }

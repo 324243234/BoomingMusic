@@ -94,16 +94,16 @@ object AnimatedCanvasFetcher {
         // ==========================================
         // 🌟 5. 第二梯队降级匹配：歌手 + 歌名 (仅在有专辑名时才执行降级)
         // ==========================================
-        if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
-            val fallbackQuery = listOf(primaryArtist, rawTitle).filter { it.isNotBlank() }.joinToString(" ")
-                .replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
-                
-            val cover2 = fetchAndDownloadFromNetwork(fallbackQuery, song, parentDir)
-            if (cover2 != null) {
-                Log.d(TAG, "🎯 降级匹配命中 (歌手+歌名): $fallbackQuery")
-                return@withContext cacheAndReturn(cacheKey, cover2)
-            }
-        }
+        //if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
+        //    val fallbackQuery = listOf(primaryArtist, rawTitle).filter { it.isNotBlank() }.joinToString(" ")
+        //        .replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        //        
+         //   val cover2 = fetchAndDownloadFromNetwork(fallbackQuery, song, parentDir)
+         //   if (cover2 != null) {
+         //       Log.d(TAG, "🎯 降级匹配命中 (歌手+歌名): $fallbackQuery")
+         //       return@withContext cacheAndReturn(cacheKey, cover2)
+          //  }
+        //}
 
         Log.d(TAG, "💔 宁缺毋滥，未找到匹配动态封面: ${song.title}")
         return@withContext null
