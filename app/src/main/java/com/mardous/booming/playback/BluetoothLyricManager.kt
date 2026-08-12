@@ -228,7 +228,9 @@ class BluetoothLyricManager(
         lastPushedTitle = titleText
         lastPushedArtist = artistText
 
-        player.replaceMediaItem(currentIndex, updatedItem)
+        // 直接作用于原生 player
+        val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+        realPlayer.replaceMediaItem(currentIndex, updatedItem)
     }
 
     private fun restoreOriginalMetadata() {
@@ -273,7 +275,8 @@ class BluetoothLyricManager(
                     .setMediaMetadata(restoredMetadata)
                     .build()
 
-                player.replaceMediaItem(targetIndex, restoredItem)
+                val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+                realPlayer.replaceMediaItem(targetIndex, restoredItem)
             }
         }
 

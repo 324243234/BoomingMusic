@@ -117,6 +117,7 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.koin.android.ext.android.inject
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -702,13 +703,11 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 【彻底杜绝 Race Condition】：收藏指令拦截
             "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 对接 CarWith: 桌面卡片播放模式切换
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
@@ -878,28 +877,27 @@ class PlaybackService :
     }
 
     /**
-     * 【彻底杜绝 Race Condition】：放弃不靠谱的传参/Flow，直接强拉当前播放项同步查库
+     * 【终极保护】：带超时锁的精准匹配，抛弃异步裸读，彻底断绝张冠李戴和死循环
      */
-    private fun updateCarWithMetadata() {
+    private fun updateCarWithMetadata(mediaItem: MediaItem? = player.currentMediaItem) {
+        if (mediaItem == null) return
+
         carWithUpdateJob?.cancel()
 
         val isShuffleEnabled = player.shuffleModeEnabled
         val currentRepeatMode = player.repeatMode
+        val expectedMediaId = mediaItem.mediaId
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(50) 
-            
-            val currentIndex = player.currentMediaItemIndex
-            if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
-            val expectedMediaId = player.getMediaItemAt(currentIndex).mediaId
-            
             withContext(IO) {
-                // 【核心保护 1】：用 expectedMediaId 穿透查库，保证状态绝对匹配！
+                // 【核心锁 1】：挂起等待！直到 Flow 吐出的歌曲 ID 100% 匹配当前媒体项，防止读取到上一首歌
                 val song = runCatching { 
-                    queueStateHolder.currentSong.first { it.id.toString() == expectedMediaId } 
-                }.getOrNull() ?: Song.emptySong
+                    withTimeout(2000) {
+                        queueStateHolder.currentSong.first { it.id.toString() == expectedMediaId }
+                    }
+                }.getOrNull()
                 
-                if (song == Song.emptySong) return@withContext
+                if (song == null || song == Song.emptySong) return@withContext
 
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
@@ -914,7 +912,7 @@ class PlaybackService :
                 }
 
                 withContext(Main) {
-                    // 【核心保护 2】：覆写数据前，重拉最新播放器实体，彻底杜绝把蓝牙歌词字段给冲掉
+                    // 【核心锁 2】：写入前进行防御性双重验证，如果在这几百毫秒内用户又切歌了，立刻丢弃本次覆盖
                     val latestIndex = player.currentMediaItemIndex
                     if (latestIndex < 0 || latestIndex >= player.mediaItemCount) return@withContext
                     val latestItem = player.getMediaItemAt(latestIndex)
@@ -943,7 +941,7 @@ class PlaybackService :
                     val updatedMetadata = latestItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
                     val updatedItem = latestItem.buildUpon().setMediaMetadata(updatedMetadata).build()
 
-                    player.replaceMediaItem(latestIndex, updatedItem)
+                    player.exoPlayer.replaceMediaItem(latestIndex, updatedItem)
                 }
             }
         }
@@ -960,9 +958,11 @@ class PlaybackService :
 
         serviceScope.launch(IO) {
             val expectedId = newMediaId ?: ""
-            // 【核心保护 3】：强一致性挂起等待，直到底层流真正切出当前歌为止
-            val newSong = runCatching { 
-                queueStateHolder.currentSong.first { it.id.toString() == expectedId || expectedId.isEmpty() }
+            // 【核心锁 3】：同样挂起等待正确的歌被发射，确保蓝牙歌词拿到的绝对是当前的歌，而不是上一首
+            val newSong = runCatching {
+                withTimeout(2000) {
+                    queueStateHolder.currentSong.first { it.id.toString() == expectedId || expectedId.isEmpty() }
+                }
             }.getOrDefault(Song.emptySong)
 
             withContext(Main) {
@@ -1009,7 +1009,7 @@ class PlaybackService :
             }
         }
 
-        updateCarWithMetadata()
+        updateCarWithMetadata(mediaItem)
 
         if (player.currentMediaItemIndex == stopIndex) {
             player.exoPlayer.pauseAtEndOfMediaItems = true
@@ -1163,8 +1163,11 @@ class PlaybackService :
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
                         val expectedId = player.getMediaItemAt(currentIndex).mediaId
                         serviceScope.launch(IO) {
+                            // 【核心锁 4】：确保热开启时，立马抓取绝对匹配的当前歌
                             val song = runCatching { 
-                                queueStateHolder.currentSong.first { it.id.toString() == expectedId }
+                                withTimeout(2000) {
+                                    queueStateHolder.currentSong.first { it.id.toString() == expectedId }
+                                }
                             }.getOrNull()
                             if (song != null && song != Song.emptySong) {
                                 withContext(Main) {
@@ -1212,11 +1215,14 @@ class PlaybackService :
         if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
         
         val currentMediaItem = player.getMediaItemAt(currentIndex)
+        val expectedId = currentMediaItem.mediaId
 
         withContext(IO) {
-            val expectedId = currentMediaItem.mediaId
+            // 【核心锁 5】：用户点收藏瞬间，绝对挂起等待匹配流，杜绝收藏了上一首歌
             val song = runCatching { 
-                queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
+                withTimeout(2000) {
+                    queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
+                }
             }.getOrNull()
             
             if (song != null && song != Song.emptySong) {
@@ -1231,7 +1237,7 @@ class PlaybackService :
             Bundle.EMPTY
         )
 
-        updateCarWithMetadata()
+        updateCarWithMetadata(currentMediaItem)
     }
 
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
