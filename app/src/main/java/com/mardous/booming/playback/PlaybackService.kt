@@ -112,7 +112,6 @@ import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -451,6 +450,7 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
+        // 注册 CarWith 交互指令
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -708,8 +708,6 @@ class PlaybackService :
             }
 
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
-                val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
-
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
                     player.repeatMode = Player.REPEAT_MODE_ONE
@@ -812,8 +810,6 @@ class PlaybackService :
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-            // 【死循环隔离核武器】：通过校验所有 Item 的 MediaId Hash 值
-            // 如果仅改了歌词/Metadata，哈希值不会变，直接跳过 buildPlayQueue！
             var currentHash = 1
             val window = Timeline.Window()
             for (i in 0 until timeline.windowCount) {
@@ -892,9 +888,9 @@ class PlaybackService :
             delay(50) 
             
             withContext(IO) {
-                val song = runCatching { queueStateHolder.currentSong.first() }.getOrNull() ?: return@withContext
-                if (song == Song.emptySong) return@withContext
-
+                // 【核心修复】：必须通过底层回调中传过来的精准 mediaItem 获取实际歌曲
+                val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
+                
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
@@ -931,7 +927,6 @@ class PlaybackService :
 
                 withContext(Main) {
                     if (currentIndex in 0 until player.mediaItemCount && player.getMediaItemAt(currentIndex).mediaId == updatedItem.mediaId) {
-                        // 【关键】：直接修改原生 exoPlayer，绕开 AdvancedForwardingPlayer
                         player.exoPlayer.replaceMediaItem(currentIndex, updatedItem)
                     }
                 }
@@ -949,7 +944,8 @@ class PlaybackService :
         lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            val newSong = queueStateHolder.currentSong.first()
+            // 【核心修复】：必须使用 mediaItem 来同步查找精准实体，抛弃存在延迟的异步 queueStateHolder
+            val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
 
             withContext(Main) {
                 bluetoothLyricManager?.loadLyricsForSong(newSong)
@@ -1144,13 +1140,17 @@ class PlaybackService :
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-                    serviceScope.launch(Main) {
-                        val currentItem = player.currentMediaItem ?: return@launch
-                        val song = withContext(IO) {
-                            runCatching { repository.songByMediaItem(currentItem, ignoreBlacklist = true) }.getOrNull()
-                        }
-                        if (song != null) {
-                            bluetoothLyricManager?.loadLyricsForSong(song)
+                    
+                    // 【核心修复】：实时响应时，安全抓取精准当前歌曲状态进行即时更新
+                    val currentItem = player.currentMediaItem
+                    if (currentItem != null) {
+                        serviceScope.launch(IO) {
+                            val song = runCatching { repository.songByMediaItem(currentItem, ignoreBlacklist = true) }.getOrNull()
+                            if (song != null) {
+                                withContext(Main) {
+                                    bluetoothLyricManager?.loadLyricsForSong(song)
+                                }
+                            }
                         }
                     }
                 } else if (!enabled) {
@@ -1191,8 +1191,8 @@ class PlaybackService :
         val currentMediaItem = player.currentMediaItem ?: return
 
         withContext(IO) {
-            val song = queueStateHolder.currentSong.first()
-            if (song != Song.emptySong) repository.toggleFavorite(song)
+            val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = false) }.getOrNull()
+            if (song != null && song != Song.emptySong) repository.toggleFavorite(song)
         }
 
         widgets.refresh()
