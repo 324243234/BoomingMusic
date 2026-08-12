@@ -145,7 +145,6 @@ class PlaybackService :
         )
     }
 
-    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -168,11 +167,11 @@ class PlaybackService :
     private var mediaSession: MediaLibrarySession? = null
 
     private var eqStateHandler: Handler? = Handler(Looper.getMainLooper())
-    
-    // 独立维护的蓝牙歌词管理器，开启时与 CarWith 并行运行，关闭时彻底销毁
     private var bluetoothLyricManager: BluetoothLyricManager? = null
-    // CarWith 卡片防抖任务
     private var carWithUpdateJob: Job? = null
+
+    // 【防死循环锁】：记录上一次真实处理的歌曲 ID
+    private var lastProcessedMediaId: String? = null
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -346,7 +345,6 @@ class PlaybackService :
             }
         }
 
-        // 初始化时根据偏好设置并行启动蓝牙歌词
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
         }
@@ -440,7 +438,7 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 注册 CarWith 桌面卡片需要拦截的反向控制交互指令
+        // 注册 CarWith 车机卡片所需的自定义交互指令
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -692,18 +690,16 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 拦截处理 CarWith 车机卡片的收藏按钮点击
+            // 对接 CarWith: 桌面卡片收藏按钮点击
             "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 拦截处理 CarWith 车机卡片的播放模式切换
+            // 对接 CarWith: 桌面卡片播放模式切换
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
-                // 车机端依照官方契约打包时，会将此 Bundle 作为 String 传参
                 val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
 
-                // 我们内部的流转闭环为：随机 -> 单曲循环 -> 列表循环 -> 随机
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
                     player.repeatMode = Player.REPEAT_MODE_ONE
@@ -715,7 +711,6 @@ class PlaybackService :
                     player.shuffleModeEnabled = true
                 }
                 
-                // 强制同步响应回车机
                 updateCarWithMetadata()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
@@ -806,6 +801,10 @@ class PlaybackService :
     }
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+        // 如果是由蓝牙歌词修改元数据引起的播放列表变化，无需高频保存磁盘，避免阻塞主线程
+        if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED && lastProcessedMediaId == player.currentMediaItem?.mediaId) {
+            return
+        }
         persistentStorage.saveState(true)
     }
 
@@ -857,36 +856,34 @@ class PlaybackService :
     }
 
     /**
-     * 并行同步机制：对接 CarWith 的状态同步（含歌词、模式、收藏等）
-     * 依赖于 MediaItem.mediaMetadata.extras(Bundle)
-     * 此过程完全不干扰蓝牙歌词(BluetoothLyricManager)劫持的 Title 数据。
+     * 【CarWith 官方协议同步机制】
+     * 针对车机规范独立更新 MediaMetadata.extras
+     * 与底层蓝牙歌词(BluetoothLyricManager)的 Title 篡改互不冲突、完美并行。
      */
     private fun updateCarWithMetadata(mediaItem: MediaItem? = player.currentMediaItem) {
         if (mediaItem == null) return
 
-        // 1. 防抖动保护，撤销旧任务避免重复刷新引发发热卡顿
         carWithUpdateJob?.cancel()
 
-        // 2. 主线程（Main）安全抓取 Player 状态
         val isShuffleEnabled = player.shuffleModeEnabled
         val currentRepeatMode = player.repeatMode
         val currentIndex = player.currentMediaItemIndex
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(50) // 延迟缓冲期进行防抖
+            delay(50) // 延迟防抖，过滤极高频刷新
             
             withContext(IO) {
                 val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
                 
-                // 【精准调用真实存在的接口】传入 song.id 获取收藏状态
+                // 【合规化类型 1】收藏状态：CarWith 通过 getString 判为 "1"
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
-                // 统一强制化为 String 处理歌词文本，并随着应用端设置变化自动带有译文
+                // 强制转 String 防止 Bundle 类型歧义。获取的歌词文本会自带已设定的翻译。
                 val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
                 val lrcText: String = rawLyrics?.toString() ?: ""
 
-                // 【严格区分类型】播放模式：CarWith 采用 getLong() 解析
+                // 【合规化类型 2】播放模式：CarWith 通过 getLong 解析
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
                     currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
@@ -895,7 +892,7 @@ class PlaybackService :
 
                 val currentExtras = mediaItem.mediaMetadata.extras ?: Bundle.EMPTY
 
-                // 提取差异 (Diff Check)，严控重复无用刷新
+                // 严格 Diff Check，只在真正需要变更时推进，杜绝发热和无效刷新
                 val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
                 val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
                 val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
@@ -906,7 +903,7 @@ class PlaybackService :
                     return@withContext
                 }
 
-                // 合并数据：基于 currentExtras 进行克隆，可以完好保留蓝牙歌词暂存的 BT_ORIGINAL_TITLE 等字段
+                // 深拷贝旧 Bundle 确保不会丢失外部修改数据（如蓝牙歌词的 BT_ORIGINAL_TITLE）
                 val newExtras = Bundle(currentExtras).apply {
                     putLong("ucar.media.metadata.PLAY_MODE", playMode)
                     putString("ucar.media.metadata.COLLECT_STATE", collectState)
@@ -928,6 +925,14 @@ class PlaybackService :
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
+        val newMediaId = mediaItem?.mediaId
+
+        // 【极其关键】死循环隔离层：屏蔽由 replaceMediaItem 发起的元数据（如蓝牙歌词、CarWith）静默刷新
+        // 只有当歌曲（mediaId）发生真实更替时，才放行执行耗时的数据库交互及网络统计。
+        if (newMediaId != null && newMediaId == lastProcessedMediaId) {
+            return
+        }
+        lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
             val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
@@ -977,7 +982,7 @@ class PlaybackService :
             }
         }
 
-        // 与蓝牙歌词引擎并存：CarWith 卡片数据同步
+        // CarWith 车机侧独立更新入口
         updateCarWithMetadata(mediaItem)
 
         if (player.currentMediaItemIndex == stopIndex) {
@@ -1050,12 +1055,11 @@ class PlaybackService :
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
 
-            // 蓝牙歌词生命周期管控，与 CarWith 同步功能双轨独立执行
+            // 蓝牙歌词生命周期完全解耦，随时热插拔管控
             "enable_bluetooth_lyrics" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-                    
                     serviceScope.launch(Main) {
                         val currentItem = player.currentMediaItem ?: return@launch
                         val song = withContext(IO) {
@@ -1071,7 +1075,7 @@ class PlaybackService :
                 }
             }
 
-            // 当用户开关翻译时，实时热更新覆盖车机卡片歌词展示
+            // 监听偏好的翻译开关响应更新到车机大屏卡片上
             "lyrics_show_translation" -> {
                 updateCarWithMetadata()
             }
@@ -1117,7 +1121,6 @@ class PlaybackService :
             Bundle.EMPTY
         )
 
-        // 强行刷入新的状态值到车机终端
         updateCarWithMetadata(currentMediaItem)
     }
 

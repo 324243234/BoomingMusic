@@ -190,7 +190,10 @@ class BluetoothLyricManager(
 
         val currentIndex = player.currentMediaItemIndex
         val currentItem = player.currentMediaItem ?: return
-        val extras = currentItem.mediaMetadata.extras ?: Bundle()
+
+        // 【最核心修复】：必须用 Bundle(...) 深拷贝！！！绝对不能直接修改 extras，
+        // 原有方式在 Android 13/Media3 中是禁忌，不仅会导致更新被系统判定无效，还可能直接抛出内存异常。
+        val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
 
         val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
         val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
