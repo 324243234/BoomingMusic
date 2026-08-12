@@ -402,11 +402,14 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         
+        // 🌟 【核心修复 1：时序修正】必须先清空内存里的旧格式歌词缓存
+        lyricsRepository.clearMemoryCache()
+        
+        // 🌟 接着修改配置，瞬间触发 PlaybackService，确保它拿到的绝对是新格式
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
         context?.let { Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
         playerToolbar.menu?.let { updateMenuTitle(it) }
         
-        lyricsRepository.clearMemoryCache()
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
     

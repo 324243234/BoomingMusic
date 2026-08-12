@@ -1161,40 +1161,18 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                 player.exoPlayer.setSeekBackIncrementMs(seekInterval)
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
-			
-			// 【新增】：监听 LRC/TTML 格式切换，瞬间重载蓝牙歌词与 CarWith 数据
-            "preferred_lyrics_file_format" -> {
-                val currentIndex = player.currentMediaItemIndex
-                if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
-                    val expectedId = player.getMediaItemAt(currentIndex).mediaId
-                    serviceScope.launch(IO) {
-                        val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-                            queueStateHolder.currentSong.first { it.id.toString() == expectedId }
-                        }
-                        if (song != null && song != Song.emptySong) {
-                            // 1. 同步刷新蓝牙屏幕歌词
-                            withContext(Main) {
-                                bluetoothLyricManager?.loadLyricsForSong(song)
-                            }
-                        }
-                    }
-                }
-                // 2. 同步刷新 CarWith 车机大屏歌词
-                updateCarWithMetadata()
-            }
 
             "enable_bluetooth_lyrics" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
-                    
                     val currentIndex = player.currentMediaItemIndex
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
                         val expectedId = player.getMediaItemAt(currentIndex).mediaId
                         serviceScope.launch(IO) {
                             val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-    queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
-}
+                                queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
+                            }
                             if (song != null && song != Song.emptySong) {
                                 withContext(Main) {
                                     bluetoothLyricManager?.loadLyricsForSong(song)
@@ -1207,15 +1185,34 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                     bluetoothLyricManager = null
                 }
             }
-			
-			
 
-            // 🌟 2. 关键：翻译开关和歌词格式切换时，瞬间贯通三端状态
-            "lyrics_show_translation", "preferred_lyrics_file_format" -> {
-                // 刷新 CarWith 大屏双语状态
+            // 🌟 【核心修复 3：彻底合并逻辑】解决 Kotlin when 分支重复覆盖问题
+            "preferred_lyrics_file_format" -> {
+                // 1. 同步刷新 CarWith 车机大屏歌词（读取刚清理过缓存的最新格式）
                 updateCarWithMetadata()
                 
-                // 瞬间强制刷新蓝牙屏幕（无需等待播放进度走字）
+                // 2. 强行重载蓝牙歌词
+                val currentIndex = player.currentMediaItemIndex
+                if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                    val expectedId = player.getMediaItemAt(currentIndex).mediaId
+                    serviceScope.launch(IO) {
+                        val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
+                            queueStateHolder.currentSong.first { it.id.toString() == expectedId }
+                        }
+                        if (song != null && song != Song.emptySong) {
+                            withContext(Main) {
+                                // 强制打破防抖，重新从磁盘提取最新格式并推给蓝牙
+                                bluetoothLyricManager?.forceReloadLyricsForSong(song)
+                            }
+                        }
+                    }
+                }
+            }
+
+            "lyrics_show_translation" -> {
+                // 刷新 CarWith 大屏双语状态
+                updateCarWithMetadata()
+                // 翻译开关只需要在已有的内存对象上重绘，不需要读盘
                 uiHandler.post {
                     bluetoothLyricManager?.forceInstantUpdate()
                 }

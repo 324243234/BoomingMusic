@@ -104,6 +104,13 @@ class BluetoothLyricManager(
             }
         }
     }
+	
+	// 🌟 【核心修复 2：强行重载引擎】
+    // 暴露此接口用于格式切换：无视“同一首歌不重复加载”的性能拦截，强行重刷最新格式
+    fun forceReloadLyricsForSong(song: Song) {
+        currentPlayingSongKey = "" // 强行清空校验锁，打破防抖拦截
+        loadLyricsForSong(song)
+    }
 
     private fun handleLyricsResult(lyrics: SyncedLyrics?) {
         if (lyrics != null && lyrics.lines.isNotEmpty()) {
