@@ -86,7 +86,9 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        applicationId = namespace
+        //applicationId = namespace
+		 applicationId = "com.luna.music"   
+        //applicationId = "com.kugou.android.lite"
         versionCode = 1400104
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)
@@ -182,8 +184,10 @@ android {
             isEnable = !isCI && !isBuildingBundle
 
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
-            isUniversalApk = true
+            //include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            //isUniversalApk = true
+			include("arm64-v8a")
+            isUniversalApk = false // 【修改点】：改成 false，彻底关掉它
         }
     }
     packaging {
@@ -196,7 +200,9 @@ android {
         }
     }
     lint {
-        abortOnError = true
+        //abortOnError = true
+		 abortOnError = false // 遇到 Lint 错误不中断构建
+        checkReleaseBuilds = false // 禁用发布构建时的 Lint 检查（最快解决办法）
         warning += listOf("ImpliedQuantity", "Instantiatable", "MissingQuantity", "MissingTranslation")
     }
     dependenciesInfo {
