@@ -60,7 +60,7 @@
         app:cardUseCompatPadding="false"
         app:strokeWidth="0dp"
         app:shapeAppearanceOverlay="?shapeAppearanceCornerExtraLarge"
-        app:cardCornerRadius="15.6dp"
+        app:cardCornerRadius="15.5dp"
         app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
         app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
