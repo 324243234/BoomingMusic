@@ -112,6 +112,7 @@ import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -450,7 +451,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 注册 CarWith 交互指令
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -710,8 +710,6 @@ class PlaybackService :
 
             // 对接 CarWith: 桌面卡片播放模式切换
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
-                val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
-
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
                     player.repeatMode = Player.REPEAT_MODE_ONE
@@ -880,23 +878,27 @@ class PlaybackService :
     }
 
     /**
-     * 【彻底杜绝 Race Condition】：放弃不靠谱的 queueStateHolder 异步流，直接通过 mediaItem 同步查库
+     * 【彻底杜绝 Race Condition】：放弃不靠谱的传参/Flow，直接强拉当前播放项同步查库
      */
-    private fun updateCarWithMetadata(mediaItem: MediaItem? = player.currentMediaItem) {
-        if (mediaItem == null) return
-
+    private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
         val isShuffleEnabled = player.shuffleModeEnabled
         val currentRepeatMode = player.repeatMode
-        val currentIndex = player.currentMediaItemIndex
 
         carWithUpdateJob = serviceScope.launch(Main) {
             delay(50) 
             
+            val currentIndex = player.currentMediaItemIndex
+            if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
+            val expectedMediaId = player.getMediaItemAt(currentIndex).mediaId
+            
             withContext(IO) {
-                // 【核心修复】：直接使用当前传进来的 mediaItem 查库，绝对不会拿到上一首的数据
-                val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
+                // 【核心保护 1】：用 expectedMediaId 穿透查库，保证状态绝对匹配！
+                val song = runCatching { 
+                    queueStateHolder.currentSong.first { it.id.toString() == expectedMediaId } 
+                }.getOrNull() ?: Song.emptySong
+                
                 if (song == Song.emptySong) return@withContext
 
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
@@ -911,32 +913,37 @@ class PlaybackService :
                     else -> 2L
                 }
 
-                val currentExtras = mediaItem.mediaMetadata.extras ?: Bundle.EMPTY
-
-                val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
-                val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
-                val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
-
-                if (currentCollectState == collectState &&
-                    currentPlayMode == playMode &&
-                    currentLyric == lrcText) {
-                    return@withContext
-                }
-
-                val newExtras = Bundle(currentExtras).apply {
-                    putLong("ucar.media.metadata.PLAY_MODE", playMode)
-                    putString("ucar.media.metadata.COLLECT_STATE", collectState)
-                    putString("ucar.media.metadata.LYRICS_WHOLE", lrcText) 
-                    putString("android.media.metadata.LYRIC", lrcText) 
-                }
-
-                val updatedMetadata = mediaItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
-                val updatedItem = mediaItem.buildUpon().setMediaMetadata(updatedMetadata).build()
-
                 withContext(Main) {
-                    if (currentIndex in 0 until player.mediaItemCount && player.getMediaItemAt(currentIndex).mediaId == updatedItem.mediaId) {
-                        player.exoPlayer.replaceMediaItem(currentIndex, updatedItem)
+                    // 【核心保护 2】：覆写数据前，重拉最新播放器实体，彻底杜绝把蓝牙歌词字段给冲掉
+                    val latestIndex = player.currentMediaItemIndex
+                    if (latestIndex < 0 || latestIndex >= player.mediaItemCount) return@withContext
+                    val latestItem = player.getMediaItemAt(latestIndex)
+                    
+                    if (latestItem.mediaId != expectedMediaId) return@withContext
+
+                    val currentExtras = latestItem.mediaMetadata.extras ?: Bundle.EMPTY
+
+                    val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
+                    val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
+                    val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
+
+                    if (currentCollectState == collectState &&
+                        currentPlayMode == playMode &&
+                        currentLyric == lrcText) {
+                        return@withContext
                     }
+
+                    val newExtras = Bundle(currentExtras).apply {
+                        putLong("ucar.media.metadata.PLAY_MODE", playMode)
+                        putString("ucar.media.metadata.COLLECT_STATE", collectState)
+                        putString("ucar.media.metadata.LYRICS_WHOLE", lrcText) 
+                        putString("android.media.metadata.LYRIC", lrcText) 
+                    }
+
+                    val updatedMetadata = latestItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
+                    val updatedItem = latestItem.buildUpon().setMediaMetadata(updatedMetadata).build()
+
+                    player.replaceMediaItem(latestIndex, updatedItem)
                 }
             }
         }
@@ -952,8 +959,11 @@ class PlaybackService :
         lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            // 【核心修复】：弃用 queueStateHolder 异步流，直接根据确切的 mediaItem 拉取实体
-            val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrDefault(Song.emptySong)
+            val expectedId = newMediaId ?: ""
+            // 【核心保护 3】：强一致性挂起等待，直到底层流真正切出当前歌为止
+            val newSong = runCatching { 
+                queueStateHolder.currentSong.first { it.id.toString() == expectedId || expectedId.isEmpty() }
+            }.getOrDefault(Song.emptySong)
 
             withContext(Main) {
                 bluetoothLyricManager?.loadLyricsForSong(newSong)
@@ -999,7 +1009,7 @@ class PlaybackService :
             }
         }
 
-        updateCarWithMetadata(mediaItem)
+        updateCarWithMetadata()
 
         if (player.currentMediaItemIndex == stopIndex) {
             player.exoPlayer.pauseAtEndOfMediaItems = true
@@ -1149,12 +1159,14 @@ class PlaybackService :
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
                     
-                    // 【核心修复】：完全抛弃 Flow，确保查库绝对实时、精准
-                    val currentItem = player.currentMediaItem
-                    if (currentItem != null) {
+                    val currentIndex = player.currentMediaItemIndex
+                    if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                        val expectedId = player.getMediaItemAt(currentIndex).mediaId
                         serviceScope.launch(IO) {
-                            val song = runCatching { repository.songByMediaItem(currentItem, ignoreBlacklist = true) }.getOrNull()
-                            if (song != null) {
+                            val song = runCatching { 
+                                queueStateHolder.currentSong.first { it.id.toString() == expectedId }
+                            }.getOrNull()
+                            if (song != null && song != Song.emptySong) {
                                 withContext(Main) {
                                     bluetoothLyricManager?.loadLyricsForSong(song)
                                 }
@@ -1195,13 +1207,21 @@ class PlaybackService :
         putInt(Playback.EXTRA_REPEAT_MODE, player.repeatMode)
     }
 
-    // 【核心修复】：杜绝“张冠李戴”，直接根据当前确切媒体项收藏
     private suspend fun toggleFavorite() {
-        val currentMediaItem = player.currentMediaItem ?: return
+        val currentIndex = player.currentMediaItemIndex
+        if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
+        
+        val currentMediaItem = player.getMediaItemAt(currentIndex)
 
         withContext(IO) {
-            val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = false) }.getOrNull()
-            if (song != null && song != Song.emptySong) repository.toggleFavorite(song)
+            val expectedId = currentMediaItem.mediaId
+            val song = runCatching { 
+                queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
+            }.getOrNull()
+            
+            if (song != null && song != Song.emptySong) {
+                repository.toggleFavorite(song)
+            }
         }
 
         widgets.refresh()
@@ -1211,7 +1231,7 @@ class PlaybackService :
             Bundle.EMPTY
         )
 
-        updateCarWithMetadata(currentMediaItem)
+        updateCarWithMetadata()
     }
 
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {

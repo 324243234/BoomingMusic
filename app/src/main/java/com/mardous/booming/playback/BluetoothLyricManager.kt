@@ -14,7 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (针对 BoomingMusic 框架深度适配版)
+ * 车载蓝牙歌词核心引擎 (极简安全版)
+ * 彻底杜绝与 CarWith 状态同步的对象污染冲突
  */
 @UnstableApi
 class BluetoothLyricManager(
@@ -87,6 +88,10 @@ class BluetoothLyricManager(
             fetchJob?.cancel()
             currentLyricsList = emptyList()
             resetStateCache()
+
+            // 绑定当前处理的媒体 ID，防止越界推流
+            hookedMediaId = song.id.toString()
+            isHooked = true
 
             fetchJob = coroutineScope.launch(Dispatchers.IO) {
                 try {
@@ -186,17 +191,19 @@ class BluetoothLyricManager(
     }
 
     private fun pushToBluetooth(titleText: String, artistText: String) {
-        if (titleText == lastPushedTitle && artistText == lastPushedArtist) {
-            return
-        }
+        if (titleText == lastPushedTitle && artistText == lastPushedArtist) return
 
         val currentIndex = player.currentMediaItemIndex
         if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
         
+        // 绝对实时获取底层对象，避免覆写 CarWith 的变更
         val currentItem = player.getMediaItemAt(currentIndex)
+        
+        // 【关键保护】如果已经切歌了，但缓冲期内的歌词还在发，坚决拦截
+        if (currentItem.mediaId != hookedMediaId) return
+
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
 
-        // 备份原始歌曲信息
         val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
         val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
         val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "未知专辑"
@@ -218,15 +225,10 @@ class BluetoothLyricManager(
             .setMediaMetadata(updatedMetadata)
             .build()
 
-        isHooked = true
-        hookedMediaId = currentItem.mediaId
         lastPushedTitle = titleText
         lastPushedArtist = artistText
 
-        // 【关键修复】：如果使用的 player 是 AdvancedForwardingPlayer，直接操作其代理的原生 exoPlayer 替换，
-        // 避开 AdvancedForwardingPlayer 内部对 replaceMediaItem 的拦截与二次覆盖
-        val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
-        realPlayer.replaceMediaItem(currentIndex, updatedItem)
+        player.replaceMediaItem(currentIndex, updatedItem)
     }
 
     private fun restoreOriginalMetadata() {
@@ -237,7 +239,6 @@ class BluetoothLyricManager(
             return
         }
 
-        // 通过 MediaId 精准查找要还原的项，解决索引错位问题
         var targetIndex = -1
         for (i in 0 until player.mediaItemCount) {
             if (player.getMediaItemAt(i).mediaId == hookedMediaId) {
@@ -272,8 +273,7 @@ class BluetoothLyricManager(
                     .setMediaMetadata(restoredMetadata)
                     .build()
 
-                val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
-                realPlayer.replaceMediaItem(targetIndex, restoredItem)
+                player.replaceMediaItem(targetIndex, restoredItem)
             }
         }
 
