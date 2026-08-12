@@ -180,12 +180,10 @@ class PlaybackService :
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
     
-    // 独立蓝牙歌词管理器及 CarWith 防抖任务
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
 
-    // 【核心修复】：播放列表结构哈希，用于拦截蓝牙歌词更新导致的虚假列表变化
     private var lastTimelineHashCode: Int = 0
 
     private var errorRecoveryRetryCount = 0
@@ -453,7 +451,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 注册 CarWith 交互指令
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -711,6 +708,8 @@ class PlaybackService :
             }
 
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
+                val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
+
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
                     player.repeatMode = Player.REPEAT_MODE_ONE
@@ -721,6 +720,7 @@ class PlaybackService :
                     player.repeatMode = Player.REPEAT_MODE_ALL
                     player.shuffleModeEnabled = true
                 }
+                
                 updateCarWithMetadata()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
@@ -812,15 +812,14 @@ class PlaybackService :
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-            // 【核心修复】计算当前 Timeline 中所有媒体 ID 的哈希值
+            // 【死循环隔离核武器】：通过校验所有 Item 的 MediaId Hash 值
+            // 如果仅改了歌词/Metadata，哈希值不会变，直接跳过 buildPlayQueue！
             var currentHash = 1
             val window = Timeline.Window()
             for (i in 0 until timeline.windowCount) {
                 currentHash = 31 * currentHash + timeline.getWindow(i, window).mediaItem.mediaId.hashCode()
             }
             
-            // 如果哈希值没变，说明只是通过 replaceMediaItem 更新了 Metadata（歌词/CarWith状态）
-            // 此时【坚决拦截】，不要触发 buildPlayQueue，彻底斩断数据库死循环！
             if (currentHash == lastTimelineHashCode) {
                 return
             }
@@ -932,7 +931,8 @@ class PlaybackService :
 
                 withContext(Main) {
                     if (currentIndex in 0 until player.mediaItemCount && player.getMediaItemAt(currentIndex).mediaId == updatedItem.mediaId) {
-                        player.replaceMediaItem(currentIndex, updatedItem)
+                        // 【关键】：直接修改原生 exoPlayer，绕开 AdvancedForwardingPlayer
+                        player.exoPlayer.replaceMediaItem(currentIndex, updatedItem)
                     }
                 }
             }
@@ -1091,7 +1091,6 @@ class PlaybackService :
         }
         if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
             queueStateHolder.submitShuffleMode(player.shuffleModeEnabled)
-            // 作者逻辑：不在 TIMELINE 改变时调度，避免冲突
             if (!events.contains(Player.EVENT_TIMELINE_CHANGED)) {
                 dispatchPlayQueue(player)
                 if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {

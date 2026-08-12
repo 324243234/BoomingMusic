@@ -3,6 +3,7 @@ package com.mardous.booming.playback
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.SyncedLyrics
@@ -13,15 +14,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 车载蓝牙歌词核心引擎 (纯净稳定版)
+ * 车载蓝牙歌词核心引擎 (针对 BoomingMusic 框架深度适配版)
  */
+@UnstableApi
 class BluetoothLyricManager(
     private val player: Player,
     private val coroutineScope: CoroutineScope,
     private val lyricsRepository: LyricsRepository
 ) {
     private var isHooked = false
-    private var hookedIndex = -1 
+    private var hookedMediaId: String = ""
     private var currentLyricsList: List<SyncedLyrics.Line> = emptyList()
     
     private var currentPlayingSongKey: String = ""
@@ -189,12 +191,12 @@ class BluetoothLyricManager(
         }
 
         val currentIndex = player.currentMediaItemIndex
-        val currentItem = player.currentMediaItem ?: return
-
-        // 【最核心修复】：必须用 Bundle(...) 深拷贝！！！绝对不能直接修改 extras，
-        // 原有方式在 Android 13/Media3 中是禁忌，不仅会导致更新被系统判定无效，还可能直接抛出内存异常。
+        if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
+        
+        val currentItem = player.getMediaItemAt(currentIndex)
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
 
+        // 备份原始歌曲信息
         val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
         val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
         val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "未知专辑"
@@ -217,56 +219,66 @@ class BluetoothLyricManager(
             .build()
 
         isHooked = true
-        hookedIndex = currentIndex
+        hookedMediaId = currentItem.mediaId
         lastPushedTitle = titleText
         lastPushedArtist = artistText
 
-        player.replaceMediaItem(currentIndex, updatedItem)
+        // 【关键修复】：如果使用的 player 是 AdvancedForwardingPlayer，直接操作其代理的原生 exoPlayer 替换，
+        // 避开 AdvancedForwardingPlayer 内部对 replaceMediaItem 的拦截与二次覆盖
+        val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+        realPlayer.replaceMediaItem(currentIndex, updatedItem)
     }
 
     private fun restoreOriginalMetadata() {
-        if (!isHooked || hookedIndex < 0 || hookedIndex >= player.mediaItemCount) {
+        if (!isHooked || hookedMediaId.isEmpty()) {
             isHooked = false
-            hookedIndex = -1
+            hookedMediaId = ""
             resetStateCache()
             return
         }
 
-        val itemToRestore = player.getMediaItemAt(hookedIndex)
-        val extras = itemToRestore.mediaMetadata.extras
-
-        if (extras == null || !extras.containsKey("BT_ORIGINAL_TITLE")) {
-            isHooked = false
-            hookedIndex = -1
-            resetStateCache()
-            return
+        // 通过 MediaId 精准查找要还原的项，解决索引错位问题
+        var targetIndex = -1
+        for (i in 0 until player.mediaItemCount) {
+            if (player.getMediaItemAt(i).mediaId == hookedMediaId) {
+                targetIndex = i
+                break
+            }
         }
 
-        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "未知歌曲"
-        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "未知歌手"
-        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "未知专辑"
+        if (targetIndex != -1) {
+            val itemToRestore = player.getMediaItemAt(targetIndex)
+            val extras = itemToRestore.mediaMetadata.extras
 
-        val cleanExtras = Bundle(extras).apply {
-            remove("BT_ORIGINAL_TITLE")
-            remove("BT_ORIGINAL_ARTIST")
-            remove("BT_ORIGINAL_ALBUM")
+            if (extras != null && extras.containsKey("BT_ORIGINAL_TITLE")) {
+                val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "未知歌曲"
+                val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "未知歌手"
+                val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "未知专辑"
+
+                val cleanExtras = Bundle(extras).apply {
+                    remove("BT_ORIGINAL_TITLE")
+                    remove("BT_ORIGINAL_ARTIST")
+                    remove("BT_ORIGINAL_ALBUM")
+                }
+
+                val restoredMetadata = itemToRestore.mediaMetadata.buildUpon()
+                    .setTitle(cleanTitle)
+                    .setArtist(cleanArtist)
+                    .setAlbumTitle(cleanAlbum)
+                    .setExtras(cleanExtras)
+                    .build()
+
+                val restoredItem = itemToRestore.buildUpon()
+                    .setMediaMetadata(restoredMetadata)
+                    .build()
+
+                val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+                realPlayer.replaceMediaItem(targetIndex, restoredItem)
+            }
         }
-
-        val restoredMetadata = itemToRestore.mediaMetadata.buildUpon()
-            .setTitle(cleanTitle)
-            .setArtist(cleanArtist)
-            .setAlbumTitle(cleanAlbum)
-            .setExtras(cleanExtras)
-            .build()
-
-        val restoredItem = itemToRestore.buildUpon()
-            .setMediaMetadata(restoredMetadata)
-            .build()
-
-        player.replaceMediaItem(hookedIndex, restoredItem)
 
         isHooked = false
-        hookedIndex = -1
+        hookedMediaId = ""
         resetStateCache()
     }
 
