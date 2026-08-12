@@ -878,9 +878,8 @@ class PlaybackService :
             withContext(IO) {
                 val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
                 
-                // 修复编译错误：移除项目中不存在的 repository.isFavorite 方法调用
-                // 如果你的 Song 实体里有该属性（如 song.isFavorite），可替换为 val isFavorite = song.isFavorite == true
-                val isFavorite = false
+                // 【精准调用真实存在的接口】传入 song.id 获取收藏状态
+                val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
                 // 统一强制化为 String 处理歌词文本，并随着应用端设置变化自动带有译文
