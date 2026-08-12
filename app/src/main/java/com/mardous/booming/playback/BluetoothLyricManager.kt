@@ -318,7 +318,7 @@ class BluetoothLyricManager(
             currentPlayingSongKey = "" 
             restoreOriginalMetadata()
         }
-    }
+    } 
     
     fun release() {
         stopLyrics()
