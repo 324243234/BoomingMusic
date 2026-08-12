@@ -341,7 +341,7 @@ class PlaybackService :
             }
         }
 
-        if (preferences.getBoolean("pref_enable_bluetooth_lyrics", false)) {
+        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
         }
 
@@ -1023,7 +1023,7 @@ class PlaybackService :
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
 
-            "pref_enable_bluetooth_lyrics" -> {
+            "enable_bluetooth_lyrics" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
