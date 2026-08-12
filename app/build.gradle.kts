@@ -2,7 +2,6 @@ import com.android.build.api.variant.BuildConfigField
 import com.android.build.api.variant.ResValue
 import java.util.Properties
 
-
 plugins {
     alias(libs.plugins.android)
     alias(libs.plugins.android.safeargs)
@@ -71,31 +70,24 @@ sealed class Version(
         }
 }
 
-// 🌟 同步作者更新：版本号升至 1.4.0.3
 val currentVersion: Version = Version.Beta(
     versionMajor = 1,
     versionMinor = 4,
     versionPatch = 0,
-    versionBuild = 3
+    versionBuild = 4
 )
 val currentVersionCode = currentVersion.code
 
 android {
     compileSdk = 37
     namespace = "com.mardous.booming"
-    //namespace = "com.luna.music"
 
     defaultConfig {
         minSdk = 26
         targetSdk = 36
 
-        // 🌟 保留本地修改：定制化 applicationId
-        //applicationId = namespace
-        applicationId = "com.luna.music"   
-        //applicationId = "com.kugou.android.lite"
-        
-        // 🌟 同步作者更新：versionCode 升至 1400103
-        versionCode = 1400103
+        applicationId = namespace
+        versionCode = 1400104
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)
     }
@@ -155,7 +147,6 @@ android {
     }
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -191,9 +182,8 @@ android {
             isEnable = !isCI && !isBuildingBundle
 
             reset()
-            // 🌟 保留本地修改：仅保留 arm64-v8a，关闭 universalApk
-            include("arm64-v8a")
-            isUniversalApk = false // 【修改点】：改成 false，彻底关掉它
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = true
         }
     }
     packaging {
@@ -206,8 +196,7 @@ android {
         }
     }
     lint {
-        abortOnError = false // 遇到 Lint 错误不中断构建
-        checkReleaseBuilds = false // 禁用发布构建时的 Lint 检查（最快解决办法）
+        abortOnError = true
         warning += listOf("ImpliedQuantity", "Instantiatable", "MissingQuantity", "MissingTranslation")
     }
     dependenciesInfo {
@@ -303,7 +292,6 @@ dependencies {
     implementation(libs.bundles.kotlinx)
     implementation(libs.bundles.lifecycle)
     implementation(libs.bundles.media3)
-	implementation("androidx.media3:media3-ui:1.3.1")
     implementation(libs.bundles.navigation)
     implementation(libs.bundles.glance)
     implementation(libs.bundles.koin)

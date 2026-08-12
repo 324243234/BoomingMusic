@@ -70,10 +70,11 @@ import com.mardous.booming.core.appwidgets.WidgetPresenter
 import com.mardous.booming.core.appwidgets.config.SongSource
 import com.mardous.booming.core.appwidgets.state.PlaybackState
 import com.mardous.booming.core.audio.AudioOutputObserver
+import com.mardous.booming.core.model.queue.QueuePosition
 import com.mardous.booming.data.local.MediaStoreObserver
 import com.mardous.booming.data.local.ReplayGainTagExtractor
-import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.data.local.repository.Repository
+import com.mardous.booming.data.model.QueueSong
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
@@ -110,15 +111,20 @@ import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.resume
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalAtomicApi::class)
 class PlaybackService :
     MediaLibraryService(),
     MediaLibrarySession.Callback,
@@ -133,18 +139,23 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
-    private val lyricsRepository: LyricsRepository by inject()
+
+    private val queueStateHolder: QueueStateHolder by inject()
+    private val isInTimelineUpdate = AtomicBoolean(false)
+    private var generateQueueJob: Job? = null
 
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
     private val mediaStoreObserver = MediaStoreObserver(uiHandler) {
         WidgetDataSource.invalidate()
+        dispatchPlayQueue(player)
         mediaSession?.broadcastCustomCommand(
             SessionCommand(Playback.EVENT_MEDIA_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
     }
 
+    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -166,12 +177,7 @@ class PlaybackService :
     private lateinit var player: AdvancedForwardingPlayer
     private var mediaSession: MediaLibrarySession? = null
 
-    private var eqStateHandler: Handler? = Handler(Looper.getMainLooper())
-    private var bluetoothLyricManager: BluetoothLyricManager? = null
-    private var carWithUpdateJob: Job? = null
-
-    // 【防死循环锁】：记录上一次真实处理的歌曲 ID
-    private var lastProcessedMediaId: String? = null
+    private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -345,10 +351,6 @@ class PlaybackService :
             }
         }
 
-        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
-            bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-        }
-
         preferences.registerOnSharedPreferenceChangeListener(this)
         audioOutputObserver.startObserver()
 
@@ -367,8 +369,6 @@ class PlaybackService :
     override fun onDestroy() {
         super.onDestroy()
         widgets.stop()
-        carWithUpdateJob?.cancel()
-        bluetoothLyricManager?.release()
         if (bluetoothConnectedRegistered) {
             unregisterReceiver(bluetoothReceiver)
             bluetoothConnectedRegistered = false
@@ -377,7 +377,7 @@ class PlaybackService :
             unregisterReceiver(headsetReceiver)
             headsetReceiverRegistered = false
         }
-        eqStateHandler?.removeCallbacksAndMessages(null)
+        eqStateHandler.removeCallbacksAndMessages(null)
         uiHandler.removeCallbacks(headsetClickRunnable)
         serviceScope.cancel()
         preferences.unregisterOnSharedPreferenceChangeListener(this)
@@ -391,6 +391,7 @@ class PlaybackService :
         sleepTimer.release()
     }
 
+    // Stays on the service: only a foreground start begins playback from cold, which a broadcast cannot.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_PLAY_SONG) {
             val songId = intent.getLongExtra(EXTRA_SONG_ID, -1L)
@@ -437,11 +438,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_UNSHUFFLED_ORDER, Bundle.EMPTY))
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
-
-        // 注册 CarWith 车机卡片所需的自定义交互指令
-        availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
-        availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
-
         return Futures.immediateFuture(
             MediaSession.ConnectionResult.accept(
                 availableSessionCommands.build(),
@@ -530,6 +526,8 @@ class PlaybackService :
         pageSize: Int,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+        // getChildren resolves any id it is handed, so FAVORITES and HISTORY are reachable without ever
+        // appearing in a root listing.
         session.denyUntrusted<ImmutableList<MediaItem>>(browser)?.let { return it }
         return serviceScope.future(IO) {
             val result = runCatching {
@@ -690,31 +688,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 对接 CarWith: 桌面卡片收藏按钮点击
-            "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
-                toggleFavorite()
-                SessionResult(SessionResult.RESULT_SUCCESS)
-            }
-
-            // 对接 CarWith: 桌面卡片播放模式切换
-            "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
-                val carWithMode = customCommand.customExtras.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
-
-                if (player.shuffleModeEnabled) {
-                    player.shuffleModeEnabled = false
-                    player.repeatMode = Player.REPEAT_MODE_ONE
-                } else if (player.repeatMode == Player.REPEAT_MODE_ONE) {
-                    player.shuffleModeEnabled = false
-                    player.repeatMode = Player.REPEAT_MODE_ALL
-                } else {
-                    player.repeatMode = Player.REPEAT_MODE_ALL
-                    player.shuffleModeEnabled = true
-                }
-                
-                updateCarWithMetadata()
-                SessionResult(SessionResult.RESULT_SUCCESS)
-            }
-
             Playback.RESTORE_PLAYBACK -> {
                 val playOnStartupMode = preferences.requireString(PLAY_ON_STARTUP_MODE, PlayOnStartupMode.NEVER)
                 if (playOnStartupMode != PlayOnStartupMode.NEVER) {
@@ -801,11 +774,12 @@ class PlaybackService :
     }
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-        // 如果是由蓝牙歌词修改元数据引起的播放列表变化，无需高频保存磁盘，避免阻塞主线程
-        if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED && lastProcessedMediaId == player.currentMediaItem?.mediaId) {
-            return
+        if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+            buildPlayQueue(player) { songs, position ->
+                queueStateHolder.submitQueue(songs, position)
+                persistentStorage.saveState(true)
+            }
         }
-        persistentStorage.saveState(true)
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -845,103 +819,19 @@ class PlaybackService :
         widgets.refreshModes(shuffleModeEnabled, player.repeatMode)
         refreshMediaButtonCustomLayout()
         persistentStorage.saveState()
-        updateCarWithMetadata()
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {
         widgets.refreshModes(player.shuffleModeEnabled, repeatMode)
         refreshMediaButtonCustomLayout()
         persistentStorage.saveState()
-        updateCarWithMetadata()
-    }
-
-    /**
-     * 【CarWith 官方协议同步机制】
-     * 针对车机规范独立更新 MediaMetadata.extras
-     * 与底层蓝牙歌词(BluetoothLyricManager)的 Title 篡改互不冲突、完美并行。
-     */
-    private fun updateCarWithMetadata(mediaItem: MediaItem? = player.currentMediaItem) {
-        if (mediaItem == null) return
-
-        carWithUpdateJob?.cancel()
-
-        val isShuffleEnabled = player.shuffleModeEnabled
-        val currentRepeatMode = player.repeatMode
-        val currentIndex = player.currentMediaItemIndex
-
-        carWithUpdateJob = serviceScope.launch(Main) {
-            delay(50) // 延迟防抖，过滤极高频刷新
-            
-            withContext(IO) {
-                val song = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: return@withContext
-                
-                // 【合规化类型 1】收藏状态：CarWith 通过 getString 判为 "1"
-                val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
-                val collectState = if (isFavorite) "1" else "0"
-
-                // 强制转 String 防止 Bundle 类型歧义。获取的歌词文本会自带已设定的翻译。
-                val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
-                val lrcText: String = rawLyrics?.toString() ?: ""
-
-                // 【合规化类型 2】播放模式：CarWith 通过 getLong 解析
-                val playMode: Long = when {
-                    isShuffleEnabled -> 0L
-                    currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
-                    else -> 2L
-                }
-
-                val currentExtras = mediaItem.mediaMetadata.extras ?: Bundle.EMPTY
-
-                // 严格 Diff Check，只在真正需要变更时推进，杜绝发热和无效刷新
-                val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
-                val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
-                val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
-
-                if (currentCollectState == collectState &&
-                    currentPlayMode == playMode &&
-                    currentLyric == lrcText) {
-                    return@withContext
-                }
-
-                // 深拷贝旧 Bundle 确保不会丢失外部修改数据（如蓝牙歌词的 BT_ORIGINAL_TITLE）
-                val newExtras = Bundle(currentExtras).apply {
-                    putLong("ucar.media.metadata.PLAY_MODE", playMode)
-                    putString("ucar.media.metadata.COLLECT_STATE", collectState)
-                    putString("ucar.media.metadata.LYRICS_WHOLE", lrcText) 
-                    putString("android.media.metadata.LYRIC", lrcText) // 通用兜底
-                }
-
-                val updatedMetadata = mediaItem.mediaMetadata.buildUpon().setExtras(newExtras).build()
-                val updatedItem = mediaItem.buildUpon().setMediaMetadata(updatedMetadata).build()
-
-                withContext(Main) {
-                    if (currentIndex in 0 until player.mediaItemCount && player.getMediaItemAt(currentIndex).mediaId == updatedItem.mediaId) {
-                        player.replaceMediaItem(currentIndex, updatedItem)
-                    }
-                }
-            }
-        }
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
-        val newMediaId = mediaItem?.mediaId
-
-        // 【极其关键】死循环隔离层：屏蔽由 replaceMediaItem 发起的元数据（如蓝牙歌词、CarWith）静默刷新
-        // 只有当歌曲（mediaId）发生真实更替时，才放行执行耗时的数据库交互及网络统计。
-        if (newMediaId != null && newMediaId == lastProcessedMediaId) {
-            return
-        }
-        lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            val newSong = repository.songByMediaItem(mediaItem, ignoreBlacklist = true)
-            
-            withContext(Main) {
-                // 与 CarWith 数据同步并存：蓝牙歌词在独立模块并行装载
-                bluetoothLyricManager?.loadLyricsForSong(newSong)
-            }
-
+            val newSong = queueStateHolder.currentSong.first()
             if (newSong != Song.emptySong) {
                 replayGainProcessor.currentGain = ReplayGainTagExtractor.getReplayGain(newSong)
             }
@@ -982,9 +872,6 @@ class PlaybackService :
             }
         }
 
-        // CarWith 车机侧独立更新入口
-        updateCarWithMetadata(mediaItem)
-
         if (player.currentMediaItemIndex == stopIndex) {
             player.exoPlayer.pauseAtEndOfMediaItems = true
         }
@@ -1015,17 +902,51 @@ class PlaybackService :
             !events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
             updateEqualizerSessionState(player.isPlaying)
         }
-        if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) &&
-            !events.contains(Player.EVENT_TIMELINE_CHANGED)) {
-            if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
-                this.player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(
-                    firstIndex = player.currentMediaItemIndex,
-                    length = player.mediaItemCount,
-                    randomSeed = Random.nextLong()
-                )
+        if (events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) {
+            queueStateHolder.submitRepeatMode(player.repeatMode)
+        }
+        if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
+            queueStateHolder.submitShuffleMode(player.shuffleModeEnabled)
+            if (!events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+                dispatchPlayQueue(player)
+                if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
+                    this.player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(
+                        firstIndex = player.currentMediaItemIndex,
+                        length = player.mediaItemCount,
+                        randomSeed = Random.nextLong()
+                    )
+                }
+            }
+        }
+        if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+            events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+            val isStructuralChange = events.contains(Player.EVENT_TIMELINE_CHANGED) &&
+                    player.currentTimeline.windowCount != queueStateHolder.queueSize
+            if (!isStructuralChange) {
+                queueStateHolder.setPlayerIndex(player.currentMediaItemIndex)
             }
         }
     }
+
+    /*
+    override fun onTracksChanged(tracks: Tracks) {
+        var sampleRate = -1
+        var channelCount = -1
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    if (group.isTrackSelected(i)) {
+                        val format = group.getTrackFormat(i)
+                        sampleRate = format.sampleRate
+                        channelCount = format.channelCount
+                        break
+                    }
+                }
+            }
+        }
+        audioOutputObserver.updatePlaybackFormat(sampleRate, channelCount)
+    }
+     */
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         when (key) {
@@ -1054,31 +975,6 @@ class PlaybackService :
                 player.exoPlayer.setSeekBackIncrementMs(seekInterval)
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
-
-            // 蓝牙歌词生命周期完全解耦，随时热插拔管控
-            "enable_bluetooth_lyrics" -> {
-                val enabled = preferences.getBoolean(key, false)
-                if (enabled && bluetoothLyricManager == null) {
-                    bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository)
-                    serviceScope.launch(Main) {
-                        val currentItem = player.currentMediaItem ?: return@launch
-                        val song = withContext(IO) {
-                            runCatching { repository.songByMediaItem(currentItem, ignoreBlacklist = true) }.getOrNull()
-                        }
-                        if (song != null) {
-                            bluetoothLyricManager?.loadLyricsForSong(song)
-                        }
-                    }
-                } else if (!enabled) {
-                    bluetoothLyricManager?.release()
-                    bluetoothLyricManager = null
-                }
-            }
-
-            // 监听偏好的翻译开关响应更新到车机大屏卡片上
-            "lyrics_show_translation" -> {
-                updateCarWithMetadata()
-            }
         }
     }
 
@@ -1090,10 +986,12 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
+    /** A command issued before the saved state lands has nothing to act on */
     private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
+    /** The write is debounced */
     private suspend fun awaitSavedState() {
         persistentStorage.saveState()
         persistentStorage.awaitPendingSave()
@@ -1105,13 +1003,9 @@ class PlaybackService :
     }
 
     private suspend fun toggleFavorite() {
-        val currentMediaItem = player.currentMediaItem ?: return
-
         withContext(IO) {
-            val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = false) }.getOrNull()
-            if (song != null) {
-                runCatching { repository.toggleFavorite(song) }
-            }
+            val song = queueStateHolder.currentSong.first()
+            if (song != Song.emptySong) repository.toggleFavorite(song)
         }
 
         widgets.refresh()
@@ -1120,10 +1014,9 @@ class PlaybackService :
             SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
-
-        updateCarWithMetadata(currentMediaItem)
     }
 
+    /** Only the fields that genuinely come from the player; the rest is [WidgetDataSource]'s. */
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
         val id = player.currentMediaItem?.mediaId?.toLongOrNull()
             ?: return PlaybackState()
@@ -1139,7 +1032,70 @@ class PlaybackService :
         return withContext(IO) { WidgetDataSource.enrich(this@PlaybackService, base, needs) }
     }
 
+    private fun dispatchPlayQueue(player: Player) {
+        buildPlayQueue(player) { songs, position ->
+            queueStateHolder.submitQueue(songs, position)
+        }
+    }
+
+    private fun buildPlayQueue(
+        player: Player,
+        onCompletion: (List<QueueSong>, QueuePosition) -> Unit
+    ) {
+        if (isInTimelineUpdate.load()) return
+
+        generateQueueJob?.cancel()
+        generateQueueJob = serviceScope.launch {
+            delay(QUEUE_DEBOUNCE.milliseconds)
+
+            val timeline = player.currentTimeline
+            if (timeline.isEmpty) {
+                onCompletion(emptyList(), QueuePosition.Undefined)
+                return@launch
+            }
+
+            val shuffleModeEnabled = player.shuffleModeEnabled
+            val currentMediaItemIndex = player.currentMediaItemIndex
+
+            val snapshot = player.captureQueueSnapshot(
+                timeline = timeline,
+                currentMediaItemIndex = currentMediaItemIndex,
+                shuffleMode = shuffleModeEnabled
+            )
+            val position = snapshot.createPosition()
+
+            val (songs, missingMediaItems) = withContext(IO) {
+                repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true)
+                    .let { (songs, mediaItems) -> snapshot.deriveQueueSongs(songs) to mediaItems }
+            }
+
+            val missingIds = missingMediaItems.mapTo(mutableSetOf()) { it.mediaId }
+            withContext(Main) {
+                if (missingIds.isNotEmpty() &&
+                    isInTimelineUpdate.compareAndSet(false, newValue = true)) {
+                    player.removeMediaItemsById(missingIds)
+                }
+
+                if (isInTimelineUpdate.exchange(false)) {
+                    // The queue structure changed due to the removal of some elements,
+                    // so the last snapshot is no longer valid; what remains now is to
+                    // force a new capture to ensure consistency.
+                    buildPlayQueue(player, onCompletion)
+                    return@withContext
+                }
+
+                onCompletion(
+                    songs,
+                    position.copy(
+                        current = position.getPositionForIndex(player.currentMediaItemIndex)
+                    )
+                )
+            }
+        }
+    }
+
     private fun playSong(songId: Long, source: SongSource) = serviceScope.launch {
+        // arrives as a foreground start, anything short of playing needs stopSelf() before timeout
         val resolved = runCatching {
             withContext(IO) {
                 val songs = libraryProvider.getPlayableSongs(source.mediaId)
@@ -1156,6 +1112,7 @@ class PlaybackService :
             stopSelf()
             return@launch
         }
+        // On a cold start the restore is still in flight and ends in its own setMediaItems
         awaitRestoration()
         player.setMediaItems(queue.map { song -> buildPlayableMediaItem(song) }, index, C.TIME_UNSET)
         player.playWhenReady = true
@@ -1272,6 +1229,7 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1285,12 +1243,12 @@ class PlaybackService :
     }
 
     private fun updateEqualizerSessionState(isPlaying: Boolean) {
-        eqStateHandler?.removeCallbacksAndMessages(null)
+        eqStateHandler.removeCallbacksAndMessages(null)
         uiHandler.removeCallbacks(headsetClickRunnable)
         if (isPlaying) {
             equalizerManager.setSessionIsActive(true)
         } else {
-            eqStateHandler?.postDelayed(500) {
+            eqStateHandler.postDelayed(500) {
                 equalizerManager.setSessionIsActive(false)
             }
         }
@@ -1351,6 +1309,7 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
+                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
