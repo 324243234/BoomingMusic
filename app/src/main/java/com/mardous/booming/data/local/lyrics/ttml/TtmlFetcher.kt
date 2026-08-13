@@ -17,7 +17,7 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (双语逐字终极挂载版 - 完美适配 BoomingMusic 翻译开关)
+ * TTML 级联网络获取引擎 (双语逐字终极修正版 - 完美匹配 BoomingMusic 翻译解析)
  * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
  */
 object TtmlFetcher {
@@ -59,7 +59,7 @@ object TtmlFetcher {
         val isLocalRemix = song.title.contains("remix", ignoreCase = true) || song.title.contains("dj", ignoreCase = true) || song.title.contains("版")
 
         try {
-            // 🌟 【破冰黑科技】：后台起一个隐形协程，提前去网易云白嫖翻译字典
+            // 🌟 提前去网易云异步获取精准的翻译字典
             val transMapDeferred = async { fetchNetEaseTranslationMap(cleanQuery, targetTitleNorm, targetArtists) }
 
             // ========================================================
@@ -101,7 +101,6 @@ object TtmlFetcher {
                                         tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                     }
                                     if (ttmlResult != null) {
-                                        // 🌟 将网易云白嫖来的翻译，强制注入到 Apple Music 的高精度 TTML 中
                                         val transMap = transMapDeferred.await()
                                         return@withContext injectTranslationIntoTtml(ttmlResult, transMap)
                                     }
@@ -114,9 +113,9 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道二：网易云音乐搜索 + YRC 转译
+            // 通道二：网易云音乐搜索 + YRC (逐字) + Tlyric (翻译) 挂载
             // ========================================================
-            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
+            val neteaseSearchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(cleanQuery)}&type=1&limit=5"
             val neteaseSearchRes = httpGet(neteaseSearchUrl)
             if (neteaseSearchRes != null) {
                 val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs")
@@ -155,7 +154,6 @@ object TtmlFetcher {
                                 val yrcData = jsonObj.optJSONObject("yrc")?.optString("lyric")
                                 val tlyricData = jsonObj.optJSONObject("tlyric")?.optString("lyric")
                                 
-                                // 合并本身带的翻译或全局搜索到的翻译
                                 val localTransMap = parseLrcTranslations(tlyricData)
                                 val mergedTransMap = localTransMap.ifEmpty { transMapDeferred.await() }
 
@@ -171,7 +169,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 兜底
+            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密 + 翻译) 兜底
             // ========================================================
             val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
@@ -238,7 +236,6 @@ object TtmlFetcher {
                                             tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                         }
                                         if (ttmlResult != null) {
-                                            // QQ 拿到的也有可能是纯英文 TTML，这里保险再注入一次
                                             return@withContext injectTranslationIntoTtml(ttmlResult, transMapDeferred.await())
                                         }
                                         break
@@ -257,16 +254,14 @@ object TtmlFetcher {
     }
 
     // ========================================================
-    // 工具层：核心双语融合与 XML 组装引擎 (1:1 复刻 Apple 官方格式)
+    // 工具层：核心双语融合与 XML 组装引擎 (补全 xml:lang 补丁)
     // ========================================================
 
-    // 🌟 外挂拦截：用正则将中文翻译精准注入到 Apple TTML 闭合前
     private fun injectTranslationIntoTtml(ttml: String, transMap: Map<Long, String>): String {
         if (transMap.isEmpty()) return ttml
-        if (ttml.contains("x-translation")) return ttml // 自带翻译，无需画蛇添足
+        if (ttml.contains("x-translation")) return ttml
 
         var modifiedTtml = ttml
-        // 保证根节点拥有 ttm 命名空间
         if (!modifiedTtml.contains("xmlns:ttm=")) {
             modifiedTtml = modifiedTtml.replaceFirst("<tt ", "<tt xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" ")
         }
@@ -279,8 +274,8 @@ object TtmlFetcher {
             
             val trans = findMatchedTranslation(ms, transMap)
             if (!trans.isNullOrBlank()) {
-                // 100% 模拟 Apple Music 官方写法：ttm:role="x-translation"
-                pBlock.replace(Regex("""\s*</p>$"""), "\n        <span ttm:role=\"x-translation\">${escapeXml(trans)}</span>\n      </p>")
+                // 🌟 核心补丁：1:1 对齐 Apple 官方属性结构，挂载 xml:lang="zh-Hans"
+                pBlock.replace(Regex("""\s*</p>$"""), "<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(trans)}</span></p>")
             } else {
                 pBlock
             }
@@ -337,10 +332,10 @@ object TtmlFetcher {
                     pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n")
                     pBuilder.append(spans.joinToString("\n"))
 
-                    // 🌟 100% 兼容 BoomingMusic 翻译标签规范
+                    // 🌟 核心补丁：加上 xml:lang="zh-Hans"
                     val matchedTrans = findMatchedTranslation(lineStart, transMap)
                     if (!matchedTrans.isNullOrBlank()) {
-                        pBuilder.append("\n        <span ttm:role=\"x-translation\">${escapeXml(matchedTrans)}</span>")
+                        pBuilder.append("\n        <span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
                     }
 
                     pBuilder.append("\n      </p>")
@@ -409,10 +404,10 @@ object TtmlFetcher {
                 pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\">\n")
                 pBuilder.append(spans.joinToString("\n"))
 
-                // 🌟 100% 兼容 BoomingMusic 翻译标签规范
+                // 🌟 核心补丁：加上 xml:lang="zh-Hans"
                 val matchedTrans = findMatchedTranslation(lineStart, transMap)
                 if (!matchedTrans.isNullOrBlank()) {
-                    pBuilder.append("\n        <span ttm:role=\"x-translation\">${escapeXml(matchedTrans)}</span>")
+                    pBuilder.append("\n        <span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
                 }
 
                 pBuilder.append("\n      </p>")
@@ -429,10 +424,10 @@ object TtmlFetcher {
                "\n    </div>\n  </body>\n</tt>"
     }
 
-    // --- 新增：LRC 翻译提取器，支持高达 1500ms 的轴对齐误差 ---
     private suspend fun fetchNetEaseTranslationMap(cleanQuery: String, targetTitleNorm: String, targetArtists: List<String>): Map<Long, String> {
         try {
-            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
+            // 🌟 修复：更换为网易云标准搜索 API，保证翻译抓取命中率
+            val neteaseSearchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(cleanQuery)}&type=1&limit=5"
             val neteaseSearchRes = httpGet(neteaseSearchUrl) ?: return emptyMap()
             val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs") ?: return emptyMap()
             
@@ -492,7 +487,6 @@ object TtmlFetcher {
 
     private fun findMatchedTranslation(lineStartMs: Long, transMap: Map<Long, String>): String? {
         if (transMap.isEmpty()) return null
-        // 允许 +-1500ms 毫秒级别的误差容错匹配
         return transMap.entries.firstOrNull { Math.abs(it.key - lineStartMs) <= 1500L }?.value
     }
 
