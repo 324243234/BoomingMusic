@@ -17,7 +17,7 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (双语逐字终极修正版 - 完美匹配 BoomingMusic 翻译解析)
+ * TTML 级联网络获取引擎 (像素级复刻 Apple 官方单行格式，防解析器中断)
  * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
  */
 object TtmlFetcher {
@@ -223,7 +223,9 @@ object TtmlFetcher {
                                                     if (!qrcHex.isNullOrBlank()) {
                                                         val rawQrc = decryptQrc(qrcHex)
                                                         val transText = try {
-                                                            if (!transBase64.isNullOrBlank()) String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8) else null
+                                                            if (!transBase64.isNullOrBlank()) {
+                                                                String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8)
+                                                            } else null
                                                         } catch(e: Exception) { null }
 
                                                         val localTransMap = parseLrcTranslations(transText)
@@ -254,7 +256,7 @@ object TtmlFetcher {
     }
 
     // ========================================================
-    // 工具层：核心双语融合与 XML 组装引擎 (补全 xml:lang 补丁)
+    // 工具层：核心双语融合与 XML 组装引擎 (1:1 单行无空隙复刻 Apple 官方格式)
     // ========================================================
 
     private fun injectTranslationIntoTtml(ttml: String, transMap: Map<Long, String>): String {
@@ -262,8 +264,9 @@ object TtmlFetcher {
         if (ttml.contains("x-translation")) return ttml
 
         var modifiedTtml = ttml
+        // 保证根节点拥有完整魔法开关
         if (!modifiedTtml.contains("xmlns:ttm=")) {
-            modifiedTtml = modifiedTtml.replaceFirst("<tt ", "<tt xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" ")
+            modifiedTtml = modifiedTtml.replaceFirst("<tt ", "<tt xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\" ")
         }
 
         val pRegex = Regex("""<p\s+begin="([^"]+)"[^>]*>.*?</p>""", RegexOption.DOT_MATCHES_ALL)
@@ -274,10 +277,11 @@ object TtmlFetcher {
             
             val trans = findMatchedTranslation(ms, transMap)
             if (!trans.isNullOrBlank()) {
-                // 🌟 核心补丁：1:1 对齐 Apple 官方属性结构，挂载 xml:lang="zh-Hans"
-                pBlock.replace(Regex("""\s*</p>$"""), "<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(trans)}</span></p>")
+                // 🌟 核心修复1：将多行全部压扁为一行，干掉中间所有的回车与换行！
+                val flatBlock = pBlock.replace("\n", "").replace("\r", "")
+                flatBlock.replace(Regex("""\s*</p>$"""), "<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(trans)}</span></p>")
             } else {
-                pBlock
+                pBlock.replace("\n", "").replace("\r", "")
             }
         }
     }
@@ -309,7 +313,8 @@ object TtmlFetcher {
                                 val d = wordObj.optLong("d")
                                 if (tx.isNotEmpty() && d > 0) {
                                     val safeText = escapeXml(tx)
-                                    spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
+                                    // 注意：取消了换行和多余空格，完全连在一起
+                                    spans.add("<span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
                                 }
                             }
                         }
@@ -322,23 +327,23 @@ object TtmlFetcher {
                         val tx = match.groupValues[3]
                         val safeText = escapeXml(tx)
                         if (safeText.isNotEmpty() && d > 0) {
-                            spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
+                            spans.add("<span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
                         }
                     }
                 }
 
                 if (spans.isNotEmpty()) {
-                    val pBuilder = StringBuilder()
-                    pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n")
-                    pBuilder.append(spans.joinToString("\n"))
+                    // 🌟 核心修复2：将所有 span 通过 "" 拼接，形成完美的单行 <p>
+                    val pBuilder = java.lang.StringBuilder()
+                    pBuilder.append("<p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">")
+                    pBuilder.append(spans.joinToString(""))
 
-                    // 🌟 核心补丁：加上 xml:lang="zh-Hans"
                     val matchedTrans = findMatchedTranslation(lineStart, transMap)
                     if (!matchedTrans.isNullOrBlank()) {
-                        pBuilder.append("\n        <span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
+                        pBuilder.append("<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
                     }
 
-                    pBuilder.append("\n      </p>")
+                    pBuilder.append("</p>")
                     ttmlParagraphs.add(pBuilder.toString())
                 }
             }
@@ -346,10 +351,11 @@ object TtmlFetcher {
 
         if (ttmlParagraphs.isEmpty()) return null
 
+        // 🌟 核心修复3：补全 Apple 魔法标签 itunes:timing="Word"
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\">\n" +
-               "  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
+               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\">\n" +
+               "  <body>\n    <div>\n      " +
+               ttmlParagraphs.joinToString("\n      ") +
                "\n    </div>\n  </body>\n</tt>"
     }
 
@@ -395,22 +401,21 @@ object TtmlFetcher {
 
                 val safeText = escapeXml(w.first)
                 if (safeText.isNotEmpty() && w.third > w.second) {
-                    spans.add("        <span begin=\"${msToTimeStr(w.second)}\" end=\"${msToTimeStr(w.third)}\">$safeText</span>")
+                    spans.add("<span begin=\"${msToTimeStr(w.second)}\" end=\"${msToTimeStr(w.third)}\">$safeText</span>")
                 }
             }
 
             if (spans.isNotEmpty()) {
-                val pBuilder = StringBuilder()
-                pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\">\n")
-                pBuilder.append(spans.joinToString("\n"))
+                val pBuilder = java.lang.StringBuilder()
+                pBuilder.append("<p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\">")
+                pBuilder.append(spans.joinToString(""))
 
-                // 🌟 核心补丁：加上 xml:lang="zh-Hans"
                 val matchedTrans = findMatchedTranslation(lineStart, transMap)
                 if (!matchedTrans.isNullOrBlank()) {
-                    pBuilder.append("\n        <span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
+                    pBuilder.append("<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
                 }
 
-                pBuilder.append("\n      </p>")
+                pBuilder.append("</p>")
                 ttmlParagraphs.add(pBuilder.toString())
             }
         }
@@ -418,15 +423,14 @@ object TtmlFetcher {
         if (ttmlParagraphs.isEmpty()) return null
 
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\">\n" +
-               "  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
+               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\">\n" +
+               "  <body>\n    <div>\n      " +
+               ttmlParagraphs.joinToString("\n      ") +
                "\n    </div>\n  </body>\n</tt>"
     }
 
     private suspend fun fetchNetEaseTranslationMap(cleanQuery: String, targetTitleNorm: String, targetArtists: List<String>): Map<Long, String> {
         try {
-            // 🌟 修复：更换为网易云标准搜索 API，保证翻译抓取命中率
             val neteaseSearchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(cleanQuery)}&type=1&limit=5"
             val neteaseSearchRes = httpGet(neteaseSearchUrl) ?: return emptyMap()
             val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs") ?: return emptyMap()
