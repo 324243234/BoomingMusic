@@ -20,7 +20,7 @@ class BluetoothLyricManager(
     private val player: Player,
     private val coroutineScope: CoroutineScope,
     private val lyricsRepository: LyricsRepository,
-    private val preferences: SharedPreferences // 🌟 注入设置，实时感知翻译开关
+    private val preferences: SharedPreferences 
 ) {
     private var isHooked = false
     private var hookedMediaId: String = ""
@@ -104,11 +104,9 @@ class BluetoothLyricManager(
             }
         }
     }
-	
-	// 🌟 【核心修复 2：强行重载引擎】
-    // 暴露此接口用于格式切换：无视“同一首歌不重复加载”的性能拦截，强行重刷最新格式
+    
     fun forceReloadLyricsForSong(song: Song) {
-        currentPlayingSongKey = "" // 强行清空校验锁，打破防抖拦截
+        currentPlayingSongKey = "" 
         loadLyricsForSong(song)
     }
 
@@ -124,9 +122,7 @@ class BluetoothLyricManager(
         }
     }
 
-    // 🌟 核心：暴露强制刷新接口。当翻译开关变化时，无视时间轴变化，强行重绘蓝牙歌词
     fun forceInstantUpdate() {
-        // 清除上一次的推送记录，打破防抖，强制重新构建发送
         lastPushedTitle = ""
         lastPushedArtist = ""
         syncLyrics()
@@ -143,7 +139,6 @@ class BluetoothLyricManager(
             if (currentLyricsList[currentIndex].content.content.isBlank()) DisplayState.INTERLUDE else DisplayState.LYRIC
         }
 
-        // 🌟 实时读取翻译开关设置
         val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
 
         var titleText = "🎵 🎵 🎵"
@@ -151,37 +146,36 @@ class BluetoothLyricManager(
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
             var nextIdx = currentIndex + 1
-            var found = 0
-            while (nextIdx < currentLyricsList.size && found < 2) {
+            while (nextIdx < currentLyricsList.size) {
                 val nextText = currentLyricsList[nextIdx].content.content
                 if (nextText.isNotBlank()) {
                     artistParts.add(nextText)
-                    found++
+                    break
                 }
                 nextIdx++
             }
         } else {
+            // 🌟 核心破冰 4：极其严格的 IF-ELSE 互斥！有翻译绝对不要挤着放下一句
             val currentLineObj = currentLyricsList[currentIndex]
             titleText = currentLineObj.content.content
 
-            // 🌟 关键拦截：只有当 showTranslation 为 true 时，才往蓝牙发翻译
-            if (showTranslation) {
-                currentLineObj.translation?.content?.takeIf { it.isNotBlank() }?.let { artistParts.add(it) }
-            }
-
-            var nextIdx = currentIndex + 1
-            var found = 0
-            while (nextIdx < currentLyricsList.size && found < 2) {
-                val nextText = currentLyricsList[nextIdx].content.content
-                if (nextText.isNotBlank()) {
-                    artistParts.add(nextText)
-                    found++
+            val transText = currentLineObj.translation?.content
+            if (showTranslation && !transText.isNullOrBlank()) {
+                artistParts.add(transText) // 只要开了翻译且存在翻译，副标题被翻译独占！
+            } else {
+                // 如果关了翻译，或者原歌没翻译，副标题才用来预告下一句
+                var nextIdx = currentIndex + 1
+                while (nextIdx < currentLyricsList.size) {
+                    val nextText = currentLyricsList[nextIdx].content.content
+                    if (nextText.isNotBlank()) {
+                        artistParts.add(nextText)
+                        break
+                    }
+                    nextIdx++
                 }
-                nextIdx++
             }
         }
 
-        // 记录状态，防止重复推送
         currentDisplayState = targetState
         currentDisplayIndex = currentIndex
 

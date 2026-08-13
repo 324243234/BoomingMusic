@@ -112,12 +112,10 @@ import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.koin.android.ext.android.inject
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -186,9 +184,7 @@ class PlaybackService :
     private var lastProcessedMediaId: String? = null
     private var lastTimelineHashCode: Int = 0
 
-    // 【新增】：维护当前播放歌曲的收藏状态，用于通知栏按钮的零延迟重绘
     private var currentIsFavorite = false
-
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
     private var hasSetUnshuffledOrder = false
@@ -239,6 +235,19 @@ class PlaybackService :
         get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
+
+    // 🌟 【核心破冰 1】：无状态强解析函数。绝不依赖会休眠的 UI 流！
+    private suspend fun resolveSongInstantly(mediaItem: MediaItem?): Song {
+        if (mediaItem == null) return Song.emptySong
+        return withContext(IO) {
+            val songId = mediaItem.mediaId.toLongOrNull()
+            if (songId != null) {
+                val song = runCatching { repository.songById(songId) }.getOrNull()
+                if (song != null && song != Song.emptySong) return@withContext song
+            }
+            runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -345,8 +354,6 @@ class PlaybackService :
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
         }
-		
-		
 
         preferences.registerOnSharedPreferenceChangeListener(this)
         audioOutputObserver.startObserver()
@@ -682,7 +689,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS, modesBundle())
             }
 
-            // 【处理通知栏】和【CarWith卡片】的收藏指令，保证全域状态连通
             Playback.TOGGLE_FAVORITE, "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
@@ -857,8 +863,9 @@ class PlaybackService :
     }
 
     /**
-     * 【LRC 规范转换器】 负责将不可用的 TTML 强制转换并渲染为车机绝对兼容的 LRC 文本
-     * 并且挂载翻译数据。
+     * 🌟 【核心修补 2】：独立稳定运行的 CarWith LRC 投喂引擎。
+     * - 完全使用无状态同步方法获取 Song，永不因为切后台被冻结。
+     * - 将中英文强行融合在同一行，强制车机端双语同显。
      */
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
@@ -871,46 +878,38 @@ class PlaybackService :
             
             val currentIndex = player.currentMediaItemIndex
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
-            val expectedMediaId = player.getMediaItemAt(currentIndex).mediaId
+            val expectedMediaItem = player.getMediaItemAt(currentIndex)
+            val expectedMediaId = expectedMediaItem.mediaId
             
             withContext(IO) {
-                val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-         queueStateHolder.currentSong.first { it.id.toString() == expectedMediaId }
-         } ?: Song.emptySong
-                
+                val song = resolveSongInstantly(expectedMediaItem)
                 if (song == Song.emptySong) return@withContext
 
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
-                // 提取源文件（不论是 TTML 还是 LRC），并使用库底层引擎解析它
                 val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
-                // 1. 获取内存中已经被解析好的、正在供给手机 UI 使用的歌词对象
-val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
+                val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-// 2. 判断用户是否开启了翻译开关
-val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
+                val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
 
-// 3. 核心降维打击：无论它是 TTML 还是内嵌歌词，全部在此被格式化为标准 LRC
-val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
-    // 提取起始时间并计算为标准的 mm:ss.xx
-    val timeMs = line.start
-    val min = timeMs / 60000
-    val sec = (timeMs % 60000) / 1000
-    val ms = (timeMs % 1000) / 10
-    val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
-    
-    // 提取绝对纯净的纯文本内容（剥离了 TTML 的 XML 标签）
-    val content = line.content.content 
-    val translation = line.translation?.content
-    
-    // 降级拼接翻译
-    if (showTranslation && !translation.isNullOrBlank()) {
-        "$timeStr$content\n$timeStr$translation"
-    } else {
-        "$timeStr$content"
-    }
-} ?: ""
+                // 强制将双语缝合，兼容愚蠢的车机解析器
+                val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
+                    val timeMs = line.start
+                    val min = timeMs / 60000
+                    val sec = (timeMs % 60000) / 1000
+                    val ms = (timeMs % 1000) / 10
+                    val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                    
+                    val content = line.content.content 
+                    val translation = line.translation?.content
+                    
+                    if (showTranslation && !translation.isNullOrBlank()) {
+                        "$timeStr$content 「$translation」"
+                    } else {
+                        "$timeStr$content"
+                    }
+                } ?: ""
 
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
@@ -963,16 +962,12 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
         lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            val expectedId = newMediaId ?: ""
-            val newSong = kotlinx.coroutines.withTimeoutOrNull(2000) {
-      queueStateHolder.currentSong.first { it.id.toString() == expectedId || expectedId.isEmpty() }
-     } ?: Song.emptySong
+            // 🌟 核心破冰 3：抛弃 queueStateHolder，使用极速解析保证在锁屏、断网时永不丢歌
+            val newSong = resolveSongInstantly(mediaItem)
 
-            // 【UI 更新联动】：在切歌时立刻更新内存里的收藏状态，保证通知栏心形按钮状态极速对齐
             currentIsFavorite = runCatching<Boolean> { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
 
             withContext(Main) {
-                // 触发刷新通知栏
                 refreshMediaButtonCustomLayout()
                 bluetoothLyricManager?.loadLyricsForSong(newSong)
             }
@@ -1168,12 +1163,10 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
                     val currentIndex = player.currentMediaItemIndex
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
-                        val expectedId = player.getMediaItemAt(currentIndex).mediaId
+                        val currentMediaItem = player.getMediaItemAt(currentIndex)
                         serviceScope.launch(IO) {
-                            val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-                                queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
-                            }
-                            if (song != null && song != Song.emptySong) {
+                            val song = resolveSongInstantly(currentMediaItem)
+                            if (song != Song.emptySong) {
                                 withContext(Main) {
                                     bluetoothLyricManager?.loadLyricsForSong(song)
                                 }
@@ -1186,22 +1179,15 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                 }
             }
 
-            // 🌟 【核心修复 3：彻底合并逻辑】解决 Kotlin when 分支重复覆盖问题
             "preferred_lyrics_file_format" -> {
-                // 1. 同步刷新 CarWith 车机大屏歌词（读取刚清理过缓存的最新格式）
                 updateCarWithMetadata()
-                
-                // 2. 强行重载蓝牙歌词
                 val currentIndex = player.currentMediaItemIndex
                 if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
-                    val expectedId = player.getMediaItemAt(currentIndex).mediaId
+                    val currentMediaItem = player.getMediaItemAt(currentIndex)
                     serviceScope.launch(IO) {
-                        val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-                            queueStateHolder.currentSong.first { it.id.toString() == expectedId }
-                        }
-                        if (song != null && song != Song.emptySong) {
+                        val song = resolveSongInstantly(currentMediaItem)
+                        if (song != Song.emptySong) {
                             withContext(Main) {
-                                // 强制打破防抖，重新从磁盘提取最新格式并推给蓝牙
                                 bluetoothLyricManager?.forceReloadLyricsForSong(song)
                             }
                         }
@@ -1210,9 +1196,7 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
             }
 
             "lyrics_show_translation" -> {
-                // 刷新 CarWith 大屏双语状态
                 updateCarWithMetadata()
-                // 翻译开关只需要在已有的内存对象上重绘，不需要读盘
                 uiHandler.post {
                     bluetoothLyricManager?.forceInstantUpdate()
                 }
@@ -1247,22 +1231,17 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
         if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
         
         val currentMediaItem = player.getMediaItemAt(currentIndex)
-        val expectedId = currentMediaItem.mediaId
 
         withContext(IO) {
-            val song = kotlinx.coroutines.withTimeoutOrNull(2000) {
-    queueStateHolder.currentSong.first { it.id.toString() == expectedId } 
-}
+            val song = resolveSongInstantly(currentMediaItem)
             
-            if (song != null && song != Song.emptySong) {
+            if (song != Song.emptySong) {
                 repository.toggleFavorite(song)
-                // 翻转内存变量
                 currentIsFavorite = !currentIsFavorite
             }
         }
 
         withContext(Main) {
-            // 立刻重绘通知栏的心形按钮
             refreshMediaButtonCustomLayout()
         }
 
@@ -1336,15 +1315,11 @@ val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
         }
     }
 
-    /**
-     * 【通知栏大换血】：移除循环按钮，替换为即时反馈的“收藏”心形按钮
-     */
     private fun refreshMediaButtonCustomLayout() {
         val hasTimeline = !player.currentTimeline.isEmpty
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
             if (mediaSession?.isRemoteController(controllerInfo) == true) {
                 val buttonLayout = if (hasTimeline) {
-                    // 构建收藏按钮，判断是否选中以切换图标
                     val favButton = CommandButton.Builder()
                         .setDisplayName("Favorite")
                         .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
