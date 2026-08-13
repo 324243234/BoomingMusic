@@ -17,7 +17,8 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (优先级: Apple Music -> 网易云音乐 -> QQ音乐)
+ * TTML 级联网络获取引擎 (双语逐字增强版)
+ * 优先级: Apple Music -> 网易云音乐 (YRC+Tlyric) -> QQ音乐 (QRC+Trans)
  */
 object TtmlFetcher {
 
@@ -106,7 +107,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道二：网易云音乐搜索 + YRC 转译 (已提升至 QQ 音乐之前)
+            // 通道二：网易云音乐搜索 + YRC (逐字) + Tlyric (翻译) 挂载
             // ========================================================
             val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
             val neteaseSearchRes = httpGet(neteaseSearchUrl)
@@ -143,9 +144,12 @@ object TtmlFetcher {
                             val yrcUrl = "https://music.163.com/api/song/lyric?id=$songId&lv=-1&kv=-1&tv=-1&yv=1"
                             val yrcRes = httpGet(yrcUrl)
                             if (yrcRes != null) {
-                                val yrcData = JSONObject(yrcRes).optJSONObject("yrc")?.optString("lyric")
+                                val jsonObj = JSONObject(yrcRes)
+                                val yrcData = jsonObj.optJSONObject("yrc")?.optString("lyric")
+                                val tlyricData = jsonObj.optJSONObject("tlyric")?.optString("lyric")
+                                
                                 if (!yrcData.isNullOrBlank()) {
-                                    val ttmlResult = parseYrcToTtml(yrcData)
+                                    val ttmlResult = parseYrcToTtmlWithTranslation(yrcData, tlyricData)
                                     if (ttmlResult != null) return@withContext ttmlResult
                                 }
                             }
@@ -156,7 +160,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 兜底
+            // 通道三：QQ 音乐搜索 + QRC 逐字 + 翻译挂载 兜底
             // ========================================================
             val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
@@ -232,10 +236,11 @@ object TtmlFetcher {
     }
 
     // ========================================================
-    // 工具层：YRC / TTML 互转及硬核解密逻辑
+    // 🌟 解析核心：YRC 逐字 + Tlyric 翻译合成高精度双语 TTML
     // ========================================================
 
-    private fun parseYrcToTtml(yrcText: String): String? {
+    private fun parseYrcToTtmlWithTranslation(yrcText: String, tlyricText: String?): String? {
+        val transMap = parseLrcTranslations(tlyricText)
         val lines = yrcText.split(Regex("""\r?\n"""))
         val ttmlParagraphs = mutableListOf<String>()
 
@@ -261,7 +266,7 @@ object TtmlFetcher {
                                 val t = wordObj.optLong("t")
                                 val d = wordObj.optLong("d")
                                 if (tx.isNotEmpty() && d > 0) {
-                                    val safeText = tx.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                                    val safeText = escapeXml(tx)
                                     spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
                                 }
                             }
@@ -273,7 +278,7 @@ object TtmlFetcher {
                         val t = match.groupValues[1].toLong()
                         val d = match.groupValues[2].toLong()
                         val tx = match.groupValues[3]
-                        val safeText = tx.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        val safeText = escapeXml(tx)
                         if (safeText.isNotEmpty() && d > 0) {
                             spans.add("        <span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
                         }
@@ -281,11 +286,18 @@ object TtmlFetcher {
                 }
 
                 if (spans.isNotEmpty()) {
-                    ttmlParagraphs.add(
-                        "      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n" +
-                        spans.joinToString("\n") +
-                        "\n      </p>"
-                    )
+                    val pBuilder = StringBuilder()
+                    pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n")
+                    pBuilder.append(spans.joinToString("\n"))
+
+                    // 🌟 挂载关联的行翻译（如果存在）
+                    val matchedTrans = findMatchedTranslation(lineStart, transMap)
+                    if (!matchedTrans.isNullOrBlank()) {
+                        pBuilder.append("\n        <span type=\"translation\">${escapeXml(matchedTrans)}</span>")
+                    }
+
+                    pBuilder.append("\n      </p>")
+                    ttmlParagraphs.add(pBuilder.toString())
                 }
             }
         }
@@ -295,6 +307,44 @@ object TtmlFetcher {
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
                 ttmlParagraphs.joinToString("\n") +
                 "\n    </div>\n  </body>\n</tt>"
+    }
+
+    private fun parseLrcTranslations(lrcText: String?): Map<Long, String> {
+        if (lrcText.isNullOrBlank()) return emptyMap()
+        val map = mutableMapOf<Long, String>()
+        val linePattern = Regex("""^\[(\d{2,}):(\d{2})(?:\.(\d{2,3}))?\](.*)""")
+        
+        lrcText.split(Regex("""\r?\n""")).forEach { line ->
+            val match = linePattern.find(line.trim())
+            if (match != null) {
+                val min = match.groupValues[1].toLong()
+                val sec = match.groupValues[2].toLong()
+                val msStr = match.groupValues[3]
+                val ms = if (msStr.length == 2) msStr.toLong() * 10 else msStr.padEnd(3, '0').take(3).toLongOrDefault(0L)
+                val totalMs = min * 60000 + sec * 1000 + ms
+                val text = match.groupValues[4].trim()
+                if (text.isNotBlank()) {
+                    map[totalMs] = text
+                }
+            }
+        }
+        return map
+    }
+
+    private fun String.toLongOrDefault(default: Long): Long = this.toLongOrNull() ?: default
+
+    private fun findMatchedTranslation(lineStartMs: Long, transMap: Map<Long, String>): String? {
+        if (transMap.isEmpty()) return null
+        // 允许 +-1000ms 毫秒级别的误差容错匹配
+        return transMap.entries.firstOrNull { Math.abs(it.key - lineStartMs) <= 1000L }?.value
+    }
+
+    private fun escapeXml(str: String): String {
+        return str.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
     }
 
     private fun parseQrcToTtmlDirectly(rawQrcText: String): String? {
@@ -337,7 +387,7 @@ object TtmlFetcher {
                 if (w.second < lineStart) lineStart = w.second
                 if (w.third > lineEnd) lineEnd = w.third
 
-                val safeText = w.first.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                val safeText = escapeXml(w.first)
                 if (safeText.isNotEmpty() && w.third > w.second) {
                     spans.add("        <span begin=\"${msToTimeStr(w.second)}\" end=\"${msToTimeStr(w.third)}\">$safeText</span>")
                 }
