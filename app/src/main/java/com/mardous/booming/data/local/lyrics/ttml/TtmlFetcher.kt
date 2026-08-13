@@ -17,8 +17,8 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (双语逐字增强版 - 支持单独翻译开关)
- * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
+ * TTML 级联网络获取引擎 (外文双语跨平台注入版)
+ * 优先级: Apple Music (自动注入网易云翻译) -> 网易云音乐 -> QQ音乐
  */
 object TtmlFetcher {
 
@@ -59,8 +59,11 @@ object TtmlFetcher {
         val isLocalRemix = song.title.contains("remix", ignoreCase = true) || song.title.contains("dj", ignoreCase = true) || song.title.contains("版")
 
         try {
+            // 🌟 跨平台神技：在后台异步并发去网易云提取当前歌曲的【纯翻译 Map】
+            val transMapDeferred = async { fetchNetEaseTranslationMap(cleanQuery, targetTitleNorm, targetArtists) }
+
             // ========================================================
-            // 通道一：Apple Music (CN & US) + AMLL DB 并发获取
+            // 通道一：Apple Music (极速获取高质量逐字) + 后期注入翻译
             // ========================================================
             for (country in listOf("cn", "us")) {
                 val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(cleanQuery)}&entity=song&limit=5&country=$country"
@@ -97,7 +100,11 @@ object TtmlFetcher {
                                         )
                                         tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                     }
-                                    if (ttmlResult != null) return@withContext ttmlResult
+                                    if (ttmlResult != null) {
+                                        // 👑 如果 Apple 提供的是纯英文 TTML，我们强行把刚才爬到的网易云中文翻译注入进去！
+                                        val transMap = transMapDeferred.await()
+                                        return@withContext injectTranslationIntoTtml(ttmlResult, transMap)
+                                    }
                                     break
                                 }
                             }
@@ -122,12 +129,6 @@ object TtmlFetcher {
                         val remoteArtistStr = if (artists != null) {
                             (0 until artists.length()).joinToString("") { normalizeStr(artists.getJSONObject(it).optString("name")) }
                         } else ""
-                        
-                        val isRemoteLive = songName.contains("live", ignoreCase = true) || songName.contains("现场")
-                        val isRemoteRemix = songName.contains("remix", ignoreCase = true) || songName.contains("dj", ignoreCase = true) || songName.contains("版")
-
-                        if (!isLocalLive && isRemoteLive) continue
-                        if (!isLocalRemix && isRemoteRemix) continue
 
                         val normTrack = normalizeStr(songName)
                         val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
@@ -135,9 +136,7 @@ object TtmlFetcher {
                         var isArtistMatch = targetArtists.isEmpty()
                         if (targetArtists.isNotEmpty()) {
                             val primaryArtist = targetArtists[0]
-                            val isPrimaryMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr)
-                            val hasAnyMatch = targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
-                            isArtistMatch = isPrimaryMatch || hasAnyMatch
+                            isArtistMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr) || targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
                         }
 
                         if (isTitleMatch && isArtistMatch && songId != 0) {
@@ -148,8 +147,11 @@ object TtmlFetcher {
                                 val yrcData = jsonObj.optJSONObject("yrc")?.optString("lyric")
                                 val tlyricData = jsonObj.optJSONObject("tlyric")?.optString("lyric")
                                 
+                                val localTransMap = parseLrcTranslations(tlyricData)
+                                val mergedTransMap = localTransMap.ifEmpty { transMapDeferred.await() }
+
                                 if (!yrcData.isNullOrBlank()) {
-                                    val ttmlResult = parseYrcToTtml(yrcData, tlyricData)
+                                    val ttmlResult = parseYrcToTtml(yrcData, mergedTransMap)
                                     if (ttmlResult != null) return@withContext ttmlResult
                                 }
                             }
@@ -175,59 +177,38 @@ object TtmlFetcher {
                         for (i in 0 until list.length()) {
                             val item = list.getJSONObject(i)
                             val songName = item.optString("songname")
-                            val remoteAlbumName = item.optString("albumname")
                             val remoteDurationMs = item.optLong("interval", 0L) * 1000L
-                            val remoteArtistStr = item.optJSONArray("singer")?.let { singers ->
-                                (0 until singers.length()).joinToString("") { normalizeStr(singers.getJSONObject(it).optString("name")) }
-                            } ?: ""
-
-                            val isRemoteLive = songName.contains("live", ignoreCase = true) || songName.contains("现场")
-                            val isRemoteRemix = songName.contains("remix", ignoreCase = true) || songName.contains("dj", ignoreCase = true) || songName.contains("伴奏")
-                            
-                            if (!isLocalLive && isRemoteLive) continue
-                            if (!isLocalRemix && isRemoteRemix) continue
 
                             val normTrack = normalizeStr(songName)
                             val isTitleMatch = normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)
                             
-                            var isArtistMatch = targetArtists.isEmpty()
-                            if (targetArtists.isNotEmpty()) {
-                                val primaryArtist = targetArtists[0]
-                                val isPrimaryMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr)
-                                val hasAnyMatch = targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
-                                isArtistMatch = isPrimaryMatch || hasAnyMatch
-                            }
+                            if (isTitleMatch) {
+                                val songmid = item.optString("songmid")
+                                if (songmid.isNotBlank()) {
+                                    val ttmlResult = coroutineScope {
+                                        val tasks = listOf(
+                                            async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml") },
+                                            async { 
+                                                val (qrcHex, transBase64) = fetchQqQrc(item)
+                                                if (!qrcHex.isNullOrBlank()) {
+                                                    val rawQrc = decryptQrc(qrcHex)
+                                                    val transText = try {
+                                                        if (!transBase64.isNullOrBlank()) {
+                                                            String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8)
+                                                        } else null
+                                                    } catch(e: Exception) { null }
 
-                            if (isTitleMatch && isArtistMatch) {
-                                val isDurationMatch = Math.abs(localDurationMs - remoteDurationMs) <= 3000L
-                                val normRemoteAlbum = normalizeStr(remoteAlbumName)
-                                val isAlbumMatch = targetAlbumNorm.isEmpty() || normRemoteAlbum.contains(targetAlbumNorm) || targetAlbumNorm.contains(normRemoteAlbum)
+                                                    val localTransMap = parseLrcTranslations(transText)
+                                                    val mergedTransMap = localTransMap.ifEmpty { transMapDeferred.await() }
 
-                                if (isDurationMatch || (remoteDurationMs == 0L && isAlbumMatch)) {
-                                    val songmid = item.optString("songmid")
-                                    if (songmid.isNotBlank()) {
-                                        val ttmlResult = coroutineScope {
-                                            val tasks = listOf(
-                                                async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$songmid.ttml") },
-                                                async { 
-                                                    val (qrcHex, transBase64) = fetchQqQrc(item)
-                                                    if (!qrcHex.isNullOrBlank()) {
-                                                        val rawQrc = decryptQrc(qrcHex)
-                                                        val transText = try {
-                                                            if (!transBase64.isNullOrBlank()) {
-                                                                String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8)
-                                                            } else null
-                                                        } catch(e: Exception) { null }
-
-                                                        if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc, transText) else null
-                                                    } else null
-                                                }
-                                            )
-                                            tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
-                                        }
-                                        if (ttmlResult != null) return@withContext ttmlResult
-                                        break
+                                                    if (!rawQrc.isNullOrBlank()) parseQrcToTtmlDirectly(rawQrc, mergedTransMap) else null
+                                                } else null
+                                            }
+                                        )
+                                        tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
                                     }
+                                    if (ttmlResult != null) return@withContext ttmlResult
+                                    break
                                 }
                             }
                         }
@@ -242,11 +223,30 @@ object TtmlFetcher {
     }
 
     // ========================================================
-    // 工具层：YRC / TTML 互转及双语合成格式化引擎
+    // 工具层：核心双语融合与 XML 组装引擎
     // ========================================================
 
-    private fun parseYrcToTtml(yrcText: String, tlyricText: String? = null): String? {
-        val transMap = parseLrcTranslations(tlyricText)
+    // 🌟 破冰引擎：拦截 Apple Music 的 TTML，用正则强行把网易云的中文翻译注入进去！
+    private fun injectTranslationIntoTtml(ttml: String, transMap: Map<Long, String>): String {
+        if (transMap.isEmpty()) return ttml
+        
+        val pRegex = Regex("""<p\s+begin="([^"]+)"[^>]*>.*?</p>""", RegexOption.DOT_MATCHES_ALL)
+        return ttml.replace(pRegex) { matchResult ->
+            val beginStr = matchResult.groupValues[1]
+            val pBlock = matchResult.value
+            val ms = timeStrToMs(beginStr)
+            
+            val trans = findMatchedTranslation(ms, transMap)
+            if (!trans.isNullOrBlank()) {
+                // 将 <span type="translation"> 完美植入闭合标签前，迎合 BoomingMusic 语法
+                pBlock.replace(Regex("""\s*</p>$"""), "\n        <span type=\"translation\">${escapeXml(trans)}</span>\n      </p>")
+            } else {
+                pBlock
+            }
+        }
+    }
+
+    private fun parseYrcToTtml(yrcText: String, transMap: Map<Long, String>): String? {
         val lines = yrcText.split(Regex("""\r?\n"""))
         val ttmlParagraphs = mutableListOf<String>()
 
@@ -296,10 +296,10 @@ object TtmlFetcher {
                     pBuilder.append("      <p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\">\n")
                     pBuilder.append(spans.joinToString("\n"))
 
-                    // 🌟 注入翻译：带有 xmlns 与 ttm:role 完美兼容 TTML 解析器
+                    // 🌟 注入翻译，使用 type="translation"
                     val matchedTrans = findMatchedTranslation(lineStart, transMap)
                     if (!matchedTrans.isNullOrBlank()) {
-                        pBuilder.append("\n        <span ttm:role=\"translation\">${escapeXml(matchedTrans)}</span>")
+                        pBuilder.append("\n        <span type=\"translation\">${escapeXml(matchedTrans)}</span>")
                     }
 
                     pBuilder.append("\n      </p>")
@@ -310,15 +310,12 @@ object TtmlFetcher {
 
         if (ttmlParagraphs.isEmpty()) return null
 
-        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\">\n" +
-               "  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
-               "\n    </div>\n  </body>\n</tt>"
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
+                ttmlParagraphs.joinToString("\n") +
+                "\n    </div>\n  </body>\n</tt>"
     }
 
-    private fun parseQrcToTtmlDirectly(rawQrcText: String, transText: String? = null): String? {
-        val transMap = parseLrcTranslations(transText)
+    private fun parseQrcToTtmlDirectly(rawQrcText: String, transMap: Map<Long, String>): String? {
         var text = rawQrcText.trim()
         val xmlMatch = Regex("""LyricContent="([^"]+)"""", RegexOption.IGNORE_CASE).find(text)
         if (xmlMatch != null) text = xmlMatch.groupValues[1]
@@ -372,7 +369,7 @@ object TtmlFetcher {
                 // 🌟 注入翻译
                 val matchedTrans = findMatchedTranslation(lineStart, transMap)
                 if (!matchedTrans.isNullOrBlank()) {
-                    pBuilder.append("\n        <span ttm:role=\"translation\">${escapeXml(matchedTrans)}</span>")
+                    pBuilder.append("\n        <span type=\"translation\">${escapeXml(matchedTrans)}</span>")
                 }
 
                 pBuilder.append("\n      </p>")
@@ -382,14 +379,54 @@ object TtmlFetcher {
 
         if (ttmlParagraphs.isEmpty()) return null
 
-        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\">\n" +
-               "  <body>\n    <div>\n" +
-               ttmlParagraphs.joinToString("\n") +
-               "\n    </div>\n  </body>\n</tt>"
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\">\n  <body>\n    <div>\n" +
+                ttmlParagraphs.joinToString("\n") +
+                "\n    </div>\n  </body>\n</tt>"
     }
 
-    // --- 新增：LRC 翻译提取器，支持高达 1500ms 的轴对齐误差 ---
+    // ========================================================
+    // 底层数据抓取与转换工具
+    // ========================================================
+
+    // 🌟 隐形外挂引擎：专门去网易云白嫖当前歌曲的翻译 LRC
+    private suspend fun fetchNetEaseTranslationMap(cleanQuery: String, targetTitleNorm: String, targetArtists: List<String>): Map<Long, String> {
+        try {
+            val neteaseSearchUrl = "https://music.163.com/api/search/suggest/web?s=${Uri.encode(cleanQuery)}"
+            val neteaseSearchRes = httpGet(neteaseSearchUrl) ?: return emptyMap()
+            val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs") ?: return emptyMap()
+            
+            for (i in 0 until minOf(3, songs.length())) {
+                val item = songs.getJSONObject(i)
+                val songId = item.optInt("id", 0)
+                val songName = item.optString("name")
+                val artists = item.optJSONArray("artists")
+                val remoteArtistStr = if (artists != null) {
+                    (0 until artists.length()).joinToString("") { normalizeStr(artists.getJSONObject(it).optString("name")) }
+                } else ""
+
+                val normTrack = normalizeStr(songName)
+                if (normTrack.contains(targetTitleNorm) || targetTitleNorm.contains(normTrack)) {
+                    var isArtistMatch = targetArtists.isEmpty()
+                    if (targetArtists.isNotEmpty()) {
+                        val primaryArtist = targetArtists[0]
+                        isArtistMatch = remoteArtistStr.contains(primaryArtist) || primaryArtist.contains(remoteArtistStr) || targetArtists.any { remoteArtistStr.contains(it) || it.contains(remoteArtistStr) }
+                    }
+
+                    if (isArtistMatch && songId != 0) {
+                        val lyricUrl = "https://music.163.com/api/song/lyric?id=$songId&tv=-1"
+                        val lyricRes = httpGet(lyricUrl)
+                        if (lyricRes != null) {
+                            val tlyricData = JSONObject(lyricRes).optJSONObject("tlyric")?.optString("lyric")
+                            val map = parseLrcTranslations(tlyricData)
+                            if (map.isNotEmpty()) return map
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+        return emptyMap()
+    }
+
     private fun parseLrcTranslations(lrcText: String?): Map<Long, String> {
         if (lrcText.isNullOrBlank()) return emptyMap()
         val map = mutableMapOf<Long, String>()
@@ -414,7 +451,7 @@ object TtmlFetcher {
 
     private fun findMatchedTranslation(lineStartMs: Long, transMap: Map<Long, String>): String? {
         if (transMap.isEmpty()) return null
-        // 允许 +-1500ms 毫秒级别的误差容错匹配
+        // 允许 +-1500ms 高误差容错，保证 Apple Music 也能精准咬合网易云的翻译时间
         return transMap.entries.firstOrNull { Math.abs(it.key - lineStartMs) <= 1500L }?.value
     }
 
@@ -433,6 +470,27 @@ object TtmlFetcher {
         val hours = seconds / 3600
         seconds %= 60
         return String.format("%02d:%02d:%02d.%03d", hours, minutes, seconds, remMs)
+    }
+
+    private fun timeStrToMs(timeStr: String): Long {
+        try {
+            val parts = timeStr.split(":")
+            if (parts.size == 3) {
+                val h = parts[0].toLong()
+                val m = parts[1].toLong()
+                val sParts = parts[2].split(".")
+                val s = sParts[0].toLong()
+                val millis = if (sParts.size > 1) sParts[1].padEnd(3, '0').take(3).toLong() else 0L
+                return h * 3600000 + m * 60000 + s * 1000 + millis
+            } else if (parts.size == 2) {
+                val m = parts[0].toLong()
+                val sParts = parts[1].split(".")
+                val s = sParts[0].toLong()
+                val millis = if (sParts.size > 1) sParts[1].padEnd(3, '0').take(3).toLong() else 0L
+                return m * 60000 + s * 1000 + millis
+            }
+        } catch (e: Exception) {}
+        return 0L
     }
 
     private fun httpGet(urlString: String): String? {
