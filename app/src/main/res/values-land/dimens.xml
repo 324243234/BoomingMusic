@@ -6,6 +6,6 @@
     <dimen name="lyrics_editor_padding_horizontal">16dp</dimen>
 	<!-- ?? 横屏模式下设为 0dp，让封面完全铺满左侧并贴紧下方文字 -->
     <dimen name="player_cover_margin">5dp</dimen>
-	<!-- ??数字越大，遮罩越往里缩，视频就越小 -->
-	<dimen name="video_cover_margin">7dp</dimen>
+	<!-- ??数字越大，遮罩越往里缩，视频就越小<dimen name="video_cover_margin">7dp</dimen> -->
+	
 </resources>
