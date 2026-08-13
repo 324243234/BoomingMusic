@@ -7,8 +7,10 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -47,8 +49,25 @@ class PermissionsActivity : AbsBaseActivity() {
         setupPermissionsOrder()
 
         binding.storageAccess.setButtonOnClickListener {
+            // 🌟 【核心修改】：针对 Android 11 (API 30) 及以上，直接跳转到系统“所有文件访问权限”授权页
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (!Environment.isExternalStorageManager()) {
+                    try {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        startActivity(intent)
+                    }
+                    return@setButtonOnClickListener
+                }
+            }
+            // 低版本走原作者原有的常规逻辑
             requestPermissions()
         }
+
         if (binding.readImages.isVisible) {
             binding.readImages.setButtonOnClickListener {
                 if (!binding.readImages.isGranted() && hasT()) {
@@ -132,7 +151,15 @@ class PermissionsActivity : AbsBaseActivity() {
     }
 
     private fun checkPermissions() {
-        binding.storageAccess.setGranted(hasPermissions())
+        // 🌟 【核心修改】：在 Android 11+ 上，存储权限是否授予取决于 Environment.isExternalStorageManager()
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            hasPermissions()
+        }
+
+        binding.storageAccess.setGranted(storageGranted)
+
         if (hasS()) {
             binding.nearbyDevices.setGranted(hasNearbyDevicesPermission())
             binding.scheduleExactAlarms.setGranted(canScheduleExactAlarms())
@@ -140,7 +167,7 @@ class PermissionsActivity : AbsBaseActivity() {
         if (hasT()) {
             binding.readImages.setGranted(hasReadImagesPermission())
         }
-        binding.finish.isEnabled = binding.storageAccess.isGranted() && (!hasS() || binding.nearbyDevices.isGranted())
+        binding.finish.isEnabled = storageGranted && (!hasS() || binding.nearbyDevices.isGranted())
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
