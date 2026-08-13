@@ -17,8 +17,8 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (双语逐字防爆稳定版)
- * 完美 1:1 像素级复刻 Apple 官方格式，彻底激活 AMLL 引擎的翻译模块
+ * TTML 级联网络获取引擎 (像素级复刻 Apple 官方格式 - 完美激活 BoomingMusic 翻译)
+ * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
  */
 object TtmlFetcher {
 
@@ -59,7 +59,7 @@ object TtmlFetcher {
         val isLocalRemix = song.title.contains("remix", ignoreCase = true) || song.title.contains("dj", ignoreCase = true) || song.title.contains("版")
 
         try {
-            // 安全拉取网易云翻译词典
+            // 🌟 在后台异步抓取网易云的准确翻译字典（用于补全 Apple Music 的英文原版）
             val transMapDeferred = async { fetchNetEaseTranslationMap(cleanQuery, targetTitleNorm, targetArtists) }
 
             // ========================================================
@@ -113,7 +113,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道二：网易云音乐搜索 + YRC (逐字) + Tlyric (翻译) 挂载
+            // 通道二：网易云音乐搜索 + YRC 转译 (已提升至 QQ 音乐之前)
             // ========================================================
             val neteaseSearchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(cleanQuery)}&type=1&limit=5"
             val neteaseSearchRes = httpGet(neteaseSearchUrl)
@@ -170,7 +170,7 @@ object TtmlFetcher {
             }
 
             // ========================================================
-            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密 + 翻译) 兜底
+            // 通道三：QQ 音乐搜索 + (AMLL QQ DB / QRC 解密) 兜底
             // ========================================================
             val qqSearchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=5&p=1&w=${Uri.encode(cleanQuery)}"
             val qqSearchRes = httpGet(qqSearchUrl)
@@ -224,7 +224,9 @@ object TtmlFetcher {
                                                     if (!qrcHex.isNullOrBlank()) {
                                                         val rawQrc = decryptQrc(qrcHex)
                                                         val transText = runCatching {
-                                                            if (!transBase64.isNullOrBlank()) String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8) else null
+                                                            if (!transBase64.isNullOrBlank()) {
+                                                                String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8)
+                                                            } else null
                                                         }.getOrNull()
 
                                                         val localTransMap = parseLrcTranslations(transText)
@@ -257,31 +259,30 @@ object TtmlFetcher {
     }
 
     // ========================================================
-    // 工具层：高效非正则注入引擎（安全防崩溃 + 强制单行无换行格式）
+    // 工具层：YRC / TTML 互转及 1:1 完美构建 Apple Music 格式引擎
     // ========================================================
 
     private fun injectTranslationIntoTtml(ttml: String, transMap: Map<Long, String>): String {
         if (transMap.isEmpty() || ttml.contains("x-translation")) return ttml
 
         return runCatching {
-            var modified = ttml
-            // 🌟 补齐所有的 Apple 官方特征魔法头
-            if (!modified.contains("xmlns:amll=")) {
-                modified = modified.replaceFirst("<tt ", "<tt xmlns:amll=\"http://www.example.com/ns/amll\" ")
-            }
-            if (!modified.contains("xmlns:itunes=")) {
-                modified = modified.replaceFirst("<tt ", "<tt xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\" ")
-            }
-            if (!modified.contains("xmlns:ttm=")) {
-                modified = modified.replaceFirst("<tt ", "<tt xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" ")
+            var modifiedTtml = ttml
+            // 补全所有官方需要的魔法命名空间，保证 BoomingMusic 激活双语模式
+            if (!modifiedTtml.contains("xmlns:ttm=")) {
+                modifiedTtml = modifiedTtml.replaceFirst(
+                    "<tt ", 
+                    "<tt xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Word\" "
+                )
             }
 
-            val segments = modified.split("</p>")
+            val segments = modifiedTtml.split("</p>")
             if (segments.size <= 1) return ttml
 
             val sb = StringBuilder()
             for (i in 0 until segments.size - 1) {
+                // 强制切掉末尾可能存在的空白与换行符，防止破坏 DOM 结构
                 val segment = segments[i].trimEnd()
+                
                 val beginIdx = segment.indexOf("begin=\"")
                 if (beginIdx != -1) {
                     val startQuote = beginIdx + 7
@@ -289,8 +290,10 @@ object TtmlFetcher {
                     if (endQuote != -1) {
                         val timeStr = segment.substring(startQuote, endQuote)
                         val ms = timeStrToMs(timeStr)
+                        
                         val trans = findMatchedTranslation(ms, transMap)
                         if (!trans.isNullOrBlank()) {
+                            // 像素级复刻：不留空格和换行，直接附加 ttm:role="x-translation" xml:lang="zh-Hans"
                             sb.append(segment)
                               .append("<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">")
                               .append(escapeXml(trans))
@@ -311,7 +314,7 @@ object TtmlFetcher {
             val lines = yrcText.split(Regex("""\r?\n"""))
             val ttmlParagraphs = mutableListOf<String>()
             
-            var lineIndex = 1 // 🌟 核心：为每一行赋予 itunes:key ID 标识！
+            var lineIndex = 1 // 模拟 Apple Music itunes:key
 
             for (line in lines) {
                 val cl = line.trim()
@@ -336,6 +339,7 @@ object TtmlFetcher {
                                     val d = wordObj.optLong("d")
                                     if (tx.isNotEmpty() && d > 0) {
                                         val safeText = escapeXml(tx)
+                                        // 无换行、无缝连接
                                         spans.add("<span begin=\"${msToTimeStr(t)}\" end=\"${msToTimeStr(t + d)}\">$safeText</span>")
                                     }
                                 }
@@ -356,13 +360,13 @@ object TtmlFetcher {
 
                     if (spans.isNotEmpty()) {
                         val pBuilder = StringBuilder()
-                        // 🌟 核心修复：注入 itunes:key 与 ttm:agent，激活翻译引擎！
+                        // 🌟 100% 注入 Apple 官方身份标识：itunes:key="L1" ttm:agent="v1"
                         pBuilder.append("<p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineStart + lineDur)}\" itunes:key=\"L$lineIndex\" ttm:agent=\"v1\">")
-                        pBuilder.append(spans.joinToString("")) 
+                        pBuilder.append(spans.joinToString(" ")) // 英文单词间留一个空格，不留换行
 
                         val matchedTrans = findMatchedTranslation(lineStart, transMap)
                         if (!matchedTrans.isNullOrBlank()) {
-                            // 🌟 100% 对齐官方翻译格式
+                            // 🌟 完美写入官方翻译标签格式
                             pBuilder.append("<span ttm:role=\"x-translation\" xml:lang=\"zh-Hans\">${escapeXml(matchedTrans)}</span>")
                         }
 
@@ -375,7 +379,7 @@ object TtmlFetcher {
 
             if (ttmlParagraphs.isEmpty()) return null
 
-            // 🌟 完美构造带 Agent 头的官方 XML 外壳
+            // 🌟 完美的 Apple Music TTML 外壳 (包含 xmlns 和 metadata head)
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
             "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:amll=\"http://www.example.com/ns/amll\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" itunes:timing=\"Word\">\n" +
             "  <head>\n" +
@@ -383,7 +387,8 @@ object TtmlFetcher {
             "      <ttm:agent type=\"person\" xml:id=\"v1\"/>\n" +
             "    </metadata>\n" +
             "  </head>\n" +
-            "  <body>\n    <div>\n      " +
+            "  <body dur=\"9:59.999\">\n" +
+            "    <div>\n      " +
             ttmlParagraphs.joinToString("\n      ") +
             "\n    </div>\n  </body>\n</tt>"
         }.getOrNull()
@@ -404,7 +409,7 @@ object TtmlFetcher {
             val lines = text.split(Regex("""\r?\n"""))
             val ttmlParagraphs = mutableListOf<String>()
             
-            var lineIndex = 1 // 🌟 核心：注入线级 ID
+            var lineIndex = 1
 
             for (line in lines) {
                 var cl = line.replace(Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]"""), "").trim()
@@ -440,9 +445,8 @@ object TtmlFetcher {
 
                 if (spans.isNotEmpty()) {
                     val pBuilder = StringBuilder()
-                    // 🌟 注入 ID
                     pBuilder.append("<p begin=\"${msToTimeStr(lineStart)}\" end=\"${msToTimeStr(lineEnd)}\" itunes:key=\"L$lineIndex\" ttm:agent=\"v1\">")
-                    pBuilder.append(spans.joinToString("")) 
+                    pBuilder.append(spans.joinToString(" "))
 
                     val matchedTrans = findMatchedTranslation(lineStart, transMap)
                     if (!matchedTrans.isNullOrBlank()) {
@@ -464,7 +468,8 @@ object TtmlFetcher {
             "      <ttm:agent type=\"person\" xml:id=\"v1\"/>\n" +
             "    </metadata>\n" +
             "  </head>\n" +
-            "  <body>\n    <div>\n      " +
+            "  <body dur=\"9:59.999\">\n" +
+            "    <div>\n      " +
             ttmlParagraphs.joinToString("\n      ") +
             "\n    </div>\n  </body>\n</tt>"
         }.getOrNull()
@@ -476,7 +481,7 @@ object TtmlFetcher {
             val neteaseSearchRes = httpGet(neteaseSearchUrl) ?: return emptyMap()
             val songs = JSONObject(neteaseSearchRes).optJSONObject("result")?.optJSONArray("songs") ?: return emptyMap()
             
-            for (i in 0 until minOf(3, songs.length())) {
+            for (i in 0 until Math.min(3, songs.length())) {
                 val item = songs.getJSONObject(i)
                 val songId = item.optInt("id", 0)
                 val songName = item.optString("name")
