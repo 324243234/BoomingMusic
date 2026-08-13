@@ -157,7 +157,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
                 player = canvasExoPlayer
                 useController = false 
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT) 
+                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
                 
                 isClickable = false
                 isFocusable = false

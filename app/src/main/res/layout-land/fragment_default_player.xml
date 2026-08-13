@@ -46,12 +46,12 @@
         tools:layout="@layout/fragment_album_cover_default"/>
 	<!-- 🌟 2. 视频遮罩层：绝对克隆底层的尺寸与圆角layout_margin数值对齐dimens的 -->
     <!-- 约束完全锚定 角太圆滑、比静态封面大，就把数字减小（让它变尖）如果角太尖了，就把数字加大 -->
-    <!-- 🌟 视频遮罩层：动态绑定封面边距，利用 margin 微调绝对对齐 -->
+    <!-- 🌟 视频遮罩层：动态绑定封面边距，利用 margin 微调绝对对齐 @dimen/player_cover_margin-->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/videoCardContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_margin="@dimen/player_cover_margin" 
+        android:layout_margin="0dp" 
         android:clickable="false"
         android:focusable="false"
         app:cardBackgroundColor="@android:color/transparent"
