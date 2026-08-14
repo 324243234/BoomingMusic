@@ -48,21 +48,28 @@ object TtmlFetcher {
     // 🌟 核心引擎：高精深度多歌手评分算法
     // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
-        val normLt = normalizeStr(localSong.title)
+        // 🌟 修复：使用剥离了 "01" 的干净歌名进行比对，防止前缀毒化
+        val cleanLocalTitle = cleanTitle(localSong.title)
+        val normLt = normalizeStr(cleanLocalTitle)
         val normRt = normalizeStr(rTitle)
+        
         if (normLt.isEmpty() || normRt.isEmpty()) return -1
         if (!normLt.contains(normRt) && !normRt.contains(normLt)) return -1
 
         val ltFull = "${localSong.title} ${localSong.albumName}".lowercase()
+        val rtFull = rTitle.lowercase()
+        
         val lLive = ltFull.contains("live") || ltFull.contains("现场")
-        val rLive = rTitle.lowercase().contains("live") || rTitle.lowercase().contains("现场")
+        val rLive = rtFull.contains("live") || rtFull.contains("现场")
         if (lLive != rLive) return -1
 
-        val lRemix = ltFull.contains("remix") || ltFull.contains("dj") || ltFull.contains("版") || ltFull.contains("mix")
-        val rRemix = rTitle.lowercase().contains("remix") || rTitle.lowercase().contains("dj") || rTitle.lowercase().contains("版") || rTitle.lowercase().contains("mix")
+        // 🌟 修复：扩充电音版本词库，将 Extended 和 Mix 归为同一类进行互相识别
+        val mixKeywords = listOf("remix", "dj", "版", "mix", "extended", "edit", "club")
+        val lRemix = mixKeywords.any { ltFull.contains(it) }
+        val rRemix = mixKeywords.any { rtFull.contains(it) }
         if (lRemix != rRemix) return -1
 
-        // 🌟 改进：多歌手切割与交叉匹配逻辑
+        // 多歌手切割与交叉匹配逻辑
         val rawArtist = if (localSong.isArtistNameUnknown()) "" else localSong.artistName
         val localArtists = rawArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
         val remoteArtists = rArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
@@ -72,34 +79,26 @@ object TtmlFetcher {
             val localPrimary = localArtists[0]
             val remotePrimary = remoteArtists[0]
 
-            // 规则 A：主歌手必须高度匹配
             val isPrimaryMatch = localPrimary.contains(remotePrimary) || remotePrimary.contains(localPrimary)
             if (!isPrimaryMatch) {
-                // 容错：如果主歌手不匹配，检查本地主歌手是否在远程的合作名单里（防止平台倒装顺序）
                 if (!remoteArtists.any { it.contains(localPrimary) || localPrimary.contains(it) }) {
-                    return -1 // 主歌手完全对不上，直接判死刑淘汰！
+                    return -1 // 主歌手完全对不上，直接判死刑！
                 } else {
-                    artistScore += 100 // 顺位颠倒扣分，但允许通过
+                    artistScore += 100 
                 }
             } else {
-                artistScore += 300 // 主歌手完美对齐加高分
+                artistScore += 300 
             }
 
-            // 规则 B：合作歌手交集重合度加权
             var commonCount = 0
             for (la in localArtists) {
-                if (remoteArtists.any { it.contains(la) || la.contains(it) }) {
-                    commonCount++
-                }
+                if (remoteArtists.any { it.contains(la) || la.contains(it) }) commonCount++
             }
-            artistScore += commonCount * 150 // 每匹配一个歌手大幅加分
+            artistScore += commonCount * 150 
             
-            // 惩罚项：本地是合唱，但远程只找到一个人
-            if (localArtists.size > 1 && commonCount <= 1) {
-                artistScore -= 100
-            }
+            if (localArtists.size > 1 && commonCount <= 1) artistScore -= 100
         } else if (localArtists.isNotEmpty() && remoteArtists.isEmpty()) {
-            return -1 // 缺失歌手信息，降级抛弃
+            return -1 
         }
 
         var score = 100 + artistScore
@@ -121,7 +120,6 @@ object TtmlFetcher {
         val normLaAlb = normalizeStr(localSong.albumName ?: "")
         val normRaAlb = normalizeStr(rAlbum)
         
-        // 🚨 专辑严苛校验：若时长验证失败，专辑必须验证通过，否则判死刑
         if (normLaAlb.isNotEmpty() && normRaAlb.isNotEmpty()) {
             if (normLaAlb == normRaAlb) {
                 score += 500
@@ -136,7 +134,6 @@ object TtmlFetcher {
             if (!durationMatched) return -1 
         }
 
-        // 专辑版本惩罚机制
         val compKws = Regex("best of|greatest hits|collection|精选|the ultimate|essential|platinum|anthology|soundtrack|ost", RegexOption.IGNORE_CASE)
         if (compKws.containsMatchIn(rAlbum) && !compKws.containsMatchIn(localSong.albumName ?: "")) score -= 800
         
@@ -148,19 +145,19 @@ object TtmlFetcher {
 
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
-        // 连同歌手字段开头的序号也一起剥离
-        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
+        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
         
-        // 提取精确主歌手作为基础搜索词，避免副歌手名字太长导致引擎搜索结果为空
+        // 提取精确主歌手作为基础搜索词
         val primaryArtist = rawArtist.split(ARTIST_SPLIT_REGEX).firstOrNull()?.trim() ?: ""
 
         if (rawTitle.isEmpty()) return@withContext null
 
         val query = if (primaryArtist.isBlank()) rawTitle else "$primaryArtist $rawTitle"
-        val cleanQuery = query.replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        
+        // 🌟 修复：将圆括号、方括号等彻底替换为空格，防止连字导致搜索引擎瘫痪
+        val cleanQuery = query.replace(Regex("""[-_／/()[\]【】{}]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
         try {
-            // 🌟 1. 并发三大平台打分，收集带完整属性的候选池
             val (appleMatch, neteaseMatch, qqMatch) = coroutineScope {
                 val aTask = async { fetchBestAppleMatch(cleanQuery, song) }
                 val nTask = async { fetchBestNeteaseMatch(cleanQuery, song) }
@@ -174,7 +171,6 @@ object TtmlFetcher {
                 return@withContext null
             }
 
-            // 🌟 2. 构建全局补全字典
             val globalTransMap = mutableMapOf<Long, String>()
             neteaseMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
             qqMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
@@ -183,13 +179,11 @@ object TtmlFetcher {
             neteaseMatch?.lrc?.let { globalLrcMap.putAll(parseLrcTranslations(it)) }
             qqMatch?.lrc?.let { globalLrcMap.putAll(parseLrcTranslations(it)) }
 
-            // 🌟 3. 全局优中取优：分数最高者优先；分数相同，按 Apple > Netease > QQ 优先级排列
             val sortedCandidates = candidates.sortedWith(Comparator { a, b ->
                 if (a.score != b.score) b.score.compareTo(a.score)
                 else a.platform.compareTo(b.platform)
             })
 
-            // 🌟 4. 按排名顺位尝试解析与转化
             for (bestMatch in sortedCandidates) {
                 if (bestMatch.platform == 1) {
                     val ttml = raceAppleAndAmll(bestMatch.id, bestMatch.mid ?: "us")
