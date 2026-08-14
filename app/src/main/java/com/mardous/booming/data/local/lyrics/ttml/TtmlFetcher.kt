@@ -148,7 +148,8 @@ object TtmlFetcher {
 
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
-        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
+        // 连同歌手字段开头的序号也一起剥离
+        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
         
         // 提取精确主歌手作为基础搜索词，避免副歌手名字太长导致引擎搜索结果为空
         val primaryArtist = rawArtist.split(ARTIST_SPLIT_REGEX).firstOrNull()?.trim() ?: ""
