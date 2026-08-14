@@ -7,6 +7,8 @@ import com.mardous.booming.data.model.Song
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.json.JSONObject
@@ -15,8 +17,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (严格计分防假匹配版)
- * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
+ * 动态专辑画布引擎 (严格计分防假匹配版 - 优中取优，宁缺毋滥)
+ * 优先级排序: Apple Music -> 网易云音乐 -> QQ音乐
  */
 object AnimatedCanvasFetcher {
 
@@ -30,13 +32,15 @@ object AnimatedCanvasFetcher {
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
 
+    private data class CoverMatch(val platform: Int, val score: Int, val url: String)
+
     private fun normalizeStr(input: String?): String {
         if (input == null) return ""
         return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
     }
 
     // ==========================================
-    // 移植 PC 端严苛评分引擎
+    // 🌟 核心引擎：高精深度评分（严禁串扰乱入）
     // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
         val normLt = normalizeStr(localSong.title)
@@ -67,20 +71,35 @@ object AnimatedCanvasFetcher {
         }
         if (!artistMatch) return -1
 
-        var score = 100
+        var score = 0
+        var durationMatched = false
         val lDur = localSong.duration
+        
         if (lDur > 0L && rDurMs > 0L) {
             val diff = Math.abs(lDur - rDurMs)
-            if (diff <= 3500L) score += (1000L - diff).toInt()
-            else if (diff <= 8000L) score += (400L - diff).toInt()
-            else return -1 // 严格判定，排除串扰
+            if (diff <= 3500L) {
+                score += (1000L - diff).toInt()
+                durationMatched = true
+            } else {
+                return -1 // 时长差距大，强制拒绝！
+            }
         }
 
+        var albumMatched = false
         val normLaAlb = normalizeStr(localSong.albumName ?: "")
         val normRaAlb = normalizeStr(rAlbum)
         if (normLaAlb.isNotEmpty() && normRaAlb.isNotEmpty()) {
-            if (normLaAlb == normRaAlb) score += 500
-            else if (normLaAlb.contains(normRaAlb) || normRaAlb.contains(normLaAlb)) score += 200
+            if (normLaAlb == normRaAlb) {
+                score += 500
+                albumMatched = true
+            } else if (normLaAlb.contains(normRaAlb) || normRaAlb.contains(normLaAlb)) {
+                score += 200
+                albumMatched = true
+            } else {
+                if (!durationMatched) return -1 
+            }
+        } else {
+            if (!durationMatched) return -1 
         }
 
         return score
@@ -95,7 +114,7 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 🌟 1. 本地最高优先
+        // 🌟 1. 物理检查本地封面
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
             val audioFileName = File(song.data).nameWithoutExtension
@@ -128,19 +147,26 @@ object AnimatedCanvasFetcher {
         val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
         if (strictQuery.isBlank()) return@withContext null
             
-        // 🌟 2. 依次网络高精匹配抓取
-        var networkUrl = fetchAppleMusicCover(strictQuery, song)
-        
-        if (networkUrl == null) {
-            yield()
-            networkUrl = fetchNeteaseCover(strictQuery, song)
+        // 🌟 2. 并发全局大拉取：全网优中取优
+        val candidates = coroutineScope {
+            val aTask = async { fetchAppleMusicCover(strictQuery, song) }
+            val nTask = async { fetchNeteaseCover(strictQuery, song) }
+            val qTask = async { fetchQQMusicCover(strictQuery, song) }
+            listOfNotNull(aTask.await(), nTask.await(), qTask.await())
         }
 
-        if (networkUrl == null) {
-            yield()
-            networkUrl = fetchQQMusicCover(strictQuery, song)
+        if (candidates.isEmpty()) {
+            Log.d(TAG, "💔 宁缺毋滥，全网未找到严格匹配 [专辑+时长] 的动态封面: ${song.title}")
+            return@withContext null
         }
 
+        // 🌟 3. 排序决出王者：分数最高者优先；分数相同，按 Apple > Netease > QQ
+        val bestMatch = candidates.maxWithOrNull(Comparator { a, b ->
+            if (a.score != b.score) a.score.compareTo(b.score)
+            else b.platform.compareTo(a.platform)
+        })
+
+        val networkUrl = bestMatch?.url
         if (networkUrl != null && parentDir != null) {
             val audioFileName = File(song.data).nameWithoutExtension
             return@withContext downloadToLocal(networkUrl, parentDir, audioFileName)
@@ -149,7 +175,7 @@ object AnimatedCanvasFetcher {
         return@withContext networkUrl
     }
 
-    private suspend fun fetchAppleMusicCover(query: String, song: Song): String? {
+    private suspend fun fetchAppleMusicCover(query: String, song: Song): CoverMatch? {
         try {
             data class AMatch(val score: Int, val id: String, val country: String)
             val validItems = mutableListOf<AMatch>()
@@ -175,7 +201,9 @@ object AnimatedCanvasFetcher {
                     ?.optJSONObject(0)?.optJSONObject("attributes")?.optJSONObject("editorialVideo")
                     ?.optJSONObject("motionDetailSquare")?.optString("video")
 
-                if (!videoUrl.isNullOrBlank() && videoUrl.endsWith(".m3u8")) return videoUrl
+                if (!videoUrl.isNullOrBlank() && videoUrl.endsWith(".m3u8")) {
+                    return CoverMatch(1, bestMatch.score, videoUrl)
+                }
             }
         } catch (e: Exception) {
             if (e !is CancellationException) Log.e(TAG, "Apple Music fetch failed", e)
@@ -183,7 +211,7 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    private suspend fun fetchNeteaseCover(query: String, song: Song): String? {
+    private suspend fun fetchNeteaseCover(query: String, song: Song): CoverMatch? {
         try {
             val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=10"
             val searchRes = httpGet(searchUrl) ?: return null
@@ -208,7 +236,9 @@ object AnimatedCanvasFetcher {
                 if (dataObj != null) {
                     var coverUrl = dataObj.optString("videoPlayUrl")
                     if (coverUrl.isNullOrBlank()) coverUrl = dataObj.optString("url")
-                    if (!coverUrl.isNullOrBlank()) return coverUrl.replace("http://", "https://")
+                    if (!coverUrl.isNullOrBlank()) {
+                        return CoverMatch(2, bestMatch.score, coverUrl.replace("http://", "https://"))
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -217,7 +247,7 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    private suspend fun fetchQQMusicCover(query: String, song: Song): String? {
+    private suspend fun fetchQQMusicCover(query: String, song: Song): CoverMatch? {
         try {
             val searchUrl = "$QQ_MUSIC_API_DOMAIN/api/search?key=${Uri.encode(query)}"
             val searchRes = httpGet(searchUrl) ?: return null
@@ -259,7 +289,9 @@ object AnimatedCanvasFetcher {
                     val urlList = urlsObj.optJSONArray(selectedResolutionKey)
                     if (urlList != null && urlList.length() > 0) {
                         val finalUrl = urlList.optString(0)
-                        if (finalUrl.isNotBlank()) return finalUrl
+                        if (finalUrl.isNotBlank()) {
+                            return CoverMatch(3, bestMatch.score, finalUrl)
+                        }
                     }
                 }
             }

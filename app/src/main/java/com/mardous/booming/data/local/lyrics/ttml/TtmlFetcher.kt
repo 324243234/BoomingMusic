@@ -18,7 +18,7 @@ import java.util.zip.Inflater
 
 /**
  * TTML 级联网络获取引擎 (移植 PC 端高精深度评分 + 基因级残缺标点修复)
- * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
+ * 三大平台并发检索 -> 严苛打分 -> 全局优中取优 -> 宁缺毋滥
  */
 object TtmlFetcher {
 
@@ -26,7 +26,7 @@ object TtmlFetcher {
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
 
     private data class LyricSpan(var start: Long, var dur: Long, var text: String)
-    private data class MatchResult(val score: Int, val id: String, val mid: String? = null, val lrc: String? = null, val trans: String? = null, val yrc: String? = null, val qrc: String? = null)
+    private data class MatchResult(val platform: Int, val score: Int, val id: String, val mid: String? = null, val lrc: String? = null, val trans: String? = null, val yrc: String? = null, val qrc: String? = null)
 
     private fun cleanTitle(title: String?): String {
         if (title == null) return ""
@@ -42,7 +42,7 @@ object TtmlFetcher {
     }
 
     // ==========================================
-    // 高精深度评分算法：抗干扰防偏位 (1:1 移植 PC 端)
+    // 🌟 核心引擎：高精深度评分算法（绝对防错防偏位）
     // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
         val normLt = normalizeStr(localSong.title)
@@ -73,22 +73,41 @@ object TtmlFetcher {
         }
         if (!artistMatch) return -1
 
-        var score = 100
+        var score = 0
+        var durationMatched = false
         val lDur = localSong.duration
+        
+        // 🚨 时长严苛校验：大于 3.5 秒误差直接判死刑
         if (lDur > 0L && rDurMs > 0L) {
             val diff = Math.abs(lDur - rDurMs)
-            if (diff <= 3500L) score += (1000L - diff).toInt()
-            else if (diff <= 8000L) score += (400L - diff).toInt()
-            else return -1 // 严格剔除时长不对的版本
+            if (diff <= 3500L) {
+                score += (1000L - diff).toInt()
+                durationMatched = true
+            } else {
+                return -1 
+            }
         }
 
+        var albumMatched = false
         val normLaAlb = normalizeStr(localSong.albumName ?: "")
         val normRaAlb = normalizeStr(rAlbum)
+        
+        // 🚨 专辑严苛校验：若时长验证失败，专辑必须验证通过，否则判死刑
         if (normLaAlb.isNotEmpty() && normRaAlb.isNotEmpty()) {
-            if (normLaAlb == normRaAlb) score += 500
-            else if (normLaAlb.contains(normRaAlb) || normRaAlb.contains(normLaAlb)) score += 200
+            if (normLaAlb == normRaAlb) {
+                score += 500
+                albumMatched = true
+            } else if (normLaAlb.contains(normRaAlb) || normRaAlb.contains(normLaAlb)) {
+                score += 200
+                albumMatched = true
+            } else {
+                if (!durationMatched) return -1 
+            }
+        } else {
+            if (!durationMatched) return -1 
         }
 
+        // 专辑版本惩罚机制
         val compKws = Regex("best of|greatest hits|collection|精选|the ultimate|essential|platinum|anthology|soundtrack|ost", RegexOption.IGNORE_CASE)
         if (compKws.containsMatchIn(rAlbum) && !compKws.containsMatchIn(localSong.albumName ?: "")) score -= 800
         
@@ -109,7 +128,7 @@ object TtmlFetcher {
         val cleanQuery = query.replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
         try {
-            // 🌟 严格并发扫描：基于高精评分同时抓取三大平台的最优元数据
+            // 🌟 1. 并发三大平台打分，收集带完整属性的候选池
             val (appleMatch, neteaseMatch, qqMatch) = coroutineScope {
                 val aTask = async { fetchBestAppleMatch(cleanQuery, song) }
                 val nTask = async { fetchBestNeteaseMatch(cleanQuery, song) }
@@ -117,33 +136,43 @@ object TtmlFetcher {
                 Triple(aTask.await(), nTask.await(), qTask.await())
             }
 
-            // 1. Apple Music 官方及 AMLLDB (并发冲刺)
-            if (appleMatch != null) {
-                val ttml = raceAppleAndAmll(appleMatch.id, appleMatch.mid ?: "us") // mid stores country
-                if (ttml != null) {
-                    val mergedTrans = mutableMapOf<Long, String>()
-                    mergedTrans.putAll(parseLrcTranslations(neteaseMatch?.trans))
-                    mergedTrans.putAll(parseLrcTranslations(qqMatch?.trans))
-                    return@withContext injectTranslationIntoTtml(ttml, mergedTrans)
-                }
+            val candidates = listOfNotNull(appleMatch, neteaseMatch, qqMatch)
+            if (candidates.isEmpty()) {
+                Log.d(TAG, "💔 严格匹配未找到符合 [专辑+时长] 的版本，宁缺毋滥，已放弃。")
+                return@withContext null
             }
 
-            // 2. 网易云音乐 (解析 YRC 并基因补全)
-            if (neteaseMatch?.yrc != null) {
-                val transMap = parseLrcTranslations(neteaseMatch.trans)
-                val lrcMap = parseLrcTranslations(neteaseMatch.lrc)
-                val ttml = parseYrcToTtml(neteaseMatch.yrc, transMap, lrcMap)
-                if (ttml != null) return@withContext ttml
-            }
+            // 🌟 2. 构建全局补全字典（提取网易云和QQ音乐的翻译与平文本备用）
+            val globalTransMap = mutableMapOf<Long, String>()
+            neteaseMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
+            qqMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
 
-            // 3. QQ音乐 (解密 QRC 并基因补全)
-            if (qqMatch?.qrc != null) {
-                val transMap = parseLrcTranslations(qqMatch.trans)
-                val lrcMap = parseLrcTranslations(qqMatch.lrc)
-                val rawQrc = decryptQrc(qqMatch.qrc)
-                if (rawQrc != null) {
-                    val ttml = parseQrcToTtmlDirectly(rawQrc, transMap, lrcMap)
+            val globalLrcMap = mutableMapOf<Long, String>()
+            neteaseMatch?.lrc?.let { globalLrcMap.putAll(parseLrcTranslations(it)) }
+            qqMatch?.lrc?.let { globalLrcMap.putAll(parseLrcTranslations(it)) }
+
+            // 🌟 3. 全局优中取优：分数最高者优先；分数相同，按 Apple > Netease > QQ 优先级排列
+            val sortedCandidates = candidates.sortedWith(Comparator { a, b ->
+                if (a.score != b.score) b.score.compareTo(a.score)
+                else a.platform.compareTo(b.platform)
+            })
+
+            // 🌟 4. 按排名顺位尝试解析与转化
+            for (bestMatch in sortedCandidates) {
+                if (bestMatch.platform == 1) {
+                    val ttml = raceAppleAndAmll(bestMatch.id, bestMatch.mid ?: "us")
+                    if (ttml != null) {
+                        return@withContext injectTranslationIntoTtml(ttml, globalTransMap)
+                    }
+                } else if (bestMatch.platform == 2 && bestMatch.yrc != null) {
+                    val ttml = parseYrcToTtml(bestMatch.yrc, globalTransMap, globalLrcMap)
                     if (ttml != null) return@withContext ttml
+                } else if (bestMatch.platform == 3 && bestMatch.qrc != null) {
+                    val rawQrc = decryptQrc(bestMatch.qrc)
+                    if (rawQrc != null) {
+                        val ttml = parseQrcToTtmlDirectly(rawQrc, globalTransMap, globalLrcMap)
+                        if (ttml != null) return@withContext ttml
+                    }
                 }
             }
 
@@ -154,12 +183,99 @@ object TtmlFetcher {
     }
 
     // ==========================================
-    // 基因级溯源补全与闪烁修复引擎
+    // 高精网络抓取 API
+    // ==========================================
+    private suspend fun fetchBestAppleMatch(query: String, song: Song): MatchResult? {
+        val validItems = mutableListOf<Pair<Int, MatchResult>>()
+        for (country in listOf("cn", "us")) {
+            val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(query)}&entity=song&limit=10&country=$country"
+            val searchRes = httpGet(searchUrl) ?: continue
+            val results = runCatching { JSONObject(searchRes).optJSONArray("results") }.getOrNull() ?: continue
+            
+            for (i in 0 until results.length()) {
+                val item = results.getJSONObject(i)
+                val score = calculateMatchScore(
+                    song, item.optString("trackName"), item.optString("artistName"),
+                    item.optString("collectionName"), item.optLong("trackTimeMillis", 0L)
+                )
+                if (score > 0) validItems.add(Pair(score, MatchResult(1, score, item.optString("trackId"), country)))
+            }
+        }
+        return validItems.maxByOrNull { it.first }?.second
+    }
+
+    private suspend fun fetchBestNeteaseMatch(query: String, song: Song): MatchResult? {
+        val searchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=10"
+        val searchRes = httpGet(searchUrl) ?: return null
+        val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+        
+        val validItems = mutableListOf<Pair<Int, String>>()
+        for (i in 0 until songs.length()) {
+            val item = songs.getJSONObject(i)
+            val rArtist = (0 until (item.optJSONArray("artists")?.length() ?: 0)).joinToString("") { item.optJSONArray("artists")?.getJSONObject(it)?.optString("name") ?: "" }
+            val score = calculateMatchScore(song, item.optString("name"), rArtist, item.optJSONObject("album")?.optString("name") ?: "", item.optLong("duration", 0L))
+            if (score > 0) validItems.add(Pair(score, item.optInt("id", 0).toString()))
+        }
+        val best = validItems.maxByOrNull { it.first } ?: return null
+        
+        val lyricRes = httpGet("https://music.163.com/api/song/lyric?id=${best.second}&lv=-1&kv=-1&tv=-1&yv=1")
+        if (lyricRes != null) {
+            val jsonObj = runCatching { JSONObject(lyricRes) }.getOrNull()
+            return MatchResult(
+                platform = 2, score = best.first, id = best.second,
+                yrc = jsonObj?.optJSONObject("yrc")?.optString("lyric"),
+                lrc = jsonObj?.optJSONObject("lrc")?.optString("lyric"),
+                trans = jsonObj?.optJSONObject("tlyric")?.optString("lyric")
+            )
+        }
+        return null
+    }
+
+    private suspend fun fetchBestQQMatch(query: String, song: Song): MatchResult? {
+        val searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=${Uri.encode(query)}"
+        val searchRes = httpGet(searchUrl) ?: return null
+        val start = searchRes.indexOf("{"); val end = searchRes.lastIndexOf("}")
+        if (start == -1 || end == -1) return null
+        val list = runCatching { JSONObject(searchRes.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() ?: return null
+        
+        val validItems = mutableListOf<Triple<Int, JSONObject, String>>()
+        for (i in 0 until list.length()) {
+            val item = list.getJSONObject(i)
+            val rArtist = (0 until (item.optJSONArray("singer")?.length() ?: 0)).joinToString("") { item.optJSONArray("singer")?.getJSONObject(it)?.optString("name") ?: "" }
+            val score = calculateMatchScore(song, item.optString("songname"), rArtist, item.optString("albumname"), item.optLong("interval", 0L) * 1000L)
+            if (score > 0) validItems.add(Triple(score, item, item.optString("songmid")))
+        }
+        
+        val best = validItems.maxByOrNull { it.first } ?: return null
+        val songItem = best.second
+        val (qrcHex, transBase64) = fetchQqQrc(songItem)
+        val lrcRes = httpGet("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${best.third}&format=json&nobase64=1")
+        
+        return MatchResult(
+            platform = 3, score = best.first, id = songItem.optString("songid"), mid = best.third,
+            qrc = qrcHex,
+            lrc = runCatching { JSONObject(lrcRes!!).optString("lyric") }.getOrNull(),
+            trans = runCatching { if (!transBase64.isNullOrBlank()) String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8) else null }.getOrNull()
+        )
+    }
+
+    private suspend fun raceAppleAndAmll(trackId: String, country: String): String? {
+        return coroutineScope {
+            val tasks = listOf(
+                async { fetchAppleOfficial(trackId, country) },
+                async { httpGet("https://amlldb.bikonoo.com/apple/$trackId.ttml") },
+                async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
+            )
+            tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
+        }
+    }
+
+    // ==========================================
+    // 🌟 【黑科技】基因级溯源补全与闪烁修复引擎
     // ==========================================
     private fun healSpansWithLrc(spans: MutableList<LyricSpan>, lrcLine: String?): MutableList<LyricSpan> {
         if (spans.isEmpty()) return spans
         
-        // 1. 吞并孤立的标点符号，防止 TTML 单标点频闪
         val healed = mutableListOf<LyricSpan>()
         val punctRegex = Regex("^[),.?!:;~’”\\]}\\-]+$")
 
@@ -178,7 +294,6 @@ object TtmlFetcher {
 
         if (lrcLine.isNullOrBlank()) return healed
 
-        // 2. 修复 API 遗漏的左侧/右侧残缺括号
         val orig = lrcLine.replace("（", "(").replace("）", ")").replace("  ", " ")
         var spanText = healed.joinToString("") { it.text }.replace("（", "(").replace("）", ")")
 
@@ -221,95 +336,6 @@ object TtmlFetcher {
             }
         }
         return healed
-    }
-
-    // ==========================================
-    // 高精网络抓取 API
-    // ==========================================
-    private suspend fun fetchBestAppleMatch(query: String, song: Song): MatchResult? {
-        val validItems = mutableListOf<MatchResult>()
-        for (country in listOf("cn", "us")) {
-            val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(query)}&entity=song&limit=10&country=$country"
-            val searchRes = httpGet(searchUrl) ?: continue
-            val results = runCatching { JSONObject(searchRes).optJSONArray("results") }.getOrNull() ?: continue
-            
-            for (i in 0 until results.length()) {
-                val item = results.getJSONObject(i)
-                val score = calculateMatchScore(
-                    song, item.optString("trackName"), item.optString("artistName"),
-                    item.optString("collectionName"), item.optLong("trackTimeMillis", 0L)
-                )
-                if (score > 0) validItems.add(MatchResult(score, item.optString("trackId"), country))
-            }
-        }
-        return validItems.maxByOrNull { it.score }
-    }
-
-    private suspend fun fetchBestNeteaseMatch(query: String, song: Song): MatchResult? {
-        val searchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=10"
-        val searchRes = httpGet(searchUrl) ?: return null
-        val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
-        
-        val validItems = mutableListOf<MatchResult>()
-        for (i in 0 until songs.length()) {
-            val item = songs.getJSONObject(i)
-            val rArtist = (0 until (item.optJSONArray("artists")?.length() ?: 0)).joinToString("") { item.optJSONArray("artists")?.getJSONObject(it)?.optString("name") ?: "" }
-            val score = calculateMatchScore(song, item.optString("name"), rArtist, item.optJSONObject("album")?.optString("name") ?: "", item.optLong("duration", 0L))
-            if (score > 0) validItems.add(MatchResult(score, item.optInt("id", 0).toString()))
-        }
-        val best = validItems.maxByOrNull { it.score } ?: return null
-        
-        val lyricRes = httpGet("https://music.163.com/api/song/lyric?id=${best.id}&lv=-1&kv=-1&tv=-1&yv=1")
-        if (lyricRes != null) {
-            val jsonObj = runCatching { JSONObject(lyricRes) }.getOrNull()
-            return best.copy(
-                yrc = jsonObj?.optJSONObject("yrc")?.optString("lyric"),
-                lrc = jsonObj?.optJSONObject("lrc")?.optString("lyric"),
-                trans = jsonObj?.optJSONObject("tlyric")?.optString("lyric")
-            )
-        }
-        return null
-    }
-
-    private suspend fun fetchBestQQMatch(query: String, song: Song): MatchResult? {
-        val searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=${Uri.encode(query)}"
-        val searchRes = httpGet(searchUrl) ?: return null
-        val start = searchRes.indexOf("{"); val end = searchRes.lastIndexOf("}")
-        if (start == -1 || end == -1) return null
-        val list = runCatching { JSONObject(searchRes.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() ?: return null
-        
-        val validItems = mutableListOf<Triple<Int, JSONObject, String>>()
-        for (i in 0 until list.length()) {
-            val item = list.getJSONObject(i)
-            val rArtist = (0 until (item.optJSONArray("singer")?.length() ?: 0)).joinToString("") { item.optJSONArray("singer")?.getJSONObject(it)?.optString("name") ?: "" }
-            val score = calculateMatchScore(song, item.optString("songname"), rArtist, item.optString("albumname"), item.optLong("interval", 0L) * 1000L)
-            if (score > 0) validItems.add(Triple(score, item, item.optString("songmid")))
-        }
-        
-        val best = validItems.maxByOrNull { it.first } ?: return null
-        val songItem = best.second
-        val (qrcHex, transBase64) = fetchQqQrc(songItem)
-        val lrcRes = httpGet("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${best.third}&format=json&nobase64=1")
-        
-        return MatchResult(
-            score = best.first,
-            id = songItem.optString("songid"),
-            mid = best.third,
-            qrc = qrcHex,
-            lrc = runCatching { JSONObject(lrcRes!!).optString("lyric") }.getOrNull(),
-            trans = runCatching { if (!transBase64.isNullOrBlank()) String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8) else null }.getOrNull()
-        )
-    }
-
-    private suspend fun raceAppleAndAmll(trackId: String, country: String): String? {
-        return coroutineScope {
-            val tasks = listOf(
-                async { fetchAppleOfficial(trackId, country) },
-                async { httpGet("https://amlldb.bikonoo.com/apple/$trackId.ttml") },
-                async { httpGet("https://amlldb.bikonoo.com/qq-lyrics/$trackId.ttml") }
-            )
-            tasks.awaitAll().firstOrNull { !it.isNullOrBlank() && it.length > 50 }
-        }
     }
 
     // ==========================================
@@ -392,7 +418,6 @@ object TtmlFetcher {
                         }
                     }
 
-                    // 🌟 调用基因补全修复标点与括号
                     val lrcLine = findMatchedTranslation(lineStart, lrcMap)
                     val spans = healSpansWithLrc(rawSpans, lrcLine)
 
@@ -413,7 +438,13 @@ object TtmlFetcher {
                 }
             }
             if (ttmlParagraphs.isEmpty()) return null
-            buildAppleTtml(ttmlParagraphs)
+            
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:amll=\"http://www.example.com/ns/amll\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" itunes:timing=\"Word\">\n" +
+            "  <head>\n    <metadata>\n      <ttm:agent type=\"person\" xml:id=\"v1\"/>\n    </metadata>\n  </head>\n" +
+            "  <body dur=\"9:59.999\">\n    <div>\n      " +
+            ttmlParagraphs.joinToString("\n      ") +
+            "\n    </div>\n  </body>\n</tt>"
         }.getOrNull()
     }
 
@@ -457,7 +488,6 @@ object TtmlFetcher {
                     if ((w.start + w.dur) > lineEnd) lineEnd = w.start + w.dur
                 }
 
-                // 🌟 调用基因补全修复
                 val lrcLine = findMatchedTranslation(lineStart, lrcMap)
                 val spans = healSpansWithLrc(rawSpans, lrcLine)
 
@@ -477,17 +507,14 @@ object TtmlFetcher {
                 }
             }
             if (ttmlParagraphs.isEmpty()) return null
-            buildAppleTtml(ttmlParagraphs)
-        }.getOrNull()
-    }
 
-    private fun buildAppleTtml(paragraphs: List<String>): String {
-        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-               "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:amll=\"http://www.example.com/ns/amll\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" itunes:timing=\"Word\">\n" +
-               "  <head>\n    <metadata>\n      <ttm:agent type=\"person\" xml:id=\"v1\"/>\n    </metadata>\n  </head>\n" +
-               "  <body dur=\"9:59.999\">\n    <div>\n      " +
-               paragraphs.joinToString("\n      ") +
-               "\n    </div>\n  </body>\n</tt>"
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:amll=\"http://www.example.com/ns/amll\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" itunes:timing=\"Word\">\n" +
+            "  <head>\n    <metadata>\n      <ttm:agent type=\"person\" xml:id=\"v1\"/>\n    </metadata>\n  </head>\n" +
+            "  <body dur=\"9:59.999\">\n    <div>\n      " +
+            ttmlParagraphs.joinToString("\n      ") +
+            "\n    </div>\n  </body>\n</tt>"
+        }.getOrNull()
     }
 
     // ==========================================
