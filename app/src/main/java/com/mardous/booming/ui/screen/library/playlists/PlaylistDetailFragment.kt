@@ -90,7 +90,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         parametersOf(arguments.playlistId)
     }
     
-    // 注入歌词仓库
     private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentPlaylistDetailBinding? = null
@@ -102,7 +101,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private var wrappedAdapter: RecyclerView.Adapter<*>? = null
     private var recyclerViewDragDropManager: RecyclerViewDragDropManager? = null
 
-    // 核心防泄漏开关：拦截页面初次进入的无效数据加载
     private var isFirstLoad = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -154,7 +152,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             val newSongs = songsEntity.toSongs()
             playlistSongAdapter?.dataSet = newSongs
             
-            // 性能护盾：精准判断是“首次渲染”还是“真实的数据变化”
             if (isFirstLoad) {
                 isFirstLoad = false 
             } else {
@@ -188,7 +185,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         val currentSongs = playlistSongAdapter?.dataSet?.toMutableList() ?: return
         val currentPinnedIds = getPinnedSongIds().toMutableSet()
         
-        // 过滤掉已经置顶的
         val newlyPinnedSongs = songsToPin.filter { it.id.toString() !in currentPinnedIds }
         if (newlyPinnedSongs.isEmpty()) {
             Toast.makeText(requireContext(), "选中的歌曲已在置顶列中", Toast.LENGTH_SHORT).show()
@@ -200,9 +196,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             currentSongs.remove(song)
         }
         
-        // 强制插入到第 0 位（最顶部）
         currentSongs.addAll(0, newlyPinnedSongs)
-        
         setPinnedSongIds(currentPinnedIds)
         
         recyclerViewDragDropManager?.cancelDrag()
@@ -210,7 +204,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         binding.recyclerView.adapter?.notifyDataSetChanged()
         binding.recyclerView.scrollToPosition(0)
         
-        // 瞬间触发存库和 M3U 同步
         playlistSongAdapter?.saveSongs(playlist.playlistEntity)
         Toast.makeText(requireContext(), "已置顶 ${newlyPinnedSongs.size} 首歌曲", Toast.LENGTH_SHORT).show()
     }
@@ -223,14 +216,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         songsToUnpin.forEach { song ->
             if (currentPinnedIds.remove(song.id.toString())) {
                 actualUnpinned.add(song)
-                currentSongs.remove(song) // 从原有顶部拔出
+                currentSongs.remove(song)
             }
         }
         
         if (actualUnpinned.isNotEmpty()) {
             setPinnedSongIds(currentPinnedIds)
-            
-            // 计算还剩下多少首置顶歌曲，把刚刚取消置顶的塞到它们的下面（普通区的头部）
             val remainingPinnedCount = currentSongs.count { it.id.toString() in currentPinnedIds }
             currentSongs.addAll(remainingPinnedCount, actualUnpinned)
             
@@ -239,19 +230,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             binding.recyclerView.adapter?.notifyDataSetChanged()
             
             playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-            Toast.makeText(requireContext(), "已取消置顶，将受全局排序影响", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // 智能拦截：有置顶则取消置顶，没置顶则置顶
-    private fun togglePinSongs(songs: List<Song>) {
-        val currentPinnedIds = getPinnedSongIds()
-        // 只要选中列表中有一首歌没被置顶，我们就执行批量置顶；只有当所有选中的歌都在置顶里，才执行取消置顶。
-        val allAlreadyPinned = songs.all { it.id.toString() in currentPinnedIds }
-        if (allAlreadyPinned) {
-            unpinSongs(songs)
-        } else {
-            pinSongsToTop(songs)
+            Toast.makeText(requireContext(), "已取消置顶", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -353,16 +332,13 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             return true
         }
 
-        // 🌟 核心：拦截排序菜单，保护置顶特权
+        // 拦截排序菜单，保护置顶特权
         val currentSongs = playlistSongAdapter?.dataSet
         if (!currentSongs.isNullOrEmpty()) {
             val pinnedIds = getPinnedSongIds()
-            
-            // 拆分出“置顶”与“非置顶”两大阵营。置顶歌单保持现有的相对顺序！
             val pinnedSongs = currentSongs.filter { it.id.toString() in pinnedIds }
             val unpinnedSongs = currentSongs.filter { it.id.toString() !in pinnedIds }
             
-            // 只有非置顶组会受到排序指令洗牌
             val sortedUnpinnedList = when (menuItem.itemId) {
                 R.id.action_sort_by_title_asc -> unpinnedSongs.sortedBy { it.title }
                 R.id.action_sort_by_title_desc -> unpinnedSongs.sortedByDescending { it.title }
@@ -379,15 +355,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
 
             if (sortedUnpinnedList != null) {
                 recyclerViewDragDropManager?.cancelDrag()
-                
-                // 🌟 将两半重新缝合，特权置顶歌永远在最上面！
                 val finalSortedList = pinnedSongs + sortedUnpinnedList
                 
                 playlistSongAdapter?.dataSet = finalSortedList
                 binding.recyclerView.adapter?.notifyDataSetChanged()
                 binding.recyclerView.scrollToPosition(0)
                 
-                // 排序后写入数据库，自动触发 observe，进而覆盖 M3U
                 playlistSongAdapter?.saveSongs(playlist.playlistEntity)
                 return true
             }
@@ -461,12 +434,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 }
                 true
             }
-            // 🌟 拦截智能置顶 / 取消置顶
-            R.id.action_toggle_pin -> {
-                togglePinSongs(listOf(song))
-                true
-            }
-            // (防呆设计：如果用户拆分写了 action_pin_to_top 和 action_unpin)
             R.id.action_pin_to_top -> {
                 pinSongsToTop(listOf(song))
                 true
@@ -516,10 +483,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     }
                 }
             }
-            // 🌟 多曲批量智能置顶 / 取消置顶
-            R.id.action_toggle_pin -> {
-                if (songs.isNotEmpty()) togglePinSongs(songs)
-            }
             R.id.action_pin_to_top -> {
                 if (songs.isNotEmpty()) pinSongsToTop(songs)
             }
@@ -531,7 +494,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
     
     /**
-     * 🌟 强制物理覆盖同步 M3U 方法 
+     * 强制物理覆盖同步 M3U 方法 
      */
     private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
         if (playlistName.isBlank() || songs.isEmpty()) return

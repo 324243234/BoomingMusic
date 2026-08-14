@@ -17,8 +17,12 @@
         app:showAsAction="never"/>
 		
 	<item
-        android:id="@+id/action_toggle_pin"
-        android:title="置顶 / 取消置顶"
+        android:id="@+id/action_pin_to_top"
+        android:title="置顶歌曲"
+        app:showAsAction="never"/>
+    <item
+        android:id="@+id/action_unpin"
+        android:title="取消置顶"
         app:showAsAction="never"/>
 	<item
         android:id="@+id/action_fetch_ttml"
