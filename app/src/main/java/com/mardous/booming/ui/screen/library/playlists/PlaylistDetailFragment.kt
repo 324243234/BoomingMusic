@@ -89,7 +89,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         parametersOf(arguments.playlistId)
     }
     
-    // 🌟 注入歌词仓库，用于刷新 TTML 缓存
+    // 注入歌词仓库
     private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentPlaylistDetailBinding? = null
@@ -100,6 +100,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private var playlistSongAdapter: PlaylistSongAdapter? = null
     private var wrappedAdapter: RecyclerView.Adapter<*>? = null
     private var recyclerViewDragDropManager: RecyclerViewDragDropManager? = null
+
+    // 🌟 核心防泄漏开关：拦截页面初次进入的无效数据加载
+    private var isFirstLoad = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -150,10 +153,15 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             val newSongs = songsEntity.toSongs()
             playlistSongAdapter?.dataSet = newSongs
             
-            // 🌟 核心机制：只要数据库歌曲列表变动（进入、添加、删除、存库刷新），立刻自动覆写 M3U 文件
-            val playlistName = playlist.playlistEntity.playlistName
-            if (playlistName.isNotEmpty() && newSongs.isNotEmpty()) {
-                syncPlaylistToLocalM3u(playlistName, newSongs, isManualExport = false)
+            // 🌟 性能护盾：精准判断是“首次渲染”还是“真实的数据变化”
+            if (isFirstLoad) {
+                isFirstLoad = false // 过滤掉进入页面的初次加载
+            } else {
+                // 只有不是初次加载，才说明是数据库发生了增、删、排序等真实变动！立刻覆写 M3U
+                val playlistName = playlist.playlistEntity.playlistName
+                if (playlistName.isNotEmpty() && newSongs.isNotEmpty()) {
+                    syncPlaylistToLocalM3u(playlistName, newSongs, isManualExport = false)
+                }
             }
         }
         
@@ -197,13 +205,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         )
         
         recyclerViewDragDropManager = RecyclerViewDragDropManager().also { dragDropManager ->
-            // 🌟 监听长按拖拽结束：松手瞬间将排序更新进数据库
             dragDropManager.setOnItemDragEventListener(object : RecyclerViewDragDropManager.OnItemDragEventListener {
                 override fun onItemDragStarted(position: Int) {}
                 override fun onItemDragPositionChanged(fromPosition: Int, toPosition: Int) {}
                 override fun onItemDragFinished(fromPosition: Int, toPosition: Int, result: Boolean) {
                     if (fromPosition != toPosition) {
-                        // 保存入库后会触发 getSongs().observe，从而自动执行上面的 syncPlaylistToLocalM3u 覆盖本地文件
+                        // 拖拽改变后立刻写入数据库，这会安全触发上面的 observe，进而自动覆盖 M3U
                         playlistSongAdapter?.saveSongs(playlist.playlistEntity)
                     }
                 }
@@ -250,7 +257,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-        // 🌟 1. 拦截“导出播放列表”事件，强行覆盖本地 M3U 文件，不新建！
+        // 🌟 手动导出按钮
         if (menuItem.itemId == R.id.action_export_playlist) {
             val currentSongs = playlistSongAdapter?.dataSet
             val playlistName = playlist.playlistEntity.playlistName
@@ -262,10 +269,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             return true
         }
 
-        // 2. 获取当前适配器中的歌曲列表
+        // 拦截菜单排序
         val currentSongs = playlistSongAdapter?.dataSet
-        
-        // 3. 拦截排序菜单，进行稳妥的内存重排
         if (!currentSongs.isNullOrEmpty()) {
             val sortedList = when (menuItem.itemId) {
                 R.id.action_sort_by_title_asc -> currentSongs.sortedBy { it.title }
@@ -287,14 +292,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 binding.recyclerView.adapter?.notifyDataSetChanged()
                 binding.recyclerView.scrollToPosition(0)
                 
-                // 🌟 菜单点击排序后，立刻写盘覆盖。同样会触发自动同步覆盖 M3U。
+                // 排序后写入数据库，自动触发 observe，进而覆盖 M3U
                 playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-                
                 return true
             }
         }
 
-        // 4. 其他常规菜单项逻辑
         return when (menuItem.itemId) {
             android.R.id.home -> {
                 findNavController().navigateUp()
@@ -331,7 +334,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     ): Boolean {
         return when (menuItem.itemId) {
             R.id.action_remove_from_playlist -> {
-                // 删除会通过 Dialog 直接执行数据库删除动作，删除后会自动触发 getSongs().observe() 自动覆写 M3U
                 RemoveFromPlaylistDialog.create(song.toSongEntity(playlist.playlistEntity.playListId))
                     .show(childFragmentManager, "REMOVE_FROM_PLAYLIST")
                 true
@@ -414,7 +416,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
      * 会在手机的 Music/Playlists 文件夹下生成与歌单同名且完全覆盖的 .m3u 文件。
      */
     private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
-        // 防止意外创建非法文件
         if (playlistName.isBlank() || songs.isEmpty()) return
 
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -432,16 +433,15 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
                 val playlistDir = File(musicDir, "Playlists")
                 if (!playlistDir.exists()) {
-                    playlistDir.mkdirs() // 如果不存在则自动创建
+                    playlistDir.mkdirs() 
                 }
 
-                // 3. 强制覆盖写入（writeText 默认会抹除同名文件内容重新写）
-                // 剔除文件名中可能的非法字符
+                // 3. 强制覆盖写入（剔除可能导致路径崩溃的非法字符）
                 val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
                 val m3uFile = File(playlistDir, "$safeFileName.m3u")
                 m3uFile.writeText(m3uContent.toString())
 
-                // 如果是用户点击了右上角的“导出播放列表”，弹出明确的路径提示
+                // 只有用户主动点击导出时，才弹出强烈的气泡提示
                 if (isManualExport) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
