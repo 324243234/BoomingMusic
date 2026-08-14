@@ -19,13 +19,16 @@ package com.mardous.booming.ui.screen.library.playlists
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Environment
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
+import android.widget.Toast
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -57,6 +60,7 @@ import com.mardous.booming.extensions.resources.surfaceColor
 import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
+import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.PlaylistSongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
@@ -65,8 +69,14 @@ import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import com.mardous.booming.ui.dialogs.playlists.RemoveFromPlaylistDialog
 import com.mardous.booming.util.Preferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.core.parameter.parametersOf
+import java.io.File
+import java.lang.StringBuilder
 
 /**
  * @author Christians M. A. (mardous)
@@ -78,6 +88,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private val detailViewModel by viewModel<PlaylistDetailViewModel> {
         parametersOf(arguments.playlistId)
     }
+    
+    // 🌟 注入歌词仓库，用于刷新 TTML 缓存
+    private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentPlaylistDetailBinding? = null
     private val binding get() = _binding!!
@@ -111,7 +124,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         binding.header.image.removeHorizontalMarginIfRequired()
 
         setSupportActionBar(binding.toolbar)
-        //binding.collapsingAppBarLayout.setupStatusBarScrim(requireContext())
 
         libraryViewModel.getMiniPlayerMargin().observe(viewLifecycleOwner) {
             binding.recyclerView.updatePadding(bottom = it.getWithSpace())
@@ -132,10 +144,19 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             binding.header.subtitle.text = playlist.songs.toSongs().playlistInfo(requireContext())
             binding.header.image.playlistImage(playlist)
         }
-        detailViewModel.getSongs().observe(viewLifecycleOwner) {
+        
+        detailViewModel.getSongs().observe(viewLifecycleOwner) { songsEntity ->
             binding.progressIndicator.hide()
-            playlistSongAdapter?.dataSet = it.toSongs()
+            val newSongs = songsEntity.toSongs()
+            playlistSongAdapter?.dataSet = newSongs
+            
+            // 🌟 核心机制：只要数据库歌曲列表变动（进入、添加、删除、存库刷新），立刻自动覆写 M3U 文件
+            val playlistName = playlist.playlistEntity.playlistName
+            if (playlistName.isNotEmpty() && newSongs.isNotEmpty()) {
+                syncPlaylistToLocalM3u(playlistName, newSongs, isManualExport = false)
+            }
         }
+        
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
             if (!it) {
                 findNavController().navigateUp()
@@ -174,9 +195,24 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             isLockDrag = Preferences.lockedPlaylists,
             callback = this
         )
+        
         recyclerViewDragDropManager = RecyclerViewDragDropManager().also { dragDropManager ->
+            // 🌟 监听长按拖拽结束：松手瞬间将排序更新进数据库
+            dragDropManager.setOnItemDragEventListener(object : RecyclerViewDragDropManager.OnItemDragEventListener {
+                override fun onItemDragStarted(position: Int) {}
+                override fun onItemDragPositionChanged(fromPosition: Int, toPosition: Int) {}
+                override fun onItemDragFinished(fromPosition: Int, toPosition: Int, result: Boolean) {
+                    if (fromPosition != toPosition) {
+                        // 保存入库后会触发 getSongs().observe，从而自动执行上面的 syncPlaylistToLocalM3u 覆盖本地文件
+                        playlistSongAdapter?.saveSongs(playlist.playlistEntity)
+                    }
+                }
+                override fun onItemDragMoveDistanceUpdated(offsetX: Int, offsetY: Int) {}
+            })
+            
             wrappedAdapter = dragDropManager.createWrappedAdapter(playlistSongAdapter!!)
         }
+        
         binding.recyclerView.layoutManager = LinearLayoutManager(requireContext())
         binding.recyclerView.adapter = wrappedAdapter
         binding.recyclerView.itemAnimator = RefactoredDefaultItemAnimator()
@@ -213,60 +249,52 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-     
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-        
-        // 1. 获取当前适配器中的歌曲列表
+        // 🌟 1. 拦截“导出播放列表”事件，强行覆盖本地 M3U 文件，不新建！
+        if (menuItem.itemId == R.id.action_export_playlist) {
+            val currentSongs = playlistSongAdapter?.dataSet
+            val playlistName = playlist.playlistEntity.playlistName
+            if (!currentSongs.isNullOrEmpty() && playlistName.isNotEmpty()) {
+                syncPlaylistToLocalM3u(playlistName, currentSongs, isManualExport = true)
+            } else {
+                Toast.makeText(requireContext(), "播放列表为空或名称无效，无法导出", Toast.LENGTH_SHORT).show()
+            }
+            return true
+        }
+
+        // 2. 获取当前适配器中的歌曲列表
         val currentSongs = playlistSongAdapter?.dataSet
         
-        // 2. 拦截排序菜单，进行稳妥的内存重排
+        // 3. 拦截排序菜单，进行稳妥的内存重排
         if (!currentSongs.isNullOrEmpty()) {
             val sortedList = when (menuItem.itemId) {
-                // 歌名
                 R.id.action_sort_by_title_asc -> currentSongs.sortedBy { it.title }
                 R.id.action_sort_by_title_desc -> currentSongs.sortedByDescending { it.title }
-                
-                // 歌手（修正为 artistName）
                 R.id.action_sort_by_artist_asc -> currentSongs.sortedBy { it.artistName }
                 R.id.action_sort_by_artist_desc -> currentSongs.sortedByDescending { it.artistName }
-                
-                // 专辑（修正为 albumName）
                 R.id.action_sort_by_album_asc -> currentSongs.sortedBy { it.albumName }
                 R.id.action_sort_by_album_desc -> currentSongs.sortedByDescending { it.albumName }
-                
-                // 时长
                 R.id.action_sort_by_duration_asc -> currentSongs.sortedBy { it.duration }
                 R.id.action_sort_by_duration_desc -> currentSongs.sortedByDescending { it.duration }
-                
-                // 添加时间
                 R.id.action_sort_by_date_asc -> currentSongs.sortedBy { it.dateAdded }
                 R.id.action_sort_by_date_desc -> currentSongs.sortedByDescending { it.dateAdded }
-                
                 else -> null
             }
 
-            // 3. 核心逻辑：防御性中断 -> UI 更新 -> 写入数据库
             if (sortedList != null) {
-                // 防御性操作：强制取消所有可能正在进行的拖拽行为，防止数据冲突
                 recyclerViewDragDropManager?.cancelDrag()
-                
-                // 更新 UI：替换数据源并刷新
                 playlistSongAdapter?.dataSet = sortedList
                 binding.recyclerView.adapter?.notifyDataSetChanged()
-                
-                // UX 优化：列表自动滚动回顶部，让用户立刻看到排序结果
                 binding.recyclerView.scrollToPosition(0)
                 
-                // 数据库持久化：复用原作者的写库通道[cite: 1]
+                // 🌟 菜单点击排序后，立刻写盘覆盖。同样会触发自动同步覆盖 M3U。
                 playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-                
-                 
                 
                 return true
             }
         }
 
-        // 4. 下面保持原项目其他的常规菜单项逻辑不变[cite: 1]
+        // 4. 其他常规菜单项逻辑
         return when (menuItem.itemId) {
             android.R.id.home -> {
                 findNavController().navigateUp()
@@ -303,11 +331,39 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     ): Boolean {
         return when (menuItem.itemId) {
             R.id.action_remove_from_playlist -> {
+                // 删除会通过 Dialog 直接执行数据库删除动作，删除后会自动触发 getSongs().observe() 自动覆写 M3U
                 RemoveFromPlaylistDialog.create(song.toSongEntity(playlist.playlistEntity.playListId))
                     .show(childFragmentManager, "REMOVE_FROM_PLAYLIST")
                 true
             }
+            R.id.action_fetch_ttml -> {
+                val toast = Toast.makeText(requireContext(), "正在获取: ${song.title} 的TTML...", Toast.LENGTH_LONG)
+                toast.show()
 
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
+                    
+                    withContext(Dispatchers.Main) {
+                        toast.cancel()
+                        if (!ttmlContent.isNullOrBlank()) {
+                            try {
+                                val songFile = File(song.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                    Toast.makeText(requireContext(), "TTML 获取成功！", Toast.LENGTH_SHORT).show()
+                                    lyricsRepository.clearMemoryCache()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(requireContext(), "保存失败：请检查读写权限", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(requireContext(), "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                true
+            }
             else -> song.onSongMenu(this, menuItem)
         }
     }
@@ -318,8 +374,91 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 RemoveFromPlaylistDialog.create(songs.toSongsEntity(playlist.playlistEntity))
                     .show(childFragmentManager, "REMOVE_FROM_PLAYLIST")
             }
+            R.id.action_fetch_ttml -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在后台为 ${songs.size} 首歌曲获取 TTML...", Toast.LENGTH_LONG)
+                    toast.show()
 
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
+                            if (!ttmlContent.isNullOrBlank()) {
+                                try {
+                                    val songFile = File(song.data)
+                                    val parentDir = songFile.parentFile
+                                    if (parentDir != null && parentDir.exists()) {
+                                        File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                        successCount++
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            lyricsRepository.clearMemoryCache()
+                            Toast.makeText(requireContext(), "批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
             else -> songs.onSongsMenu(this, menuItem)
+        }
+    }
+    
+    /**
+     * 🌟 强制物理覆盖同步 M3U 方法 
+     * 会在手机的 Music/Playlists 文件夹下生成与歌单同名且完全覆盖的 .m3u 文件。
+     */
+    private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
+        // 防止意外创建非法文件
+        if (playlistName.isBlank() || songs.isEmpty()) return
+
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // 1. 构建标准 M3U 内容
+                val m3uContent = StringBuilder()
+                m3uContent.append("#EXTM3U\n")
+                for (song in songs) {
+                    val durationSec = song.duration / 1000
+                    m3uContent.append("#EXTINF:$durationSec,${song.artistName} - ${song.title}\n")
+                    m3uContent.append("${song.data}\n") // song.data 是音频物理路径
+                }
+
+                // 2. 锁定文件保存目录为 Android 标准音乐文件夹下的 Playlists 文件夹
+                val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+                val playlistDir = File(musicDir, "Playlists")
+                if (!playlistDir.exists()) {
+                    playlistDir.mkdirs() // 如果不存在则自动创建
+                }
+
+                // 3. 强制覆盖写入（writeText 默认会抹除同名文件内容重新写）
+                // 剔除文件名中可能的非法字符
+                val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val m3uFile = File(playlistDir, "$safeFileName.m3u")
+                m3uFile.writeText(m3uContent.toString())
+
+                // 如果是用户点击了右上角的“导出播放列表”，弹出明确的路径提示
+                if (isManualExport) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            requireContext(), 
+                            "播放列表已覆盖导出至:\n${m3uFile.absolutePath}", 
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                if (isManualExport) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
     }
 
