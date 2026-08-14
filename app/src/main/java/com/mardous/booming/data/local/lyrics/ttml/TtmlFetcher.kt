@@ -48,7 +48,6 @@ object TtmlFetcher {
     // 🌟 核心引擎：高精深度多歌手评分算法
     // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
-        // 🌟 修复：使用剥离了 "01" 的干净歌名进行比对，防止前缀毒化
         val cleanLocalTitle = cleanTitle(localSong.title)
         val normLt = normalizeStr(cleanLocalTitle)
         val normRt = normalizeStr(rTitle)
@@ -63,13 +62,11 @@ object TtmlFetcher {
         val rLive = rtFull.contains("live") || rtFull.contains("现场")
         if (lLive != rLive) return -1
 
-        // 🌟 修复：扩充电音版本词库，将 Extended 和 Mix 归为同一类进行互相识别
         val mixKeywords = listOf("remix", "dj", "版", "mix", "extended", "edit", "club")
         val lRemix = mixKeywords.any { ltFull.contains(it) }
         val rRemix = mixKeywords.any { rtFull.contains(it) }
         if (lRemix != rRemix) return -1
 
-        // 多歌手切割与交叉匹配逻辑
         val rawArtist = if (localSong.isArtistNameUnknown()) "" else localSong.artistName
         val localArtists = rawArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
         val remoteArtists = rArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
@@ -82,7 +79,7 @@ object TtmlFetcher {
             val isPrimaryMatch = localPrimary.contains(remotePrimary) || remotePrimary.contains(localPrimary)
             if (!isPrimaryMatch) {
                 if (!remoteArtists.any { it.contains(localPrimary) || localPrimary.contains(it) }) {
-                    return -1 // 主歌手完全对不上，直接判死刑！
+                    return -1 
                 } else {
                     artistScore += 100 
                 }
@@ -92,11 +89,15 @@ object TtmlFetcher {
 
             var commonCount = 0
             for (la in localArtists) {
-                if (remoteArtists.any { it.contains(la) || la.contains(it) }) commonCount++
+                if (remoteArtists.any { it.contains(la) || la.contains(it) }) {
+                    commonCount++
+                }
             }
             artistScore += commonCount * 150 
             
-            if (localArtists.size > 1 && commonCount <= 1) artistScore -= 100
+            if (localArtists.size > 1 && commonCount <= 1) {
+                artistScore -= 100
+            }
         } else if (localArtists.isNotEmpty() && remoteArtists.isEmpty()) {
             return -1 
         }
@@ -105,7 +106,6 @@ object TtmlFetcher {
         var durationMatched = false
         val lDur = localSong.duration
         
-        // 🚨 时长严苛校验：大于 3.5 秒误差直接判死刑
         if (lDur > 0L && rDurMs > 0L) {
             val diff = Math.abs(lDur - rDurMs)
             if (diff <= 3500L) {
@@ -145,17 +145,16 @@ object TtmlFetcher {
 
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
-        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
+        val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
         
-        // 提取精确主歌手作为基础搜索词
         val primaryArtist = rawArtist.split(ARTIST_SPLIT_REGEX).firstOrNull()?.trim() ?: ""
 
         if (rawTitle.isEmpty()) return@withContext null
 
         val query = if (primaryArtist.isBlank()) rawTitle else "$primaryArtist $rawTitle"
         
-        // 🌟 修复：将圆括号、方括号等彻底替换为空格，防止连字导致搜索引擎瘫痪
-        val cleanQuery = query.replace(Regex("""[-_／/()[\]【】{}]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        // 🌟 修复正则漏洞：转义了左中括号 \[ 避免正则引擎将其识别为嵌套字符类
+        val cleanQuery = query.replace(Regex("""[-_／/()\[\]【】{}]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
         try {
             val (appleMatch, neteaseMatch, qqMatch) = coroutineScope {
