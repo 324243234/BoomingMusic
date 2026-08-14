@@ -17,13 +17,16 @@ import java.net.URL
 import java.util.zip.Inflater
 
 /**
- * TTML 级联网络获取引擎 (移植 PC 端高精深度评分 + 基因级残缺标点修复)
+ * TTML 级联网络获取引擎 (包含极致多歌手重合度评分 + 基因级残缺标点修复)
  * 三大平台并发检索 -> 严苛打分 -> 全局优中取优 -> 宁缺毋滥
  */
 object TtmlFetcher {
 
     private const val TAG = "TtmlFetcher"
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
+
+    // 🌟 万能多歌手切割正则：无视各大平台的格式差异，精准抽离歌手实体
+    private val ARTIST_SPLIT_REGEX = Regex("""\s*(?:[/,&、;]|\band\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b)\s*""", RegexOption.IGNORE_CASE)
 
     private data class LyricSpan(var start: Long, var dur: Long, var text: String)
     private data class MatchResult(val platform: Int, val score: Int, val id: String, val mid: String? = null, val lrc: String? = null, val trans: String? = null, val yrc: String? = null, val qrc: String? = null)
@@ -42,7 +45,7 @@ object TtmlFetcher {
     }
 
     // ==========================================
-    // 🌟 核心引擎：高精深度评分算法（绝对防错防偏位）
+    // 🌟 核心引擎：高精深度多歌手评分算法
     // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
         val normLt = normalizeStr(localSong.title)
@@ -59,21 +62,47 @@ object TtmlFetcher {
         val rRemix = rTitle.lowercase().contains("remix") || rTitle.lowercase().contains("dj") || rTitle.lowercase().contains("版") || rTitle.lowercase().contains("mix")
         if (lRemix != rRemix) return -1
 
+        // 🌟 改进：多歌手切割与交叉匹配逻辑
         val rawArtist = if (localSong.isArtistNameUnknown()) "" else localSong.artistName
-        val localArtists = rawArtist.split(Regex("""[/,&、;]| and """)).map { normalizeStr(it) }.filter { it.isNotEmpty() }
-        val normRa = normalizeStr(rArtist)
+        val localArtists = rawArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
+        val remoteArtists = rArtist.split(ARTIST_SPLIT_REGEX).map { normalizeStr(it) }.filter { it.isNotEmpty() }
 
-        var artistMatch = false
-        if (localArtists.isEmpty()) {
-            artistMatch = true
-        } else {
-            val primary = localArtists[0]
-            if (normRa.contains(primary) || primary.contains(normRa)) artistMatch = true
-            else if (localArtists.any { normRa.contains(it) || it.contains(normRa) }) artistMatch = true
+        var artistScore = 0
+        if (localArtists.isNotEmpty() && remoteArtists.isNotEmpty()) {
+            val localPrimary = localArtists[0]
+            val remotePrimary = remoteArtists[0]
+
+            // 规则 A：主歌手必须高度匹配
+            val isPrimaryMatch = localPrimary.contains(remotePrimary) || remotePrimary.contains(localPrimary)
+            if (!isPrimaryMatch) {
+                // 容错：如果主歌手不匹配，检查本地主歌手是否在远程的合作名单里（防止平台倒装顺序）
+                if (!remoteArtists.any { it.contains(localPrimary) || localPrimary.contains(it) }) {
+                    return -1 // 主歌手完全对不上，直接判死刑淘汰！
+                } else {
+                    artistScore += 100 // 顺位颠倒扣分，但允许通过
+                }
+            } else {
+                artistScore += 300 // 主歌手完美对齐加高分
+            }
+
+            // 规则 B：合作歌手交集重合度加权
+            var commonCount = 0
+            for (la in localArtists) {
+                if (remoteArtists.any { it.contains(la) || la.contains(it) }) {
+                    commonCount++
+                }
+            }
+            artistScore += commonCount * 150 // 每匹配一个歌手大幅加分
+            
+            // 惩罚项：本地是合唱，但远程只找到一个人
+            if (localArtists.size > 1 && commonCount <= 1) {
+                artistScore -= 100
+            }
+        } else if (localArtists.isNotEmpty() && remoteArtists.isEmpty()) {
+            return -1 // 缺失歌手信息，降级抛弃
         }
-        if (!artistMatch) return -1
 
-        var score = 0
+        var score = 100 + artistScore
         var durationMatched = false
         val lDur = localSong.duration
         
@@ -120,7 +149,9 @@ object TtmlFetcher {
     suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
-        val primaryArtist = rawArtist.split(Regex("[/&,、]| and ")).firstOrNull()?.trim() ?: ""
+        
+        // 提取精确主歌手作为基础搜索词，避免副歌手名字太长导致引擎搜索结果为空
+        val primaryArtist = rawArtist.split(ARTIST_SPLIT_REGEX).firstOrNull()?.trim() ?: ""
 
         if (rawTitle.isEmpty()) return@withContext null
 
@@ -138,11 +169,11 @@ object TtmlFetcher {
 
             val candidates = listOfNotNull(appleMatch, neteaseMatch, qqMatch)
             if (candidates.isEmpty()) {
-                Log.d(TAG, "💔 严格匹配未找到符合 [专辑+时长] 的版本，宁缺毋滥，已放弃。")
+                Log.d(TAG, "💔 严格匹配未找到符合 [合作者+专辑+时长] 的版本，宁缺毋滥，已放弃。")
                 return@withContext null
             }
 
-            // 🌟 2. 构建全局补全字典（提取网易云和QQ音乐的翻译与平文本备用）
+            // 🌟 2. 构建全局补全字典
             val globalTransMap = mutableMapOf<Long, String>()
             neteaseMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
             qqMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
@@ -271,7 +302,7 @@ object TtmlFetcher {
     }
 
     // ==========================================
-    // 🌟 【黑科技】基因级溯源补全与闪烁修复引擎
+    // 🌟 基因级溯源补全与闪烁修复引擎
     // ==========================================
     private fun healSpansWithLrc(spans: MutableList<LyricSpan>, lrcLine: String?): MutableList<LyricSpan> {
         if (spans.isEmpty()) return spans
