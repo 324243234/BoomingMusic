@@ -15,7 +15,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (严格匹配版 + 下载缓存版)
+ * 动态专辑画布引擎 (严格计分防假匹配版)
+ * 优先级: Apple Music -> 网易云音乐 -> QQ音乐
  */
 object AnimatedCanvasFetcher {
 
@@ -29,6 +30,62 @@ object AnimatedCanvasFetcher {
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
 
+    private fun normalizeStr(input: String?): String {
+        if (input == null) return ""
+        return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
+    }
+
+    // ==========================================
+    // 移植 PC 端严苛评分引擎
+    // ==========================================
+    private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
+        val normLt = normalizeStr(localSong.title)
+        val normRt = normalizeStr(rTitle)
+        if (normLt.isEmpty() || normRt.isEmpty()) return -1
+        if (!normLt.contains(normRt) && !normRt.contains(normLt)) return -1
+
+        val ltFull = "${localSong.title} ${localSong.albumName}".lowercase()
+        val lLive = ltFull.contains("live") || ltFull.contains("现场")
+        val rLive = rTitle.lowercase().contains("live") || rTitle.lowercase().contains("现场")
+        if (lLive != rLive) return -1
+
+        val lRemix = ltFull.contains("remix") || ltFull.contains("dj") || ltFull.contains("版") || ltFull.contains("mix")
+        val rRemix = rTitle.lowercase().contains("remix") || rTitle.lowercase().contains("dj") || rTitle.lowercase().contains("版") || rTitle.lowercase().contains("mix")
+        if (lRemix != rRemix) return -1
+
+        val rawArtist = if (localSong.isArtistNameUnknown()) "" else localSong.artistName
+        val localArtists = rawArtist.split(Regex("""[/,&、;]| and """)).map { normalizeStr(it) }.filter { it.isNotEmpty() }
+        val normRa = normalizeStr(rArtist)
+
+        var artistMatch = false
+        if (localArtists.isEmpty()) {
+            artistMatch = true
+        } else {
+            val primary = localArtists[0]
+            if (normRa.contains(primary) || primary.contains(normRa)) artistMatch = true
+            else if (localArtists.any { normRa.contains(it) || it.contains(normRa) }) artistMatch = true
+        }
+        if (!artistMatch) return -1
+
+        var score = 100
+        val lDur = localSong.duration
+        if (lDur > 0L && rDurMs > 0L) {
+            val diff = Math.abs(lDur - rDurMs)
+            if (diff <= 3500L) score += (1000L - diff).toInt()
+            else if (diff <= 8000L) score += (400L - diff).toInt()
+            else return -1 // 严格判定，排除串扰
+        }
+
+        val normLaAlb = normalizeStr(localSong.albumName ?: "")
+        val normRaAlb = normalizeStr(rAlbum)
+        if (normLaAlb.isNotEmpty() && normRaAlb.isNotEmpty()) {
+            if (normLaAlb == normRaAlb) score += 500
+            else if (normLaAlb.contains(normRaAlb) || normRaAlb.contains(normLaAlb)) score += 200
+        }
+
+        return score
+    }
+
     suspend fun fetchCanvasUri(song: Song): String? = withContext(Dispatchers.IO) {
         val cacheKey = "${song.artistName}_${song.title}"
         uriCache.get(cacheKey)?.let { 
@@ -38,17 +95,13 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 🌟 1. 本地最高优先：先找同名视频
+        // 🌟 1. 本地最高优先
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
-		    val audioFileName = File(song.data).nameWithoutExtension // 获取音频真实文件名
-            
-            val songVideo = checkLocalVideo(parentDir, audioFileName) // 🥇 优先检查绝对同名
-                ?: checkLocalVideo(parentDir, getSafeFilename(song.title)) // 🥈 其次检查纯歌名
-                ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}") // 🥉 最后检查 歌手-歌名
-		
-		
-		
+            val audioFileName = File(song.data).nameWithoutExtension
+            val songVideo = checkLocalVideo(parentDir, audioFileName) 
+                ?: checkLocalVideo(parentDir, getSafeFilename(song.title)) 
+                ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}") 
             
             if (songVideo != null) return@withContext cacheAndReturn(cacheKey, songVideo)
 
@@ -61,78 +114,164 @@ object AnimatedCanvasFetcher {
 
         yield()
 
-        // 🌟 2. 字段严格清洗
         val rawTitle = song.title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
             .replace(Regex("""\(.*?(Remaster|Live|翻唱|伴奏|现场|DJ).*?\)"""), "")
             .replace(Regex("""\[.*?\]|\【.*?\】"""), "").trim()
             
-        // 🌟 3. 多歌手严格处理：只要第一位核心歌手
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName
         val primaryArtist = rawArtist.split(Regex("[/&,、]| and ")).firstOrNull()?.trim() ?: ""
-        
-        val rawAlbum = (song.albumName ?: "")
-            .replace(Regex("""\(.*?\)"""), "")
-            .replace(Regex("""\[.*?\]|\【.*?\】"""), "")
-            .trim()
 
-        // ==========================================
-        // 🌟 4. 第一梯队严格匹配：歌手 + 歌名 + 专辑名
-        // ==========================================
         val strictQueryParts = mutableListOf<String>()
         if (primaryArtist.isNotBlank()) strictQueryParts.add(primaryArtist)
         if (rawTitle.isNotBlank()) strictQueryParts.add(rawTitle)
-        if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) strictQueryParts.add(rawAlbum)
         
         val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        if (strictQuery.isBlank()) return@withContext null
             
-        val cover1 = fetchAndDownloadFromNetwork(strictQuery, song, parentDir)
-        if (cover1 != null) {
-            Log.d(TAG, "🎯 严格匹配命中 (歌手+歌名+专辑): $strictQuery")
-            return@withContext cacheAndReturn(cacheKey, cover1)
-        }
-
-        // ==========================================
-        // 🌟 5. 第二梯队降级匹配：歌手 + 歌名 (仅在有专辑名时才执行降级)
-        // ==========================================
-        //if (rawAlbum.isNotBlank() && rawAlbum != rawTitle) {
-        //    val fallbackQuery = listOf(primaryArtist, rawTitle).filter { it.isNotBlank() }.joinToString(" ")
-        //        .replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
-        //        
-         //   val cover2 = fetchAndDownloadFromNetwork(fallbackQuery, song, parentDir)
-         //   if (cover2 != null) {
-         //       Log.d(TAG, "🎯 降级匹配命中 (歌手+歌名): $fallbackQuery")
-         //       return@withContext cacheAndReturn(cacheKey, cover2)
-          //  }
-        //}
-
-        Log.d(TAG, "💔 宁缺毋滥，未找到匹配动态封面: ${song.title}")
-        return@withContext null
-    }
-
-    private suspend fun fetchAndDownloadFromNetwork(query: String, song: Song, parentDir: File?): String? {
-        if (query.isBlank()) return null
-        
-        var networkUrl = fetchAppleMusicCover(query)
+        // 🌟 2. 依次网络高精匹配抓取
+        var networkUrl = fetchAppleMusicCover(strictQuery, song)
         
         if (networkUrl == null) {
             yield()
-            networkUrl = fetchNeteaseCover(query)
+            networkUrl = fetchNeteaseCover(strictQuery, song)
         }
 
         if (networkUrl == null) {
             yield()
-            networkUrl = fetchQQMusicCover(query)
+            networkUrl = fetchQQMusicCover(strictQuery, song)
         }
 
         if (networkUrl != null && parentDir != null) {
-            // 获取本地音频的真实文件名（不带后缀），确保 MP4 绝对同名
             val audioFileName = File(song.data).nameWithoutExtension
-            return downloadToLocal(networkUrl, parentDir, audioFileName)
+            return@withContext downloadToLocal(networkUrl, parentDir, audioFileName)
         }
 
-        return networkUrl
+        return@withContext networkUrl
     }
 
+    private suspend fun fetchAppleMusicCover(query: String, song: Song): String? {
+        try {
+            data class AMatch(val score: Int, val id: String, val country: String)
+            val validItems = mutableListOf<AMatch>()
+
+            for (country in listOf("cn", "us")) {
+                yield()
+                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(query)}&entity=song&limit=10&country=$country"
+                val searchRes = httpGet(searchUrl) ?: continue
+                val results = runCatching { JSONObject(searchRes).optJSONArray("results") }.getOrNull() ?: continue
+                
+                for (i in 0 until results.length()) {
+                    val item = results.getJSONObject(i)
+                    val score = calculateMatchScore(song, item.optString("trackName"), item.optString("artistName"), item.optString("collectionName"), item.optLong("trackTimeMillis", 0L))
+                    if (score > 0) validItems.add(AMatch(score, item.optString("collectionId"), country))
+                }
+            }
+
+            val bestMatch = validItems.maxByOrNull { it.score }
+            if (bestMatch != null && bestMatch.id.isNotBlank()) {
+                val ampUrl = "https://amp-api.music.apple.com/v1/catalog/${bestMatch.country}/albums/${bestMatch.id}"
+                val ampRes = httpGet(ampUrl, useAuth = true) ?: return null
+                val videoUrl = JSONObject(ampRes).optJSONArray("data")
+                    ?.optJSONObject(0)?.optJSONObject("attributes")?.optJSONObject("editorialVideo")
+                    ?.optJSONObject("motionDetailSquare")?.optString("video")
+
+                if (!videoUrl.isNullOrBlank() && videoUrl.endsWith(".m3u8")) return videoUrl
+            }
+        } catch (e: Exception) {
+            if (e !is CancellationException) Log.e(TAG, "Apple Music fetch failed", e)
+        }
+        return null
+    }
+
+    private suspend fun fetchNeteaseCover(query: String, song: Song): String? {
+        try {
+            val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=10"
+            val searchRes = httpGet(searchUrl) ?: return null
+            val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+            
+            data class NMatch(val score: Int, val id: Long)
+            val validItems = mutableListOf<NMatch>()
+
+            for (i in 0 until songs.length()) {
+                val item = songs.getJSONObject(i)
+                val rArtist = (0 until (item.optJSONArray("artists")?.length() ?: 0)).joinToString("") { item.optJSONArray("artists")?.getJSONObject(it)?.optString("name") ?: "" }
+                val score = calculateMatchScore(song, item.optString("name"), rArtist, item.optJSONObject("album")?.optString("name") ?: "", item.optLong("duration", 0L))
+                if (score > 0) validItems.add(NMatch(score, item.optLong("id", 0L)))
+            }
+
+            val bestMatch = validItems.maxByOrNull { it.score }
+            if (bestMatch != null && bestMatch.id != 0L) {
+                yield()
+                val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=${bestMatch.id}"
+                val dynamicRes = httpGet(dynamicCoverUrl) ?: return null
+                val dataObj = JSONObject(dynamicRes).optJSONObject("data")
+                if (dataObj != null) {
+                    var coverUrl = dataObj.optString("videoPlayUrl")
+                    if (coverUrl.isNullOrBlank()) coverUrl = dataObj.optString("url")
+                    if (!coverUrl.isNullOrBlank()) return coverUrl.replace("http://", "https://")
+                }
+            }
+        } catch (e: Exception) {
+            if (e !is CancellationException) Log.e(TAG, "Netease fetch error", e)
+        }
+        return null
+    }
+
+    private suspend fun fetchQQMusicCover(query: String, song: Song): String? {
+        try {
+            val searchUrl = "$QQ_MUSIC_API_DOMAIN/api/search?key=${Uri.encode(query)}"
+            val searchRes = httpGet(searchUrl) ?: return null
+            val list = runCatching { JSONObject(searchRes).optJSONObject("data")?.optJSONArray("list") }.getOrNull() ?: return null
+
+            data class QMatch(val score: Int, val vid: String)
+            val validItems = mutableListOf<QMatch>()
+
+            for (i in 0 until list.length()) {
+                val item = list.getJSONObject(i)
+                val rArtist = (0 until (item.optJSONArray("singer")?.length() ?: 0)).joinToString("") { item.optJSONArray("singer")?.getJSONObject(it)?.optString("name") ?: "" }
+                val score = calculateMatchScore(song, item.optString("songname"), rArtist, item.optString("albumname"), item.optLong("interval", 0L) * 1000L)
+                val vid = item.optString("vid", "")
+                if (score > 0 && vid.isNotBlank()) validItems.add(QMatch(score, vid))
+            }
+
+            val bestMatch = validItems.maxByOrNull { it.score }
+            if (bestMatch != null) {
+                yield()
+                val mvUrl = "$QQ_MUSIC_API_DOMAIN/api/mv?id=${bestMatch.vid}"
+                val mvRes = httpGet(mvUrl) ?: return null
+                val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
+                
+                val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
+                var selectedResolutionKey: String? = null
+                
+                for (pref in preferredKeys) {
+                    if (urlsObj.has(pref)) {
+                        selectedResolutionKey = pref
+                        break
+                    }
+                }
+                
+                if (selectedResolutionKey == null && urlsObj.keys().hasNext()) {
+                    selectedResolutionKey = urlsObj.keys().next()
+                }
+
+                if (selectedResolutionKey != null) {
+                    val urlList = urlsObj.optJSONArray(selectedResolutionKey)
+                    if (urlList != null && urlList.length() > 0) {
+                        val finalUrl = urlList.optString(0)
+                        if (finalUrl.isNotBlank()) return finalUrl
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (e !is CancellationException) Log.e(TAG, "QQ Music fetch error", e)
+        }
+        return null
+    }
+
+    // ==========================================
+    // 缓存与底层物理下载
+    // ==========================================
     private fun cacheAndReturn(key: String, uri: String): String {
         uriCache.put(key, uri)
         return uri
@@ -157,7 +296,6 @@ object AnimatedCanvasFetcher {
         }
 
         return withContext(Dispatchers.IO) {
-            // 直接使用传进来的音频文件名，不作任何修改！
             val targetFile = File(parentDir, "$audioFileName.mp4")
 
             try {
@@ -205,118 +343,6 @@ object AnimatedCanvasFetcher {
             }
             return@withContext urlStr
         }
-    }
-
-    private suspend fun fetchAppleMusicCover(query: String): String? {
-        try {
-            for (country in listOf("cn", "us")) {
-                yield()
-                val searchUrl = "https://itunes.apple.com/search?term=${Uri.encode(query)}&entity=song&limit=2&country=$country"
-                val searchRes = httpGet(searchUrl) ?: continue
-                
-                val results = JSONObject(searchRes).optJSONArray("results")
-                if (results != null && results.length() > 0) {
-                    val collectionId = results.getJSONObject(0).optString("collectionId")
-                    if (collectionId.isBlank()) continue
-
-                    val ampUrl = "https://amp-api.music.apple.com/v1/catalog/$country/albums/$collectionId"
-                    val ampRes = httpGet(ampUrl, useAuth = true) ?: continue
-                    
-                    val videoUrl = JSONObject(ampRes).optJSONArray("data")
-                        ?.optJSONObject(0)?.optJSONObject("attributes")?.optJSONObject("editorialVideo")
-                        ?.optJSONObject("motionDetailSquare")?.optString("video")
-
-                    if (!videoUrl.isNullOrBlank() && videoUrl.endsWith(".m3u8")) {
-                        return videoUrl
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "Apple Music fetch failed", e)
-        }
-        return null
-    }
-
-    private suspend fun fetchNeteaseCover(query: String): String? {
-        try {
-            val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=1"
-            val searchRes = httpGet(searchUrl) ?: return null
-            
-            val songs = JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs")
-            if (songs == null || songs.length() == 0) return null
-            
-            val songId = songs.getJSONObject(0).optLong("id", 0L)
-            if (songId == 0L) return null
-
-            yield() 
-
-            val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=$songId"
-            val dynamicRes = httpGet(dynamicCoverUrl)
-            
-            if (dynamicRes != null) {
-                val dataObj = JSONObject(dynamicRes).optJSONObject("data")
-                if (dataObj != null) {
-                    var coverUrl = dataObj.optString("videoPlayUrl")
-                    if (coverUrl.isNullOrBlank()) {
-                        coverUrl = dataObj.optString("url")
-                    }
-                    if (!coverUrl.isNullOrBlank()) {
-                        return coverUrl.replace("http://", "https://")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "Netease fetch error", e)
-        }
-        return null
-    }
-
-    private suspend fun fetchQQMusicCover(query: String): String? {
-        try {
-            val searchUrl = "$QQ_MUSIC_API_DOMAIN/api/search?key=${Uri.encode(query)}"
-            val searchRes = httpGet(searchUrl) ?: return null
-            
-            val list = JSONObject(searchRes).optJSONObject("data")?.optJSONArray("list")
-            if (list == null || list.length() == 0) return null
-
-            val songObj = list.getJSONObject(0)
-            val vid = songObj.optString("vid", "")
-            if (vid.isBlank()) return null
-
-            yield()
-
-            val mvUrl = "$QQ_MUSIC_API_DOMAIN/api/mv?id=$vid"
-            val mvRes = httpGet(mvUrl) ?: return null
-            
-            val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
-            
-            val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
-            var selectedResolutionKey: String? = null
-            
-            for (pref in preferredKeys) {
-                if (urlsObj.has(pref)) {
-                    selectedResolutionKey = pref
-                    break
-                }
-            }
-            
-            if (selectedResolutionKey == null && urlsObj.keys().hasNext()) {
-                selectedResolutionKey = urlsObj.keys().next()
-            }
-
-            if (selectedResolutionKey != null) {
-                val urlList = urlsObj.optJSONArray(selectedResolutionKey)
-                if (urlList != null && urlList.length() > 0) {
-                    val finalUrl = urlList.optString(0)
-                    if (finalUrl.isNotBlank()) {
-                        return finalUrl
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "QQ Music fetch error", e)
-        }
-        return null
     }
 
     @Throws(Exception::class)
