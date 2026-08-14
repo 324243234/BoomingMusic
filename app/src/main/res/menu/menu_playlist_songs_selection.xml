@@ -15,6 +15,11 @@
         android:id="@+id/action_add_to_playing_queue"
         android:title="@string/action_add_to_playing_queue"
         app:showAsAction="never"/>
+		
+	<item
+        android:id="@+id/action_toggle_pin"
+        android:title="置顶 / 取消置顶"
+        app:showAsAction="never"/>
 	<item
         android:id="@+id/action_fetch_ttml"
         android:title="获取逐字 TTML"
