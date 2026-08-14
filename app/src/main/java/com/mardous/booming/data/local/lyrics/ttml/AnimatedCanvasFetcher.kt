@@ -1,5 +1,6 @@
 package com.mardous.booming.data.local.lyrics.ttml
 
+import android.content.Context
 import android.net.Uri
 import android.util.Log
 import android.util.LruCache
@@ -17,8 +18,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (严格计分防假匹配版 - 优中取优，宁缺毋滥)
- * 优先级排序: Apple Music -> 网易云音乐 -> QQ音乐
+ * 动态专辑画布引擎 (严格计分版 + 冷热双轨 LRU 缓存系统)
+ * <= 3.5MB：永久落盘
+ * >  3.5MB：存入临时 LRU 缓存池，最多保留 5 首，避免大文件撑爆车机空间
  */
 object AnimatedCanvasFetcher {
 
@@ -32,6 +34,10 @@ object AnimatedCanvasFetcher {
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
 
+    // 🌟 空间保护核心常量
+    private const val MAX_PERMANENT_BYTES = 3_500_000L // 3.5MB
+    private const val MAX_TEMP_CACHE_FILES = 5         // 临时大文件最多缓存 5 首
+
     private data class CoverMatch(val platform: Int, val score: Int, val url: String)
 
     private fun normalizeStr(input: String?): String {
@@ -39,9 +45,6 @@ object AnimatedCanvasFetcher {
         return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
     }
 
-    // ==========================================
-    // 🌟 核心引擎：高精深度评分（严禁串扰乱入）
-    // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
         val normLt = normalizeStr(localSong.title)
         val normRt = normalizeStr(rTitle)
@@ -81,7 +84,7 @@ object AnimatedCanvasFetcher {
                 score += (1000L - diff).toInt()
                 durationMatched = true
             } else {
-                return -1 // 时长差距大，强制拒绝！
+                return -1 
             }
         }
 
@@ -105,7 +108,8 @@ object AnimatedCanvasFetcher {
         return score
     }
 
-    suspend fun fetchCanvasUri(song: Song): String? = withContext(Dispatchers.IO) {
+    // 🌟 新增 Context 参数，用于获取 Android CacheDir
+    suspend fun fetchCanvasUri(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val cacheKey = "${song.artistName}_${song.title}"
         uriCache.get(cacheKey)?.let { 
             Log.d(TAG, "🎯 命中内存缓存直接返回: $cacheKey")
@@ -113,11 +117,11 @@ object AnimatedCanvasFetcher {
         }
 
         yield()
+        val audioFileName = File(song.data).nameWithoutExtension
 
-        // 🌟 1. 物理检查本地封面
+        // 🌟 1. 检查永久冷端本地缓存 (Permanent)
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
-            val audioFileName = File(song.data).nameWithoutExtension
             val songVideo = checkLocalVideo(parentDir, audioFileName) 
                 ?: checkLocalVideo(parentDir, getSafeFilename(song.title)) 
                 ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}") 
@@ -129,6 +133,16 @@ object AnimatedCanvasFetcher {
                 val albumVideo = checkLocalVideo(parentDir, getSafeFilename(albumName))
                 if (albumVideo != null) return@withContext cacheAndReturn(cacheKey, albumVideo)
             }
+        }
+
+        // 🌟 2. 检查临时热端 LRU 缓存 (Temporary)
+        val tempDir = getTempCacheDir(context)
+        val tempVideoPath = checkLocalVideo(tempDir, audioFileName)
+        if (tempVideoPath != null) {
+            // 更新最后修改时间，防止被 LRU 误删
+            File(tempVideoPath).setLastModified(System.currentTimeMillis())
+            Log.d(TAG, "🔥 命中临时大文件 LRU 热缓存: $tempVideoPath")
+            return@withContext cacheAndReturn(cacheKey, tempVideoPath)
         }
 
         yield()
@@ -147,7 +161,7 @@ object AnimatedCanvasFetcher {
         val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
         if (strictQuery.isBlank()) return@withContext null
             
-        // 🌟 2. 并发全局大拉取：全网优中取优
+        // 🌟 3. 并发全局大拉取：全网优中取优
         val candidates = coroutineScope {
             val aTask = async { fetchAppleMusicCover(strictQuery, song) }
             val nTask = async { fetchNeteaseCover(strictQuery, song) }
@@ -156,25 +170,27 @@ object AnimatedCanvasFetcher {
         }
 
         if (candidates.isEmpty()) {
-            Log.d(TAG, "💔 宁缺毋滥，全网未找到严格匹配 [专辑+时长] 的动态封面: ${song.title}")
+            Log.d(TAG, "💔 宁缺毋滥，未找到严格匹配的动态封面: ${song.title}")
             return@withContext null
         }
 
-        // 🌟 3. 排序决出王者：分数最高者优先；分数相同，按 Apple > Netease > QQ
         val bestMatch = candidates.maxWithOrNull(Comparator { a, b ->
             if (a.score != b.score) a.score.compareTo(b.score)
             else b.platform.compareTo(a.platform)
         })
 
         val networkUrl = bestMatch?.url
-        if (networkUrl != null && parentDir != null) {
-            val audioFileName = File(song.data).nameWithoutExtension
-            return@withContext downloadToLocal(networkUrl, parentDir, audioFileName)
+        if (networkUrl != null) {
+            // 🌟 4. 执行双轨下载策略
+            return@withContext downloadToDoubleTrackCache(context, networkUrl, parentDir, audioFileName)
         }
 
         return@withContext networkUrl
     }
 
+    // ==========================================
+    // 高精网络抓取 API 逻辑保持原样...
+    // ==========================================
     private suspend fun fetchAppleMusicCover(query: String, song: Song): CoverMatch? {
         try {
             data class AMatch(val score: Int, val id: String, val country: String)
@@ -289,9 +305,7 @@ object AnimatedCanvasFetcher {
                     val urlList = urlsObj.optJSONArray(selectedResolutionKey)
                     if (urlList != null && urlList.length() > 0) {
                         val finalUrl = urlList.optString(0)
-                        if (finalUrl.isNotBlank()) {
-                            return CoverMatch(3, bestMatch.score, finalUrl)
-                        }
+                        if (finalUrl.isNotBlank()) return CoverMatch(3, bestMatch.score, finalUrl)
                     }
                 }
             }
@@ -302,39 +316,47 @@ object AnimatedCanvasFetcher {
     }
 
     // ==========================================
-    // 缓存与底层物理下载
+    // 🌟 热端 LRU 缓存管理模块
     // ==========================================
-    private fun cacheAndReturn(key: String, uri: String): String {
-        uriCache.put(key, uri)
-        return uri
+    private fun getTempCacheDir(context: Context): File {
+        val dir = File(context.externalCacheDir ?: context.cacheDir, "canvas_temp_cache")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
     }
 
-    private fun getSafeFilename(name: String): String {
-        return name.replace(Regex("""[\\/:*?"<>|]"""), "_")
-    }
-
-    private fun checkLocalVideo(dir: File, targetName: String): String? {
-        val safeName = getSafeFilename(targetName)
-        for (ext in VIDEO_EXTENSIONS) {
-            val file = File(dir, "$safeName$ext")
-            if (file.exists() && file.isFile && file.length() > 0) return file.absolutePath
+    private fun manageTempCacheLRU(tempDir: File) {
+        val files = tempDir.listFiles()?.filter { it.isFile && it.extension in listOf("mp4", "webm") } ?: return
+        if (files.size >= MAX_TEMP_CACHE_FILES) {
+            // 按最后修改时间升序排列（最旧的在前面），清理出空间
+            files.sortedBy { it.lastModified() }
+                .take(files.size - MAX_TEMP_CACHE_FILES + 1)
+                .forEach { 
+                    it.delete()
+                    Log.d(TAG, "🧹 LRU 清理大体积临时视频: ${it.name}")
+                }
         }
-        return null
     }
 
-    private suspend fun downloadToLocal(urlStr: String, parentDir: File, audioFileName: String): String? {
+    /**
+     * 对外暴露的方法：用于在关闭 APP 时 (如 MainActivity onDestroy 或 Service 中) 调用清空临时库
+     */
+    fun clearAllTempCache(context: Context) {
+        runCatching {
+            getTempCacheDir(context).deleteRecursively()
+            Log.d(TAG, "💥 App 关闭，已抹除所有临时大视频缓存！")
+        }
+    }
+
+    // ==========================================
+    // 🌟 核心分发：双轨下载体系
+    // ==========================================
+    private suspend fun downloadToDoubleTrackCache(context: Context, urlStr: String, parentDir: File?, audioFileName: String): String? {
         if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) {
             return urlStr
         }
 
         return withContext(Dispatchers.IO) {
-            val targetFile = File(parentDir, "$audioFileName.mp4")
-
             try {
-                if (targetFile.exists() && targetFile.length() > 0) {
-                    return@withContext targetFile.absolutePath
-                }
-
                 var currentUrl = urlStr
                 var redirectCount = 0
                 var conn: HttpURLConnection
@@ -355,26 +377,57 @@ object AnimatedCanvasFetcher {
                     }
 
                     if (responseCode == 200 || responseCode == 206) {
-                        Log.d(TAG, "⬇️ 开始下载动态封面至本地: ${targetFile.absolutePath}")
+                        val contentLength = conn.contentLengthLong
+                        val targetFile: File
+
+                        // 🌟 根据体积决定它是进入冷端（永久）还是热端（临时LRU）
+                        if (contentLength <= MAX_PERMANENT_BYTES && parentDir != null) {
+                            targetFile = File(parentDir, "$audioFileName.mp4")
+                            Log.d(TAG, "⬇️ 文件较小 (${contentLength/1024}KB) -> 转入永久存储: ${targetFile.absolutePath}")
+                        } else {
+                            val tempDir = getTempCacheDir(context)
+                            manageTempCacheLRU(tempDir) // 存放前先检查并淘汰旧缓存
+                            targetFile = File(tempDir, "$audioFileName.mp4")
+                            Log.w(TAG, "⚠️ 发现巨型 MV (${contentLength/1024/1024}MB) -> 转入 LRU 临时热缓存: ${targetFile.absolutePath}")
+                        }
+
+                        if (targetFile.exists() && targetFile.length() == contentLength && contentLength > 0) {
+                            return@withContext targetFile.absolutePath
+                        }
+
                         conn.inputStream.use { input ->
                             targetFile.outputStream().use { output ->
                                 input.copyTo(output)
                             }
                         }
-                        Log.d(TAG, "✅ 动态封面下载完成！")
                         return@withContext targetFile.absolutePath
                     } else {
                         break 
                     }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    Log.e(TAG, "视频下载失败，回退使用网络 URL", e)
-                    if (targetFile.exists()) targetFile.delete() 
-                }
+                if (e !is CancellationException) Log.e(TAG, "视频下载失败", e)
             }
             return@withContext urlStr
         }
+    }
+
+    private fun cacheAndReturn(key: String, uri: String): String {
+        uriCache.put(key, uri)
+        return uri
+    }
+
+    private fun getSafeFilename(name: String): String {
+        return name.replace(Regex("""[\\/:*?"<>|]"""), "_")
+    }
+
+    private fun checkLocalVideo(dir: File, targetName: String): String? {
+        val safeName = getSafeFilename(targetName)
+        for (ext in VIDEO_EXTENSIONS) {
+            val file = File(dir, "$safeName$ext")
+            if (file.exists() && file.isFile && file.length() > 0) return file.absolutePath
+        }
+        return null
     }
 
     @Throws(Exception::class)
