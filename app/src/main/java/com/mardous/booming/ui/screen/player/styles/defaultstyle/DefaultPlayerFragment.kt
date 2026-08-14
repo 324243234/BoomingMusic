@@ -210,8 +210,9 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
                                     delay(400) 
+                                    // 🌟 修复：传入 requireContext()
                                     val videoUri = withContext(Dispatchers.IO) {
-                                        com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(song)
+                                        com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song)
                                     }
 
                                     if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
