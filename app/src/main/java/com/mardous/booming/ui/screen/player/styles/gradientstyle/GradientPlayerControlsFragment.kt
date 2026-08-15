@@ -1,25 +1,12 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.media.AudioManager
 import android.os.Bundle
 import android.view.View
+import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.ViewCompat
@@ -47,32 +34,31 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
     private var _binding: FragmentGradientPlayerPlaybackControlsBinding? = null
     private val binding get() = _binding!!
 
-    override val musicSlider: MusicSlider?
-        get() = binding.progressSlider
+    internal var popupMenu: PopupMenu? = null
 
-    override val repeatButton: MaterialButton
-        get() = binding.repeatButton
+    private lateinit var audioManager: AudioManager
+    private val volumeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val slider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+                if (slider != null && slider.progress != newVolume) {
+                    slider.progress = newVolume
+                }
+            }
+        }
+    }
 
-    override val shuffleButton: MaterialButton
-        get() = binding.shuffleButton
-
-    override val songCurrentProgress: TextView
-        get() = binding.songCurrentProgress
-
-    override val songTotalTime: TextView
-        get() = binding.songTotalTime
-
-    override val songTitleView: TextView?
-        get() = binding.title
-
-    override val songArtistView: TextView?
-        get() = binding.text
-
-    override val songInfoView: TextView
-        get() = binding.songInfo
+    override val musicSlider: MusicSlider? get() = binding.progressSlider
+    override val repeatButton: MaterialButton get() = binding.repeatButton
+    override val shuffleButton: MaterialButton get() = binding.shuffleButton
+    override val songCurrentProgress: TextView get() = binding.songCurrentProgress
+    override val songTotalTime: TextView get() = binding.songTotalTime
+    override val songTitleView: TextView? get() = binding.title
+    override val songArtistView: TextView? get() = binding.text
+    override val songInfoView: TextView get() = binding.songInfo
 
     private var isFavorite: Boolean = false
-    private var popupMenu: PopupMenu? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -80,6 +66,14 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
         setupListeners()
         setViewAction(binding.favorite, NowPlayingAction.ToggleFavoriteState)
         popupMenu = playerFragment?.inflateMenuInView(binding.menu)
+        
+        setupVolumeSlider()
+
+        // ★ 核心修复：仅在横屏/平板模式下显示音量控制栏，竖屏完全还原原作者布局
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        view.findViewById<View>(R.id.volumeContainer)?.isVisible = isLandscapeOrTablet
+
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val displayCutout = insets.getInsets(Type.displayCutout())
             v.updatePadding(left = displayCutout.left, right = displayCutout.right)
@@ -89,6 +83,29 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
             }
             insets
         }
+    }
+
+    private fun setupVolumeSlider() {
+        val context = context ?: return
+        audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider) ?: return
+
+        volumeSlider.max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        volumeSlider.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        androidx.core.content.ContextCompat.registerReceiver(
+            context, volumeReceiver,
+            android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -115,18 +132,23 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
 
+        val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
+        val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
+
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
-        val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newShuffleColor = getPlaybackControlsColor(isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
-        val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newRepeatColor = getPlaybackControlsColor(isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
+
+        volumeSlider?.let { slider ->
+            val activeList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            if (slider.progressTintList?.defaultColor != scheme.onSurfaceVariantColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
+        }
 
         return listOfNotNull(
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, scheme.onSurfaceColor),
@@ -141,48 +163,43 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songInfo.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
-            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
+            binding.songTotalTime.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
+            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
         )
     }
 
     override fun onSongInfoChanged(currentSong: Song, nextSong: Song) {
-        _binding?.let { nonNullBinding ->
-            nonNullBinding.title.text = currentSong.title
-            nonNullBinding.text.text = getSongArtist(currentSong)
+        _binding?.let {
+            it.title.text = currentSong.title
+            it.text.text = getSongArtist(currentSong)
         }
     }
 
     override fun onExtraInfoChanged(extraInfo: String?) {
-        _binding?.let { nonNullBinding ->
+        _binding?.let {
             if (isExtraInfoEnabled()) {
-                nonNullBinding.songInfo.text = extraInfo
-                nonNullBinding.songInfo.isVisible = true
+                it.songInfo.text = extraInfo
+                it.songInfo.isVisible = true
             } else {
-                nonNullBinding.songInfo.isVisible = false
+                it.songInfo.isVisible = false
             }
         }
     }
 
     override fun onUpdatePlayPause(isPlaying: Boolean) {
-        if (isPlaying) {
-            _binding?.playPauseButton?.setIconResource(R.drawable.ic_pause_24dp)
-        } else {
-            _binding?.playPauseButton?.setIconResource(R.drawable.ic_play_24dp)
-        }
+        _binding?.playPauseButton?.setIconResource(if (isPlaying) R.drawable.ic_pause_24dp else R.drawable.ic_play_24dp)
     }
 
     internal fun setFavorite(isFavorite: Boolean, withAnimation: Boolean) {
         if (this.isFavorite != isFavorite) {
             this.isFavorite = isFavorite
-            playerFragment?.let { nonNullPlayerFragment ->
-                with(nonNullPlayerFragment) {
-                    binding.favorite.setIsFavorite(isFavorite, withAnimation)
-                }
-            }
+            playerFragment?.let { binding.favorite.setIsFavorite(isFavorite, withAnimation) }
         }
     }
 
     override fun onDestroyView() {
+        runCatching { context?.unregisterReceiver(volumeReceiver) }
         super.onDestroyView()
         _binding = null
     }
