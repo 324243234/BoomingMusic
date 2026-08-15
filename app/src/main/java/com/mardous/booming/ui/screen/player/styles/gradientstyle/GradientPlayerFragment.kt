@@ -1,17 +1,21 @@
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
 import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -33,6 +37,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.viewpager.widget.ViewPager
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -82,6 +89,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
+    // ★ 流光背景动画引用
+    private var fluidAnimatorX: ObjectAnimator? = null
+    private var fluidAnimatorY: ObjectAnimator? = null
+
     override val colorSchemeMode: PlayerColorSchemeMode
         get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
 
@@ -128,12 +139,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
         val coverView = view.findViewById<View>(R.id.playerAlbumCoverFragment)
         val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
+        val playbackControls = view.findViewById<View>(R.id.playbackControlsFragment)
         val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
         
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
+                // 左侧封面：全方位躲避刘海及多位置系统工具栏
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
                     it.topMargin = safeInsets.top       
@@ -142,8 +155,20 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     coverView.layoutParams = it
                 }
 
-                lyricsContainer?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
-                bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
+                // ★ 核心修复：右侧歌词和控制台同步附加顶部 padding，确保和左侧封面高度严丝合缝对齐！
+                lyricsContainer?.updatePadding(
+                    top = safeInsets.top,
+                    bottom = safeInsets.bottom,
+                    right = safeInsets.right
+                )
+                playbackControls?.updatePadding(
+                    top = safeInsets.top,
+                    right = safeInsets.right
+                )
+                bottomAction?.updatePadding(
+                    bottom = safeInsets.bottom, 
+                    right = safeInsets.right
+                )
             } else {
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
@@ -159,11 +184,62 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
         setupListeners() 
         setupVideoPlayer(view)
+        setupFluidBackground(view) // ★ 注入苹果级动态流光背景机制
         setupLyricsSyncState()
         setupNewActionButtons(view)
-        
-        // 删除了导致编译报错的 findViewById(R.id.fullscreen_button) 逻辑
-        // 显隐逻辑已下放到 Compose 层的 CoverLyricsScreen.kt
+    }
+
+    // ★ 全新底层硬件级 Apple 流光呼吸动画架构（利用 Android 12+ 巨幅高斯模糊与矩阵漂移）
+    private fun setupFluidBackground(view: View) {
+        val fluidBg = view.findViewById<ImageView>(R.id.fluidBackground) ?: return
+
+        // 利用现代 Android GPU 加速的 RenderEffect 实现性能无损的极致模糊
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            fluidBg.setRenderEffect(RenderEffect.createBlurEffect(150f, 150f, Shader.TileMode.MIRROR))
+        }
+
+        // 呼吸流动动画 (Lissajous 曲线平滑运动原理)
+        fluidAnimatorX = ObjectAnimator.ofFloat(fluidBg, View.SCALE_X, 1.1f, 1.4f).apply {
+            duration = 16000L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+        fluidAnimatorY = ObjectAnimator.ofFloat(fluidBg, View.SCALE_Y, 1.1f, 1.4f).apply {
+            duration = 19000L // 特意错开 X 和 Y 的周期，产生极度有机的非线性流动感
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+        }
+
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            launch {
+                // 仅在音乐播放且设备未发热降频时激活流动，极致省电
+                playerViewModel.isPlayingFlow.collect { isPlaying ->
+                    if (isPlaying && !isDeviceStressed()) {
+                        if (fluidAnimatorX?.isPaused == true) fluidAnimatorX?.resume() else fluidAnimatorX?.start()
+                        if (fluidAnimatorY?.isPaused == true) fluidAnimatorY?.resume() else fluidAnimatorY?.start()
+                    } else {
+                        fluidAnimatorX?.pause()
+                        fluidAnimatorY?.pause()
+                    }
+                }
+            }
+            launch {
+                // 切歌时原生利用 Coil 提取新封面到底层，并用 1 秒的交叉淡入呈现优雅转场
+                playerViewModel.currentSongFlow.collect { song ->
+                    if (song != null) {
+                        SingletonImageLoader.get(requireContext()).enqueue(
+                            ImageRequest.Builder(requireContext())
+                                .data(song)
+                                .target(fluidBg)
+                                .crossfade(1000)
+                                .build()
+                        )
+                    }
+                }
+            }
+        }
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
@@ -606,7 +682,17 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         }
     }
 
+    override fun onDestroyView() {
+        fluidAnimatorX?.cancel()
+        fluidAnimatorY?.cancel()
+        fluidAnimatorX = null
+        fluidAnimatorY = null
+        videoFetchJob?.cancel()
+        canvasExoPlayer?.release()
+        super.onDestroyView()
+        _binding = null
+    }
+
     override fun onResume() { super.onResume(); if (!isDeviceStressed()) canvasExoPlayer?.play() }
     override fun onPause() { super.onPause(); canvasExoPlayer?.pause() }
-    override fun onDestroyView() { videoFetchJob?.cancel(); canvasExoPlayer?.release(); super.onDestroyView(); _binding = null }
 }
