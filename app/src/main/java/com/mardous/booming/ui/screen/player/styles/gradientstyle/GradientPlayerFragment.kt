@@ -142,6 +142,22 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         setupVideoPlayer(view)
         setupLyricsSyncState()
         setupNewActionButtons(view)
+		
+		
+		// ★ 新增：深度清理歌词面板的多余控件
+        if (isLandscapeOrTablet) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                // 延时等待 CoverLyricsFragment 视图初始化完成
+                delay(300)
+                
+                val lyricsView = childFragmentManager.findFragmentById(R.id.rightLyricsFragment)?.view
+                
+                // 隐藏歌词界面的全屏放大按钮 (兼容常见的 ID 命名)
+                lyricsView?.findViewById<View>(R.id.fullscreen_button)?.isVisible = false
+                lyricsView?.findViewById<View>(R.id.fullScreenButton)?.isVisible = false
+                lyricsView?.findViewById<View>(R.id.action_fullscreen)?.isVisible = false
+            }
+        }
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
