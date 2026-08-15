@@ -8,18 +8,22 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
+import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.compose.ui.graphics.toArgb
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
@@ -39,12 +43,14 @@ import androidx.media3.ui.PlayerView
 import androidx.viewpager.widget.ViewPager
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
-import coil3.request.crossfade
+import coil3.request.SuccessResult
+import coil3.toBitmap
 import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.*
 import com.mardous.booming.core.model.theme.NowPlayingScreen
+import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
 import com.mardous.booming.extensions.media.albumArtistName
@@ -54,12 +60,10 @@ import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.component.compose.color.extractGradientColors
+import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
-import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
-import com.mardous.booming.data.local.repository.LyricsRepository
-import org.koin.androidx.viewmodel.ext.android.activityViewModel
-import org.koin.android.ext.android.inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -67,6 +71,8 @@ import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.koin.android.ext.android.inject
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
 
 class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_player), View.OnClickListener {
@@ -89,9 +95,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
-    // ★ 流光背景动画引用
+    // ★ Apple Music 级动态流光动画组
     private var fluidAnimatorX: ObjectAnimator? = null
     private var fluidAnimatorY: ObjectAnimator? = null
+    private var fluidRotation: ObjectAnimator? = null
 
     override val colorSchemeMode: PlayerColorSchemeMode
         get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
@@ -146,7 +153,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
-                // 左侧封面：全方位躲避刘海及多位置系统工具栏
+                // 左侧封面：全方位安全避让
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
                     it.topMargin = safeInsets.top       
@@ -155,20 +162,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     coverView.layoutParams = it
                 }
 
-                // ★ 核心修复：右侧歌词和控制台同步附加顶部 padding，确保和左侧封面高度严丝合缝对齐！
-                lyricsContainer?.updatePadding(
-                    top = safeInsets.top,
-                    bottom = safeInsets.bottom,
-                    right = safeInsets.right
-                )
-                playbackControls?.updatePadding(
-                    top = safeInsets.top,
-                    right = safeInsets.right
-                )
-                bottomAction?.updatePadding(
-                    bottom = safeInsets.bottom, 
-                    right = safeInsets.right
-                )
+                // ★ 右侧区域对齐修正：统一加上 top = safeInsets.top，确保与左侧封面顶部绝对水平对齐！
+                lyricsContainer?.updatePadding(top = safeInsets.top, bottom = safeInsets.bottom, right = safeInsets.right)
+                playbackControls?.updatePadding(top = safeInsets.top, right = safeInsets.right)
+                bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
             } else {
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
@@ -184,58 +181,92 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
         setupListeners() 
         setupVideoPlayer(view)
-        setupFluidBackground(view) // ★ 注入苹果级动态流光背景机制
+        setupFluidBackground(view) // ★ Apple 级动态流光初始化
         setupLyricsSyncState()
         setupNewActionButtons(view)
     }
 
-    // ★ 全新底层硬件级 Apple 流光呼吸动画架构（利用 Android 12+ 巨幅高斯模糊与矩阵漂移）
+    // ★ 终极：Apple Music 级动态流光背景架构
     private fun setupFluidBackground(view: View) {
         val fluidBg = view.findViewById<ImageView>(R.id.fluidBackground) ?: return
 
-        // 利用现代 Android GPU 加速的 RenderEffect 实现性能无损的极致模糊
+        // 1. Android 12+ 硬件加速极致高斯模糊
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            fluidBg.setRenderEffect(RenderEffect.createBlurEffect(150f, 150f, Shader.TileMode.MIRROR))
+            fluidBg.setRenderEffect(RenderEffect.createBlurEffect(180f, 180f, Shader.TileMode.MIRROR))
         }
 
-        // 呼吸流动动画 (Lissajous 曲线平滑运动原理)
-        fluidAnimatorX = ObjectAnimator.ofFloat(fluidBg, View.SCALE_X, 1.1f, 1.4f).apply {
+        // 2. 赋予灵魂的动态有机流转 (缩放 + 旋转的巧妙组合，让多色渐变块互相推挤融合)
+        fluidAnimatorX = ObjectAnimator.ofFloat(fluidBg, View.SCALE_X, 1.4f, 1.9f).apply {
             duration = 16000L
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
             interpolator = AccelerateDecelerateInterpolator()
         }
-        fluidAnimatorY = ObjectAnimator.ofFloat(fluidBg, View.SCALE_Y, 1.1f, 1.4f).apply {
-            duration = 19000L // 特意错开 X 和 Y 的周期，产生极度有机的非线性流动感
+        fluidAnimatorY = ObjectAnimator.ofFloat(fluidBg, View.SCALE_Y, 1.4f, 1.9f).apply {
+            duration = 19000L // 错开周期，产生混沌感
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
             interpolator = AccelerateDecelerateInterpolator()
         }
+        fluidRotation = ObjectAnimator.ofFloat(fluidBg, View.ROTATION, 0f, 360f).apply {
+            duration = 45000L // 极度缓慢的360度旋转，仿佛颜料在水中化开
+            repeatMode = ValueAnimator.RESTART
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+        }
 
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            // 温控保护：发热或低电量时，立刻冻结流光动画
             launch {
-                // 仅在音乐播放且设备未发热降频时激活流动，极致省电
                 playerViewModel.isPlayingFlow.collect { isPlaying ->
                     if (isPlaying && !isDeviceStressed()) {
                         if (fluidAnimatorX?.isPaused == true) fluidAnimatorX?.resume() else fluidAnimatorX?.start()
                         if (fluidAnimatorY?.isPaused == true) fluidAnimatorY?.resume() else fluidAnimatorY?.start()
+                        if (fluidRotation?.isPaused == true) fluidRotation?.resume() else fluidRotation?.start()
                     } else {
                         fluidAnimatorX?.pause()
                         fluidAnimatorY?.pause()
+                        fluidRotation?.pause()
                     }
                 }
             }
+            
+            // 色彩提取与平滑过渡
             launch {
-                // 切歌时原生利用 Coil 提取新封面到底层，并用 1 秒的交叉淡入呈现优雅转场
                 playerViewModel.currentSongFlow.collect { song ->
+                    val ctx = context ?: return@collect
                     if (song != null) {
-                        SingletonImageLoader.get(requireContext()).enqueue(
-                            ImageRequest.Builder(requireContext())
-                                .data(song)
-                                .target(fluidBg)
-                                .crossfade(1000)
-                                .build()
-                        )
+                        withContext(Dispatchers.Default) {
+                            // 使用 Coil 异步预加载并缩小尺寸，释放 GPU 计算压力
+                            val result = SingletonImageLoader.get(ctx).execute(
+                                ImageRequest.Builder(ctx)
+                                    .data(song)
+                                    .size(250) // 尺寸越小提取越快，反正会被模糊掉
+                                    .build()
+                            )
+                            
+                            val bitmap = (result as? SuccessResult)?.image?.toBitmap()
+                            if (bitmap != null) {
+                                // 提取高级 M3 流光色彩
+                                val colors = bitmap.extractGradientColors(android.graphics.Color.DKGRAY)
+                                
+                                if (colors.isNotEmpty()) {
+                                    // 根据提取的色彩动态创建多维渐变色块
+                                    val gradientDrawable = GradientDrawable(
+                                        GradientDrawable.Orientation.TL_BR,
+                                        colors.map { it.toArgb() }.toIntArray()
+                                    ).apply { cornerRadius = 0f }
+
+                                    withContext(Dispatchers.Main) {
+                                        // 完美交叉淡入，色彩如同融化般过渡
+                                        fluidBg.animate().alpha(0f).setDuration(500).withEndAction {
+                                            fluidBg.setImageDrawable(gradientDrawable)
+                                            fluidBg.animate().alpha(0.65f).setDuration(800).start()
+                                        }.start()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -685,8 +716,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun onDestroyView() {
         fluidAnimatorX?.cancel()
         fluidAnimatorY?.cancel()
+        fluidRotation?.cancel()
         fluidAnimatorX = null
         fluidAnimatorY = null
+        fluidRotation = null
         videoFetchJob?.cancel()
         canvasExoPlayer?.release()
         super.onDestroyView()
