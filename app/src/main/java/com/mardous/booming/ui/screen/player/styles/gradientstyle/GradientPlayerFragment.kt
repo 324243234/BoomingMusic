@@ -109,7 +109,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             val maskView = view.findViewById<View>(R.id.mask)
             val lp = maskView?.layoutParams as? ConstraintLayout.LayoutParams
             lp?.let {
-                it.matchConstraintPercentWidth = 0.35f
+                it.matchConstraintPercentWidth = 0.30f
                 it.horizontalBias = 1.0f
                 maskView.layoutParams = it
             }
