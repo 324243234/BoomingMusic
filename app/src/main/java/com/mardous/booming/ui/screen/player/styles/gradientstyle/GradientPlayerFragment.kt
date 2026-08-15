@@ -10,17 +10,19 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.view.Menu
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.core.content.edit // ★ 修复编译错误：引入必要的 KTX SharedPreferences.edit 扩展库
+import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope // ★ 补齐协程生命周期导入
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -28,6 +30,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.viewpager.widget.ViewPager // ★ 补齐 ViewPager 导入
 import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -102,10 +105,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             val maskView = view.findViewById<View>(R.id.mask)
             val lp = maskView?.layoutParams as? ConstraintLayout.LayoutParams
             lp?.let {
-                it.matchConstraintPercentWidth = 0.35f
-                it.horizontalBias = 1.0f
+                it.matchConstraintPercentWidth = 0.35f  
+                it.horizontalBias = 1.0f                
                 maskView.layoutParams = it
             }
+            // ★ 补充遗漏：100% 还原 Default 的滑动切歌时隐藏视频逻辑
+            setupSlidingGhostMode(view)
         } else {
             view.findViewById<View>(R.id.rightLyricsContainer)?.visibility = View.GONE
         }
@@ -118,12 +123,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         view.findViewById<View>(R.id.toggleLyricsFormatButton)?.isVisible = isLandscapeOrTablet
         view.findViewById<View>(R.id.equalizerButton)?.isVisible = isLandscapeOrTablet
 
-        val extraInfo = view.findViewById<View>(R.id.lyricsExtraInfoContainer)
+        val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
         val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
             val navigationBar = insets.getInsets(Type.systemBars())
             val displayCutout = insets.getInsets(Type.displayCutout())
-            extraInfo?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
+            lyricsContainer?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
             bottomAction?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
             insets
         }
@@ -199,10 +204,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         lyricsRepository.clearMemoryCache()
-        
-        // ★ 修复编译错误：正确的语法是调用 SharedPreferences 实例上的 edit 函数
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
-        
         context?.let { android.widget.Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", android.widget.Toast.LENGTH_SHORT).show() }
         updateFormatIcon(btn)
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
@@ -212,6 +214,45 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         btn?.setIconResource(if (isCurrentlyTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
+    }
+
+    // ★ 完美移植 Default 的滑动监听隐藏视频功能
+    private fun setupSlidingGhostMode(rootView: View) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(500) 
+            val coverFragment = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment)
+            coverFragment?.view?.let { innerView ->
+                val viewPager = findViewPager(innerView)
+                viewPager?.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
+                    override fun onPageScrollStateChanged(state: Int) {
+                        if (state == ViewPager.SCROLL_STATE_DRAGGING) {
+                            val playerView = rootView.findViewById<PlayerView>(R.id.canvasPlayerView)
+                            playerView?.animate()?.cancel()
+                            playerView?.alpha = 0f
+                        } else if (state == ViewPager.SCROLL_STATE_IDLE) {
+                            if (canvasExoPlayer?.playbackState == Player.STATE_READY || canvasExoPlayer?.playbackState == Player.STATE_ENDED) {
+                                val playerView = rootView.findViewById<PlayerView>(R.id.canvasPlayerView)
+                                playerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
+                            }
+                        }
+                    }
+                    override fun onPageScrolled(p0: Int, p1: Float, p2: Int) {}
+                    override fun onPageSelected(p0: Int) {}
+                })
+            }
+        }
+    }
+
+    // ★ 配合 ViewPager 查找
+    private fun findViewPager(view: View): ViewPager? {
+        if (view is ViewPager) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val found = findViewPager(view.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     private fun setupVideoPlayer(view: View) {
