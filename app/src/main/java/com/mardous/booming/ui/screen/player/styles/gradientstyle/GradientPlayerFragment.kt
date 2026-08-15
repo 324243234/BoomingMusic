@@ -1,14 +1,9 @@
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
 import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
-import android.graphics.RenderEffect
-import android.graphics.Shader
-import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -17,13 +12,10 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.LinearInterpolator
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.compose.ui.graphics.toArgb
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
@@ -41,10 +33,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.viewpager.widget.ViewPager
-import coil3.SingletonImageLoader
-import coil3.request.ImageRequest
-import coil3.request.SuccessResult
-import coil3.toBitmap
 import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
@@ -60,7 +48,6 @@ import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.component.compose.color.extractGradientColors
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
@@ -94,11 +81,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
-
-    // ★ Apple Music 级动态流光动画组
-    private var fluidAnimatorX: ObjectAnimator? = null
-    private var fluidAnimatorY: ObjectAnimator? = null
-    private var fluidRotation: ObjectAnimator? = null
 
     override val colorSchemeMode: PlayerColorSchemeMode
         get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
@@ -153,7 +135,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
-                // 左侧封面：全方位安全避让
+                // ★ 1. 左侧封面：全方位 Margin 安全避让
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
                     it.topMargin = safeInsets.top       
@@ -162,18 +144,43 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     coverView.layoutParams = it
                 }
 
-                // ★ 右侧区域对齐修正：统一加上 top = safeInsets.top，确保与左侧封面顶部绝对水平对齐！
-                lyricsContainer?.updatePadding(top = safeInsets.top, bottom = safeInsets.bottom, right = safeInsets.right)
-                playbackControls?.updatePadding(top = safeInsets.top, right = safeInsets.right)
+                // ★ 2. 彻底修复：右侧歌词容器，统一使用 Margin，使其物理边界与左侧封面绝对齐平！
+                val lpLyrics = lyricsContainer?.layoutParams as? ConstraintLayout.LayoutParams
+                lpLyrics?.let {
+                    it.topMargin = safeInsets.top
+                    it.bottomMargin = safeInsets.bottom
+                    it.marginEnd = safeInsets.right
+                    lyricsContainer.layoutParams = it
+                }
+
+                // ★ 3. 彻底修复：右侧控制面板容器，同样使用 Margin 齐平
+                val lpControls = playbackControls?.layoutParams as? ConstraintLayout.LayoutParams
+                lpControls?.let {
+                    it.topMargin = safeInsets.top
+                    it.marginEnd = safeInsets.right
+                    playbackControls.layoutParams = it
+                }
+
+                // 底部动作栏：依然使用 padding，让点击热区和背景底色延伸到导航栏下方
                 bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
             } else {
+                // 竖屏：恢复所有容器的0边距
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
-                    it.topMargin = 0
-                    it.bottomMargin = 0
-                    it.marginStart = 0
+                    it.topMargin = 0; it.bottomMargin = 0; it.marginStart = 0
                     coverView.layoutParams = it
                 }
+                val lpLyrics = lyricsContainer?.layoutParams as? ConstraintLayout.LayoutParams
+                lpLyrics?.let {
+                    it.topMargin = 0; it.bottomMargin = 0; it.marginEnd = 0
+                    lyricsContainer.layoutParams = it
+                }
+                val lpControls = playbackControls?.layoutParams as? ConstraintLayout.LayoutParams
+                lpControls?.let {
+                    it.topMargin = 0; it.marginEnd = 0
+                    playbackControls.layoutParams = it
+                }
+                
                 bottomAction?.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
             }
             insets
@@ -181,96 +188,8 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
         setupListeners() 
         setupVideoPlayer(view)
-        setupFluidBackground(view) // ★ Apple 级动态流光初始化
         setupLyricsSyncState()
         setupNewActionButtons(view)
-    }
-
-    // ★ 终极：Apple Music 级动态流光背景架构
-    private fun setupFluidBackground(view: View) {
-        val fluidBg = view.findViewById<ImageView>(R.id.fluidBackground) ?: return
-
-        // 1. Android 12+ 硬件加速极致高斯模糊
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            fluidBg.setRenderEffect(RenderEffect.createBlurEffect(180f, 180f, Shader.TileMode.MIRROR))
-        }
-
-        // 2. 赋予灵魂的动态有机流转 (缩放 + 旋转的巧妙组合，让多色渐变块互相推挤融合)
-        fluidAnimatorX = ObjectAnimator.ofFloat(fluidBg, View.SCALE_X, 1.4f, 1.9f).apply {
-            duration = 16000L
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-        }
-        fluidAnimatorY = ObjectAnimator.ofFloat(fluidBg, View.SCALE_Y, 1.4f, 1.9f).apply {
-            duration = 19000L // 错开周期，产生混沌感
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-        }
-        fluidRotation = ObjectAnimator.ofFloat(fluidBg, View.ROTATION, 0f, 360f).apply {
-            duration = 45000L // 极度缓慢的360度旋转，仿佛颜料在水中化开
-            repeatMode = ValueAnimator.RESTART
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = LinearInterpolator()
-        }
-
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            // 温控保护：发热或低电量时，立刻冻结流光动画
-            launch {
-                playerViewModel.isPlayingFlow.collect { isPlaying ->
-                    if (isPlaying && !isDeviceStressed()) {
-                        if (fluidAnimatorX?.isPaused == true) fluidAnimatorX?.resume() else fluidAnimatorX?.start()
-                        if (fluidAnimatorY?.isPaused == true) fluidAnimatorY?.resume() else fluidAnimatorY?.start()
-                        if (fluidRotation?.isPaused == true) fluidRotation?.resume() else fluidRotation?.start()
-                    } else {
-                        fluidAnimatorX?.pause()
-                        fluidAnimatorY?.pause()
-                        fluidRotation?.pause()
-                    }
-                }
-            }
-            
-            // 色彩提取与平滑过渡
-            launch {
-                playerViewModel.currentSongFlow.collect { song ->
-                    val ctx = context ?: return@collect
-                    if (song != null) {
-                        withContext(Dispatchers.Default) {
-                            // 使用 Coil 异步预加载并缩小尺寸，释放 GPU 计算压力
-                            val result = SingletonImageLoader.get(ctx).execute(
-                                ImageRequest.Builder(ctx)
-                                    .data(song)
-                                    .size(250) // 尺寸越小提取越快，反正会被模糊掉
-                                    .build()
-                            )
-                            
-                            val bitmap = (result as? SuccessResult)?.image?.toBitmap()
-                            if (bitmap != null) {
-                                // 提取高级 M3 流光色彩
-                                val colors = bitmap.extractGradientColors(android.graphics.Color.DKGRAY)
-                                
-                                if (colors.isNotEmpty()) {
-                                    // 根据提取的色彩动态创建多维渐变色块
-                                    val gradientDrawable = GradientDrawable(
-                                        GradientDrawable.Orientation.TL_BR,
-                                        colors.map { it.toArgb() }.toIntArray()
-                                    ).apply { cornerRadius = 0f }
-
-                                    withContext(Dispatchers.Main) {
-                                        // 完美交叉淡入，色彩如同融化般过渡
-                                        fluidBg.animate().alpha(0f).setDuration(500).withEndAction {
-                                            fluidBg.setImageDrawable(gradientDrawable)
-                                            fluidBg.animate().alpha(0.65f).setDuration(800).start()
-                                        }.start()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
@@ -714,12 +633,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun onDestroyView() {
-        fluidAnimatorX?.cancel()
-        fluidAnimatorY?.cancel()
-        fluidRotation?.cancel()
-        fluidAnimatorX = null
-        fluidAnimatorY = null
-        fluidRotation = null
         videoFetchJob?.cancel()
         canvasExoPlayer?.release()
         super.onDestroyView()

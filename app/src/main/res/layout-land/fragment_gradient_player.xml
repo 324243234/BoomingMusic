@@ -14,19 +14,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <!-- ★ 核心新增：苹果级动态流光底层 -->
-        <!-- 它位于所有元素的最下方，透明度 0.6 能够与外层的提取底色完美交织融合 -->
-        <ImageView
-            android:id="@+id/fluidBackground"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="centerCrop"
-            android:alpha="0.6"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
         <!-- ================= 左侧区域 ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
@@ -76,7 +63,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:layout="@layout/fragment_gradient_player_playback_controls"/>
 
-        <!-- 动态底栏：包含所有高级功能按钮 -->
+        <!-- 动态底栏：包含了所有的按钮，系统会根据竖屏/平板状态智能显隐 -->
         <LinearLayout
             android:id="@+id/bottomActionContainer"
             android:layout_width="0dp"
@@ -151,7 +138,7 @@
                 app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
-        <!-- ================= 右侧歌词面板 (整体容器) ================= -->
+        <!-- ★★★ 核心修复：右侧歌词【整体容器】(将歌词与进度条强绑定为一个整体) ★★★ -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/rightLyricsContainer"
             android:layout_width="0dp"
@@ -162,6 +149,7 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
+            <!-- 1. 内部歌词部分 -->
             <androidx.fragment.app.FragmentContainerView
                 android:id="@+id/rightLyricsFragment"
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
@@ -173,6 +161,7 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
+            <!-- 2. 内部信息与进度条部分 (贴底) -->
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/lyricsExtraInfoContainer"
                 android:layout_width="0dp"
@@ -271,5 +260,6 @@
                     app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
             </androidx.constraintlayout.widget.ConstraintLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 </FrameLayout>
