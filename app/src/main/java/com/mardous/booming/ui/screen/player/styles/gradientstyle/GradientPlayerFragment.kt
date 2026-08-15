@@ -14,6 +14,7 @@ import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.content.edit // ★ 修复编译错误：引入必要的 KTX SharedPreferences.edit 扩展库
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
@@ -106,7 +107,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 maskView.layoutParams = it
             }
         } else {
-            // ★ 如果是竖屏，直接移除右侧专门为横屏设计的歌词“整体容器”，避免它偷偷截获事件！
             view.findViewById<View>(R.id.rightLyricsContainer)?.visibility = View.GONE
         }
 
@@ -118,13 +118,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         view.findViewById<View>(R.id.toggleLyricsFormatButton)?.isVisible = isLandscapeOrTablet
         view.findViewById<View>(R.id.equalizerButton)?.isVisible = isLandscapeOrTablet
 
-        // 统一指派小白条安全高度给“整体容器”和主面板
-        val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
+        val extraInfo = view.findViewById<View>(R.id.lyricsExtraInfoContainer)
         val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
             val navigationBar = insets.getInsets(Type.systemBars())
             val displayCutout = insets.getInsets(Type.displayCutout())
-            lyricsContainer?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
+            extraInfo?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
             bottomAction?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
             insets
         }
@@ -135,14 +134,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         setupNewActionButtons(view)
     }
 
-    // ★ 完全按你要求的 default 主题逻辑复刻[cite: 5]
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
         if (isLandscapeOrTablet) {
             when (gestureType) {
                 is GestureType.Tap -> {
-                    // ★ 1:1 还原 default 的 handleCoverClick
                     handleCoverClick()
                     return true
                 }
@@ -158,7 +155,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         return super.gestureDetected(gestureType)
     }
 
-    // ★ 痛改前非：像 Default 一样，直接把右侧的“整体容器”当做一个包袱进行显隐反转！
     private fun handleCoverClick() {
         val rightLyricsContainer = view?.findViewById<View>(R.id.rightLyricsContainer)
         val playbackControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -166,7 +162,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         
         val willShowLyrics = rightLyricsContainer?.isInvisible != false
         
-        // 歌词/信息/进度条，它们作为一个"整体"，共进退！
         rightLyricsContainer?.isInvisible = !willShowLyrics
         playbackControls?.isInvisible = willShowLyrics
         bottomAction?.isInvisible = willShowLyrics
@@ -204,7 +199,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         lyricsRepository.clearMemoryCache()
-        androidx.core.content.edit(sharedPreferences) { putString("preferred_lyrics_file_format", newFormat) }
+        
+        // ★ 修复编译错误：正确的语法是调用 SharedPreferences 实例上的 edit 函数
+        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
+        
         context?.let { android.widget.Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", android.widget.Toast.LENGTH_SHORT).show() }
         updateFormatIcon(btn)
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
@@ -381,7 +379,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
-        // 更新按钮与菜单图标（针对竖屏逻辑和主界面预留）
         view?.findViewById<MaterialButton>(R.id.showLyricsButton)?.let {
             it.setIconResource(if (lyricsVisible) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
             it.contentDescription = getString(if (lyricsVisible) R.string.action_hide_lyrics else R.string.action_show_lyrics)
@@ -392,7 +389,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         }
         
         if (isLandscapeOrTablet) {
-            // ★ 我们已经由 handleCoverClick 全权接管横屏点击切换，这里做一层同步兜底，防止菜单等全局触发导致的失步
             val rightLyricsContainer = view?.findViewById<View>(R.id.rightLyricsContainer)
             val playbackControls = view?.findViewById<View>(R.id.playbackControlsFragment)
             val bottomAction = view?.findViewById<View>(R.id.bottomActionContainer)

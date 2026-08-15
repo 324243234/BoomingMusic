@@ -69,7 +69,6 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
         
         setupVolumeSlider()
 
-        // ★ 核心修复：仅在横屏/平板模式下显示音量控制栏，竖屏完全还原原作者布局
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
         view.findViewById<View>(R.id.volumeContainer)?.isVisible = isLandscapeOrTablet
@@ -191,10 +190,11 @@ class GradientPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragme
         _binding?.playPauseButton?.setIconResource(if (isPlaying) R.drawable.ic_pause_24dp else R.drawable.ic_play_24dp)
     }
 
+    // ★ 修复编译错误：去掉容易引发 Unresolved reference 的作用域，直接使用标准系统接口改变图标状态
     internal fun setFavorite(isFavorite: Boolean, withAnimation: Boolean) {
         if (this.isFavorite != isFavorite) {
             this.isFavorite = isFavorite
-            playerFragment?.let { binding.favorite.setIsFavorite(isFavorite, withAnimation) }
+            binding.favorite.setIconResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
     }
 
