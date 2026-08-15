@@ -135,7 +135,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
-                // ★ 1. 左侧封面：全方位 Margin 安全避让
+                // 左侧封面：全方位 Margin 安全避让
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
                     it.topMargin = safeInsets.top       
@@ -144,7 +144,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     coverView.layoutParams = it
                 }
 
-                // ★ 2. 彻底修复：右侧歌词容器，统一使用 Margin，使其物理边界与左侧封面绝对齐平！
+                // 右侧歌词容器，使用 Margin，使其物理边界与左侧封面绝对齐平！
                 val lpLyrics = lyricsContainer?.layoutParams as? ConstraintLayout.LayoutParams
                 lpLyrics?.let {
                     it.topMargin = safeInsets.top
@@ -153,7 +153,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     lyricsContainer.layoutParams = it
                 }
 
-                // ★ 3. 彻底修复：右侧控制面板容器，同样使用 Margin 齐平
+                // 右侧控制面板容器，同样使用 Margin 齐平
                 val lpControls = playbackControls?.layoutParams as? ConstraintLayout.LayoutParams
                 lpControls?.let {
                     it.topMargin = safeInsets.top
@@ -161,7 +161,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     playbackControls.layoutParams = it
                 }
 
-                // 底部动作栏：依然使用 padding，让点击热区和背景底色延伸到导航栏下方
                 bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
             } else {
                 // 竖屏：恢复所有容器的0边距
@@ -241,7 +240,15 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     private fun setupNewActionButtons(view: View) {
         view.findViewById<ImageView>(R.id.lyricsNextButton)?.setOnClickListener { playerViewModel.seekToNext() }
-        view.findViewById<ImageView>(R.id.lyricsFavoriteButton)?.setOnClickListener {
+        
+        // ★ 核心修复：引入“乐观更新”逻辑，点击瞬间立即翻转 UI 状态
+        view.findViewById<ImageView>(R.id.lyricsFavoriteButton)?.setOnClickListener { v ->
+            // 1. 获取当前按钮绑定的 tag 状态
+            val isFav = v.tag as? Boolean ?: false
+            // 2. 立即反转状态并更新图标！(无需等待后台回调)
+            updateFavoriteIcon(!isFav)
+            
+            // 3. 异步启动服务进行数据库变更
             try {
                 val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
                     action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
@@ -452,6 +459,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 }
             }
             
+            // ★ 这个逻辑确保了别的界面切红心后，这个界面的红心也会联动同步！
             launch {
                 playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
