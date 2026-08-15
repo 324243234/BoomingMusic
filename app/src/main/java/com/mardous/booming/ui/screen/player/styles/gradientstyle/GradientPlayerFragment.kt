@@ -20,6 +20,8 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat.Type
+import androidx.core.view.isInvisible
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -256,8 +258,16 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private fun setupNewActionButtons() {
         binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
         
+        // ★ 核心修复：100% 同步 DefaultPlayerFragment 的 startService 原生逻辑
         binding.lyricsFavoriteButton?.setOnClickListener {
-            controlsFragment.toggleFavorite()
+            val isFav = it.tag as? Boolean ?: false
+            updateFavoriteIcon(!isFav)
+            try {
+                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
+                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
+                }
+                requireContext().startService(intent)
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         binding.goToArtistButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
