@@ -67,7 +67,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     private val lyricsRepository: LyricsRepository by inject()
-    // ★ 补齐 repository 注入，用于查库
     private val repository: com.mardous.booming.data.local.repository.Repository by inject()
 
     private var _binding: FragmentGradientPlayerBinding? = null
@@ -114,7 +113,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 it.horizontalBias = 1.0f
                 maskView.layoutParams = it
             }
-            // ★ 还原 Default 的幽灵滑动隐藏逻辑
             setupSlidingGhostMode(view)
         } else {
             view.findViewById<View>(R.id.rightLyricsContainer)?.visibility = View.GONE
@@ -128,32 +126,25 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         view.findViewById<View>(R.id.toggleLyricsFormatButton)?.isVisible = isLandscapeOrTablet
         view.findViewById<View>(R.id.equalizerButton)?.isVisible = isLandscapeOrTablet
 
-        // 统一指派全场景安全高度给“整体容器”和主面板
         val coverView = view.findViewById<View>(R.id.playerAlbumCoverFragment)
         val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
         val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
         
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
-            // ★ 最优解：把 系统工具栏(systemBars) 和 刘海挖孔(displayCutout) 合并！
-            // 无论 CarWith 工具栏在左、在下、在右，safeInsets 都能精准返回需要避让的像素值。
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
-                // 【左侧封面处理】
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
-                    it.topMargin = safeInsets.top       // 避开顶部状态栏
-                    it.bottomMargin = safeInsets.bottom // 避开 CarWith 底部工具栏
-                    it.marginStart = safeInsets.left    // 避开 CarWith 左侧工具栏
+                    it.topMargin = safeInsets.top       
+                    it.bottomMargin = safeInsets.bottom 
+                    it.marginStart = safeInsets.left    
                     coverView.layoutParams = it
                 }
 
-                // 【右侧面板处理】
-                // 左边不需要 padding，因为已经被封面挤开了；只需避开底部和右侧可能存在的工具栏
                 lyricsContainer?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
                 bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
             } else {
-                // 竖屏手机模式还原：恢复 0 边距满高充满
                 val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
                 lpCover?.let {
                     it.topMargin = 0
@@ -161,7 +152,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     it.marginStart = 0
                     coverView.layoutParams = it
                 }
-                // 竖屏面板需要兼顾左右避让
                 bottomAction?.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
             }
             insets
@@ -171,22 +161,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         setupVideoPlayer(view)
         setupLyricsSyncState()
         setupNewActionButtons(view)
-		
-		
-		// ★ 新增：深度清理歌词面板的多余控件
-        if (isLandscapeOrTablet) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                // 延时等待 CoverLyricsFragment 视图初始化完成
-                delay(300)
-                
-                val lyricsView = childFragmentManager.findFragmentById(R.id.rightLyricsFragment)?.view
-                
-                // 隐藏歌词界面的全屏放大按钮 (兼容常见的 ID 命名)
-                lyricsView?.findViewById<View>(R.id.fullscreen_button)?.isVisible = false
-                lyricsView?.findViewById<View>(R.id.fullScreenButton)?.isVisible = false
-                lyricsView?.findViewById<View>(R.id.action_fullscreen)?.isVisible = false
-            }
-        }
+        
+        // 删除了导致编译报错的 findViewById(R.id.fullscreen_button) 逻辑
+        // 显隐逻辑已下放到 Compose 层的 CoverLyricsScreen.kt
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {
@@ -210,7 +187,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         return super.gestureDetected(gestureType)
     }
 
-    // ★ 把右侧所有东西当成一个“整体”显隐交替
     private fun handleCoverClick() {
         val rightLyricsContainer = view?.findViewById<View>(R.id.rightLyricsContainer)
         val playbackControls = view?.findViewById<View>(R.id.playbackControlsFragment)
@@ -240,7 +216,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private fun setupNewActionButtons(view: View) {
         view.findViewById<ImageView>(R.id.lyricsNextButton)?.setOnClickListener { playerViewModel.seekToNext() }
         view.findViewById<ImageView>(R.id.lyricsFavoriteButton)?.setOnClickListener {
-            // 直接触发底层协程意图，和 Default 完全一致
             try {
                 val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
                     action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
@@ -258,7 +233,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
-    // ★ 补充：Default 里的深度文件清理机制
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -334,7 +308,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         btn?.setIconResource(if (isCurrentlyTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
     }
 
-    // ★ 补充：Default 里的滑动隐藏视频逻辑 (幽灵模式)
     private fun setupSlidingGhostMode(rootView: View) {
         viewLifecycleOwner.lifecycleScope.launch {
             delay(500) 
@@ -417,7 +390,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        // ★ 补充遗漏：跑马灯特效激活
                         val titleText = view?.findViewById<TextView>(R.id.lyricsSongTitleText)
                         titleText?.text = song.title
                         titleText?.let { setMarquee(it, marquee = true) }
@@ -425,7 +397,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                         val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
                         view?.findViewById<TextView>(R.id.lyricsSongArtistText)?.text = "- $artist"
                         
-                        // ★ 补充遗漏：底层数据库异步严谨校验红心状态
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
                             withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
@@ -443,7 +414,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                                 delay(400)
                                 val videoUri = withContext(Dispatchers.IO) { com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song) }
                                 if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
-                                    // ★ 补充遗漏：二次校验视频开关，防弱网延时Bug
                                     val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
                                     if (recheckEnabled) {
                                         withContext(Dispatchers.Main) { canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri)); canvasExoPlayer?.prepare(); canvasExoPlayer?.play() }
@@ -456,7 +426,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 }
             }
             
-            // ★ 补充遗漏：监听库事件触发数据库红心再校验
             launch {
                 playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
@@ -497,11 +466,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
         controlsFragment.setFavorite(isFavorite, withAnimation)
-        // 依然保留轻量回调兜底
         updateFavoriteIcon(isFavorite)
     }
 
-    // ★ 补充完整遗漏：Default 主题全套强大的 Menu 菜单管理网络
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -629,8 +596,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun onLyricsVisibilityChange(animatorSet: AnimatorSet, lyricsVisible: Boolean) {
-        // 在新版架构下，点击左侧封面的显隐交替已经被 handleCoverClick() 完美包办
-        // 这里我们只需要负责同步菜单栏和按钮里的“歌词开关”的图标即可
         view?.findViewById<MaterialButton>(R.id.showLyricsButton)?.let {
             it.setIconResource(if (lyricsVisible) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
             it.contentDescription = getString(if (lyricsVisible) R.string.action_hide_lyrics else R.string.action_show_lyrics)

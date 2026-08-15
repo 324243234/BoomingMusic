@@ -276,7 +276,8 @@ fun CoverLyricsScreen(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val isDefaultTheme = Preferences.nowPlayingScreen == NowPlayingScreen.Default
-    val hideExpandButton = isLandscape && isDefaultTheme
+    // ★ 核心修复：无论是 Default 还是 Gradient 主题，只要是横屏，一律隐藏全屏放大按钮
+    val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient)
 
     val translationKey = "lyrics_show_translation"
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
