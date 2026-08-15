@@ -274,9 +274,9 @@ fun CoverLyricsScreen(
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val currentScreen = Preferences.nowPlayingScreen
     
-    // ★ 核心修复：无论是 Default 还是 Gradient 主题，只要是横屏，一律隐藏全屏放大按钮
+    // ★ 核心安全修复：使用 remember 缓存状态，绝对防止破坏 Compose 颜色渲染和重组树！
+    val currentScreen = remember { Preferences.nowPlayingScreen }
     val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient)
 
     val translationKey = "lyrics_show_translation"
@@ -331,7 +331,7 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 放大按钮 (横屏时会被优雅隐藏)
+                // 2. 放大全屏按钮 (Default / Gradient 横屏时完美隐藏，且绝不干扰颜色系统)
                 if (!hideExpandButton) {
                     FilledIconButton(
                         modifier = Modifier.size(36.dp), 
