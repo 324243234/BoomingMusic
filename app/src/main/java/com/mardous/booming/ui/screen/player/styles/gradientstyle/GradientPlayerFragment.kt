@@ -12,16 +12,14 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
-import androidx.core.view.isInvisible
-import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -46,11 +44,11 @@ import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.data.local.repository.LyricsRepository
+import com.mardous.booming.ui.component.views.MusicSlider
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import org.koin.android.ext.android.inject
 import kotlinx.coroutines.Dispatchers
@@ -94,7 +92,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     private fun updateFavoriteIcon(isFavorite: Boolean) {
-        binding.lyricsFavoriteButton.apply {
+        binding.lyricsFavoriteButton?.apply {
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
@@ -118,76 +116,88 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
-            val lp = binding.mask.layoutParams as? ConstraintLayout.LayoutParams
+            val lp = binding.mask?.layoutParams as? ConstraintLayout.LayoutParams
             lp?.let {
-                it.matchConstraintPercentWidth = 0.35f
+                it.matchConstraintPercentWidth = 0.30f
                 it.horizontalBias = 1.0f
-                binding.mask.layoutParams = it
+                binding.mask?.layoutParams = it
             }
             setupSlidingGhostMode()
         } else {
-            binding.rightLyricsContainer.visibility = View.GONE
+            binding.rightLyricsContainer?.visibility = View.GONE
         }
 
-        binding.openQueueButton.isVisible = !isLandscapeOrTablet
-        binding.showLyricsButton.isVisible = !isLandscapeOrTablet
+        binding.openQueueButton?.visibility = if (!isLandscapeOrTablet) View.VISIBLE else View.GONE
+        binding.showLyricsButton?.visibility = if (!isLandscapeOrTablet) View.VISIBLE else View.GONE
         
-        binding.goToArtistButton.isVisible = isLandscapeOrTablet
-        binding.goToAlbumButton.isVisible = isLandscapeOrTablet
-        binding.toggleLyricsFormatButton.isVisible = isLandscapeOrTablet
-        binding.equalizerButton.isVisible = isLandscapeOrTablet
+        binding.goToArtistButton?.visibility = if (isLandscapeOrTablet) View.VISIBLE else View.GONE
+        binding.goToAlbumButton?.visibility = if (isLandscapeOrTablet) View.VISIBLE else View.GONE
+        binding.toggleLyricsFormatButton?.visibility = if (isLandscapeOrTablet) View.VISIBLE else View.GONE
+        binding.equalizerButton?.visibility = if (isLandscapeOrTablet) View.VISIBLE else View.GONE
 
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
             val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
 
             if (isLandscapeOrTablet) {
-                val lpCover = binding.playerAlbumCoverFragment.layoutParams as? ConstraintLayout.LayoutParams
-                lpCover?.let {
-                    it.topMargin = safeInsets.top        
-                    it.bottomMargin = safeInsets.bottom 
-                    it.marginStart = safeInsets.left    
-                    binding.playerAlbumCoverFragment.layoutParams = it
+                binding.playerAlbumCoverFragment?.let { cover ->
+                    val lpCover = cover.layoutParams as? ConstraintLayout.LayoutParams
+                    lpCover?.let {
+                        it.topMargin = safeInsets.top        
+                        it.bottomMargin = safeInsets.bottom 
+                        it.marginStart = safeInsets.left    
+                        cover.layoutParams = it
+                    }
                 }
 
-                val lpLyrics = binding.rightLyricsContainer.layoutParams as? ConstraintLayout.LayoutParams
-                lpLyrics?.let {
-                    it.topMargin = safeInsets.top
-                    it.bottomMargin = safeInsets.bottom
-                    it.marginEnd = safeInsets.right
-                    binding.rightLyricsContainer.layoutParams = it
+                binding.rightLyricsContainer?.let { lyrics ->
+                    val lpLyrics = lyrics.layoutParams as? ConstraintLayout.LayoutParams
+                    lpLyrics?.let {
+                        it.topMargin = safeInsets.top
+                        it.bottomMargin = safeInsets.bottom
+                        it.marginEnd = safeInsets.right
+                        lyrics.layoutParams = it
+                    }
                 }
 
-                val lpControls = binding.playbackControlsFragment.layoutParams as? ConstraintLayout.LayoutParams
-                lpControls?.let {
-                    it.topMargin = safeInsets.top
-                    it.marginEnd = safeInsets.right
-                    binding.playbackControlsFragment.layoutParams = it
+                binding.playbackControlsFragment?.let { controls ->
+                    val lpControls = controls.layoutParams as? ConstraintLayout.LayoutParams
+                    lpControls?.let {
+                        it.topMargin = safeInsets.top
+                        it.marginEnd = safeInsets.right
+                        controls.layoutParams = it
+                    }
                 }
 
-                binding.bottomActionContainer.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
+                binding.bottomActionContainer?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
             } else {
-                val lpCover = binding.playerAlbumCoverFragment.layoutParams as? ConstraintLayout.LayoutParams
-                lpCover?.let {
-                    it.topMargin = 0
-                    it.bottomMargin = 0
-                    it.marginStart = 0
-                    binding.playerAlbumCoverFragment.layoutParams = it
+                binding.playerAlbumCoverFragment?.let { cover ->
+                    val lpCover = cover.layoutParams as? ConstraintLayout.LayoutParams
+                    lpCover?.let {
+                        it.topMargin = 0
+                        it.bottomMargin = 0
+                        it.marginStart = 0
+                        cover.layoutParams = it
+                    }
                 }
-                val lpLyrics = binding.rightLyricsContainer.layoutParams as? ConstraintLayout.LayoutParams
-                lpLyrics?.let {
-                    it.topMargin = 0
-                    it.bottomMargin = 0
-                    it.marginEnd = 0
-                    binding.rightLyricsContainer.layoutParams = it
+                binding.rightLyricsContainer?.let { lyrics ->
+                    val lpLyrics = lyrics.layoutParams as? ConstraintLayout.LayoutParams
+                    lpLyrics?.let {
+                        it.topMargin = 0
+                        it.bottomMargin = 0
+                        it.marginEnd = 0
+                        lyrics.layoutParams = it
+                    }
                 }
-                val lpControls = binding.playbackControlsFragment.layoutParams as? ConstraintLayout.LayoutParams
-                lpControls?.let {
-                    it.topMargin = 0
-                    it.marginEnd = 0
-                    binding.playbackControlsFragment.layoutParams = it
+                binding.playbackControlsFragment?.let { controls ->
+                    val lpControls = controls.layoutParams as? ConstraintLayout.LayoutParams
+                    lpControls?.let {
+                        it.topMargin = 0
+                        it.marginEnd = 0
+                        controls.layoutParams = it
+                    }
                 }
                 
-                binding.bottomActionContainer.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
+                binding.bottomActionContainer?.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
             }
             insets
         }
@@ -212,6 +222,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     when (gestureType.type) {
                         GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
                         GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
+                        else -> {}
                     }
                 }
                 else -> {}
@@ -221,16 +232,17 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     private fun handleCoverClick() {
-        val willShowLyrics = binding.rightLyricsContainer.isInvisible != false
-        binding.rightLyricsContainer.isInvisible = !willShowLyrics
-        binding.playbackControlsFragment.isInvisible = willShowLyrics
-        binding.bottomActionContainer.isInvisible = willShowLyrics
+        val willShowLyrics = binding.rightLyricsContainer?.visibility != View.VISIBLE
+        
+        binding.rightLyricsContainer?.visibility = if (willShowLyrics) View.VISIBLE else View.INVISIBLE
+        binding.playbackControlsFragment?.visibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
+        binding.bottomActionContainer?.visibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
     }
 
     private fun setupListeners() {
-        binding.openQueueButton.setOnClickListener(this)
-        binding.showLyricsButton.setOnClickListener(this)
-        binding.soundSettingsButton.setOnClickListener(this)
+        binding.openQueueButton?.setOnClickListener(this)
+        binding.showLyricsButton?.setOnClickListener(this)
+        binding.soundSettingsButton?.setOnClickListener(this)
     }
 
     override fun onClick(v: View) {
@@ -242,27 +254,19 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     private fun setupNewActionButtons() {
-        binding.lyricsNextButton.setOnClickListener { playerViewModel.seekToNext() }
+        binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
         
-        // ★ 核心修复：完全复刻 Default 逻辑！
-        // 点击立刻获取当前状态 -> 反转 UI 图标 -> 发送 Intent 交给 Service 处理
-        binding.lyricsFavoriteButton.setOnClickListener {
-            val isFav = it.tag as? Boolean ?: false
-            updateFavoriteIcon(!isFav)
-            try {
-                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
-                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
-                }
-                requireContext().startService(intent)
-            } catch (e: Exception) { e.printStackTrace() }
+        binding.lyricsFavoriteButton?.setOnClickListener {
+            controlsFragment.toggleFavorite()
         }
 
-        binding.goToArtistButton.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
-        binding.goToAlbumButton.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_album, 0) }
-        binding.equalizerButton.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_equalizer, 0) }
+        binding.goToArtistButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
+        binding.goToAlbumButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_album, 0) }
+        binding.equalizerButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_equalizer, 0) }
         
-        updateFormatIcon(binding.toggleLyricsFormatButton)
-        binding.toggleLyricsFormatButton.setOnClickListener { toggleLyricsFormat(binding.toggleLyricsFormatButton) }
+        val toggleFormatBtn = binding.toggleLyricsFormatButton
+        updateFormatIcon(toggleFormatBtn)
+        toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
@@ -349,11 +353,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 viewPager?.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
                     override fun onPageScrollStateChanged(state: Int) {
                         if (state == ViewPager.SCROLL_STATE_DRAGGING) {
-                            binding.canvasPlayerView.animate()?.cancel()
-                            binding.canvasPlayerView.alpha = 0f
+                            binding.canvasPlayerView?.animate()?.cancel()
+                            binding.canvasPlayerView?.alpha = 0f
                         } else if (state == ViewPager.SCROLL_STATE_IDLE) {
                             if (canvasExoPlayer?.playbackState == Player.STATE_READY || canvasExoPlayer?.playbackState == Player.STATE_ENDED) {
-                                binding.canvasPlayerView.animate()?.alpha(1f)?.setDuration(400)?.start()
+                                binding.canvasPlayerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
                             }
                         }
                     }
@@ -387,19 +391,24 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             trackSelectionParameters = trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).setMaxVideoSize(854, 480).build()
 
             addListener(object : Player.Listener {
-                override fun onRenderedFirstFrame() { if (binding.canvasPlayerView.alpha < 1f) binding.canvasPlayerView.animate().alpha(1f).setDuration(800).start() }
+                override fun onRenderedFirstFrame() { binding.canvasPlayerView?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(800).start() } }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_ENDED) {
-                        binding.canvasPlayerView.animate()?.alpha(0f)?.setDuration(700)?.withEndAction { binding.canvasPlayerView.postDelayed({ canvasExoPlayer?.seekTo(0); canvasExoPlayer?.play() }, 1000) }?.start()
+                        binding.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction { binding.canvasPlayerView?.postDelayed({ canvasExoPlayer?.seekTo(0); canvasExoPlayer?.play() }, 1000) }?.start()
                     }
                 }
             })
         }
-        binding.canvasPlayerView.apply { player = canvasExoPlayer; useController = false; setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
+        binding.canvasPlayerView?.apply { player = canvasExoPlayer; useController = false; setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
     }
 
     private fun setupLyricsSyncState() {
-        binding.lyricsInlineProgressSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        binding.lyricsInlineProgressSlider?.setOnTouchListener { v, event ->
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
+            false 
+        }
+
+        binding.lyricsInlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
             override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
@@ -412,11 +421,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        binding.lyricsSongTitleText.text = song.title
-                        setMarquee(binding.lyricsSongTitleText, marquee = true)
+                        binding.lyricsSongTitleText?.text = song.title
+                        binding.lyricsSongTitleText?.let { setMarquee(it, marquee = true) }
                         
                         val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
-                        binding.lyricsSongArtistText.text = "- $artist"
+                        binding.lyricsSongArtistText?.text = "- $artist"
                         
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
@@ -424,7 +433,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                         }
 
                         videoFetchJob?.cancel(); canvasExoPlayer?.stop(); canvasExoPlayer?.clearMediaItems()
-                        binding.canvasPlayerView.alpha = 0f
+                        binding.canvasPlayerView?.alpha = 0f
 
                         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
                             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
@@ -447,7 +456,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 }
             }
             
-            // 联动其他界面的红心状态
             launch {
                 playerViewModel.mediaEvent.collect { event ->
                     if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
@@ -474,15 +482,15 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
                         mainSlider?.let { main ->
                             val max = main.valueTo.toInt()
-                            if (slider.max != max) { 
-                                slider.max = max
-                                binding.lyricsTotalTime.text = rightTotTime?.text 
+                            if (slider?.max != max) { 
+                                slider?.max = max
+                                binding.lyricsTotalTime?.text = rightTotTime?.text 
                             }
                         }
-                        slider.progress = currentProgress
+                        slider?.progress = currentProgress
                         rightCurrTime?.text?.let { rightText -> 
-                            if (binding.lyricsCurrentTime.text != rightText) {
-                                binding.lyricsCurrentTime.text = rightText
+                            if (binding.lyricsCurrentTime?.text != rightText) {
+                                binding.lyricsCurrentTime?.text = rightText
                             } 
                         }
                     }
@@ -569,36 +577,38 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val oldMaskColor = binding.mask.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
-        val oldPrimaryTextColor = binding.soundSettingsButton.iconTint?.defaultColor ?: Color.WHITE
+        val oldMaskColor = binding.mask?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
+        val oldPrimaryTextColor = binding.soundSettingsButton?.iconTint?.defaultColor ?: Color.WHITE
         
-        binding.lyricsInlineProgressSlider.applyColor(scheme.onSurfaceColor)
+        binding.lyricsInlineProgressSlider?.applyColor(scheme.onSurfaceColor)
 
-        return mutableListOf(
-            binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
-            binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor)
-        ).also {
-            it.addAll(playerControlsFragment.getTintTargets(scheme))
-            it.add(binding.lyricsSongTitleText.tintTarget(binding.lyricsSongTitleText.currentTextColor, scheme.onSurfaceColor))
-            it.add(binding.lyricsSongArtistText.tintTarget(binding.lyricsSongArtistText.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f)))
-            it.add(binding.lyricsCurrentTime.tintTarget(binding.lyricsCurrentTime.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f)))
-            it.add(binding.lyricsTotalTime.tintTarget(binding.lyricsTotalTime.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f)))
-            
-            it.add(binding.lyricsFavoriteButton.tintTarget(binding.lyricsFavoriteButton.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor))
-            it.add(binding.lyricsNextButton.tintTarget(binding.lyricsNextButton.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor))
-            
-            binding.openQueueButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.showLyricsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.goToArtistButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.goToAlbumButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.toggleLyricsFormatButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.soundSettingsButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-            binding.equalizerButton.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
-        }
+        val targets = mutableListOf<PlayerTintTarget>()
+        binding.colorBackground?.let { targets.add(it.surfaceTintTarget(scheme.surfaceColor)) }
+        binding.mask?.let { targets.add(it.tintTarget(oldMaskColor, scheme.surfaceColor)) }
+        
+        targets.addAll(playerControlsFragment.getTintTargets(scheme))
+        
+        binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
+        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
+        binding.lyricsCurrentTime?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
+        binding.lyricsTotalTime?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
+        
+        binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
+        binding.lyricsNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
+        
+        binding.openQueueButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.showLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.goToArtistButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.goToAlbumButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.toggleLyricsFormatButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.soundSettingsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        binding.equalizerButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
+        
+        return targets
     }
 
     override fun onLyricsVisibilityChange(animatorSet: AnimatorSet, lyricsVisible: Boolean) {
-        binding.showLyricsButton.let {
+        binding.showLyricsButton?.let {
             it.setIconResource(if (lyricsVisible) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
             it.contentDescription = getString(if (lyricsVisible) R.string.action_hide_lyrics else R.string.action_show_lyrics)
         }
