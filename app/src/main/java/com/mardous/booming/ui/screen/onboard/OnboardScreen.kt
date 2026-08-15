@@ -19,7 +19,17 @@
 
 package com.mardous.booming.ui.screen.onboard
 
+import android.Manifest
+import android.Manifest.permission.POST_NOTIFICATIONS
+import android.Manifest.permission.READ_EXTERNAL_STORAGE
+import android.Manifest.permission.READ_MEDIA_AUDIO
+import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -128,9 +138,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.mardous.booming.R
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.extensions.MIME_TYPE_APPLICATION
-import com.mardous.booming.extensions.getImagesPermission
-import com.mardous.booming.extensions.getNearbyDevicesPermissions
-import com.mardous.booming.extensions.getStoragePermissions
+import com.mardous.booming.extensions.hasR
 import com.mardous.booming.extensions.hasS
 import com.mardous.booming.extensions.hasT
 import com.mardous.booming.extensions.languageEndonym
@@ -165,6 +173,7 @@ fun OnboardScreen(
     availableSteps: List<OnboardStep> = OnboardStep.entries
 ) {
     check(availableSteps.isNotEmpty())
+    val context = LocalContext.current
     var currentStep by rememberSaveable { mutableStateOf(availableSteps.first()) }
 
     fun goToStep(step: OnboardStep, onStepNotAvailable: () -> Unit = onFinish) {
@@ -175,17 +184,51 @@ fun OnboardScreen(
         }
     }
 
-    val storagePermission = remember { getStoragePermissions().toList() }
+    // 🌟 【核心新增】：声明一个状态，用于监听 Android 11 及以上的所有文件访问权限
+    var isAllFilesAccessGranted by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                true // 低版本无需此系统级权限，默认为 true
+            }
+        )
+    }
+
+    // 🌟 【核心新增】：用于从系统设置页返回时，更新权限状态
+    val allFilesAccessLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            isAllFilesAccessGranted = Environment.isExternalStorageManager()
+        }
+    }
+
+    val storagePermission = remember {
+        buildList {
+            if (hasT()) {
+                add(READ_MEDIA_AUDIO)
+                add(POST_NOTIFICATIONS)
+            } else if (!hasR()) { // API 29 (Android 10) 及以下才请求普通读写
+                add(READ_EXTERNAL_STORAGE)
+                add(WRITE_EXTERNAL_STORAGE)
+            }
+        }
+    }
     val storagePermissionState = rememberMultiplePermissionsState(storagePermission)
-    val nearbyPermissionState =
-        if (hasS()) rememberPermissionState(getNearbyDevicesPermissions().single()) else null
-    val readImagesPermissionState =
-        if (hasT()) rememberPermissionState(getImagesPermission().single()) else null
+
+    val nearbyPermissionState = if (hasS()) {
+        rememberPermissionState(Manifest.permission.BLUETOOTH_CONNECT)
+    } else null
+
+    val readImagesPermissionState = if (hasT()) {
+        rememberPermissionState(Manifest.permission.READ_MEDIA_IMAGES)
+    } else null
 
     BackHandler {
         when (currentStep) {
-            OnboardStep.CONFIGURATION -> goToStep(OnboardStep.PERMISSIONS) { onBackToExit() }
-            OnboardStep.PERMISSIONS -> goToStep(OnboardStep.WELCOME) { onBackToExit() }
+            OnboardStep.CONFIGURATION -> currentStep = OnboardStep.PERMISSIONS
+            OnboardStep.PERMISSIONS -> currentStep = OnboardStep.WELCOME
             OnboardStep.WELCOME -> onBackToExit()
         }
     }
@@ -224,6 +267,20 @@ fun OnboardScreen(
                             storagePermissionState = storagePermissionState,
                             nearbyPermissionState = nearbyPermissionState,
                             readImagesPermissionState = readImagesPermissionState,
+                            isAllFilesAccessGranted = isAllFilesAccessGranted, // ★ 传入状态
+                            onLaunchAllFilesAccess = { // ★ 传入跳转逻辑
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    try {
+                                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                            data = Uri.parse("package:${context.packageName}")
+                                        }
+                                        allFilesAccessLauncher.launch(intent)
+                                    } catch (e: Exception) {
+                                        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                                        allFilesAccessLauncher.launch(intent)
+                                    }
+                                }
+                            },
                             onNextClick = { goToStep(OnboardStep.CONFIGURATION) },
                             onBackClick = { goToStep(OnboardStep.WELCOME) { onBackToExit() } }
                         )
@@ -313,6 +370,8 @@ private fun PermissionsStepContent(
     storagePermissionState: MultiplePermissionsState,
     nearbyPermissionState: PermissionState?,
     readImagesPermissionState: PermissionState?,
+    isAllFilesAccessGranted: Boolean, // ★ 新增
+    onLaunchAllFilesAccess: () -> Unit, // ★ 新增
     onNextClick: () -> Unit,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -320,16 +379,32 @@ private fun PermissionsStepContent(
     val permissionItems = remember(
         storagePermissionState.allPermissionsGranted,
         nearbyPermissionState?.status?.isGranted,
-        readImagesPermissionState?.status?.isGranted
+        readImagesPermissionState?.status?.isGranted,
+        isAllFilesAccessGranted // ★ 绑定重组监听
     ) {
         buildList {
+            
+            // 🌟 【核心修改】：综合判断普通权限与全文件权限是否都已获取
+            val isStorageFullyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                isAllFilesAccessGranted && storagePermissionState.allPermissionsGranted
+            } else {
+                storagePermissionState.allPermissionsGranted
+            }
+
             add(
                 PermissionItemData(
                     title = R.string.permission_external_storage_title,
                     description = R.string.permission_external_storage_description,
                     icon = R.drawable.ic_sd_card_24dp,
-                    isGranted = storagePermissionState.allPermissionsGranted,
-                    onRequest = { storagePermissionState.launchMultiplePermissionRequest() }
+                    isGranted = isStorageFullyGranted,
+                    onRequest = {
+                        // 🌟 【核心修改】：点击授权时，优先判断是否需要跳转系统全文件授权页
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !isAllFilesAccessGranted) {
+                            onLaunchAllFilesAccess()
+                        } else {
+                            storagePermissionState.launchMultiplePermissionRequest()
+                        }
+                    }
                 )
             )
             if (nearbyPermissionState != null) {
@@ -357,12 +432,18 @@ private fun PermissionsStepContent(
         }
     }
 
+    // 🌟 【核心修改】：进入下一步的条件加上 isAllFilesAccessGranted
+    val canGoForwardCheck = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        isAllFilesAccessGranted && storagePermissionState.allPermissionsGranted
+    } else {
+        storagePermissionState.allPermissionsGranted
+    }
+
     OnboardSurface(
         onBackClick = onBackClick,
         onContinueClick = onNextClick,
         canGoBack = availableSteps.canGoBack(OnboardStep.PERMISSIONS),
-        canGoForward = storagePermissionState.allPermissionsGranted &&
-                (nearbyPermissionState?.status?.isGranted ?: true),
+        canGoForward = canGoForwardCheck && (nearbyPermissionState?.status?.isGranted ?: true),
         title = stringResource(R.string.permissions_title),
         description = stringResource(R.string.permissions_subtitle),
         modifier = modifier
