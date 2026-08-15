@@ -128,13 +128,42 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         view.findViewById<View>(R.id.toggleLyricsFormatButton)?.isVisible = isLandscapeOrTablet
         view.findViewById<View>(R.id.equalizerButton)?.isVisible = isLandscapeOrTablet
 
+        // 统一指派全场景安全高度给“整体容器”和主面板
+        val coverView = view.findViewById<View>(R.id.playerAlbumCoverFragment)
         val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
         val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
+        
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
-            val navigationBar = insets.getInsets(Type.systemBars())
-            val displayCutout = insets.getInsets(Type.displayCutout())
-            lyricsContainer?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
-            bottomAction?.updatePadding(bottom = navigationBar.bottom, left = displayCutout.left, right = displayCutout.right)
+            // ★ 最优解：把 系统工具栏(systemBars) 和 刘海挖孔(displayCutout) 合并！
+            // 无论 CarWith 工具栏在左、在下、在右，safeInsets 都能精准返回需要避让的像素值。
+            val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
+
+            if (isLandscapeOrTablet) {
+                // 【左侧封面处理】
+                val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
+                lpCover?.let {
+                    it.topMargin = safeInsets.top       // 避开顶部状态栏
+                    it.bottomMargin = safeInsets.bottom // 避开 CarWith 底部工具栏
+                    it.marginStart = safeInsets.left    // 避开 CarWith 左侧工具栏
+                    coverView.layoutParams = it
+                }
+
+                // 【右侧面板处理】
+                // 左边不需要 padding，因为已经被封面挤开了；只需避开底部和右侧可能存在的工具栏
+                lyricsContainer?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
+                bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
+            } else {
+                // 竖屏手机模式还原：恢复 0 边距满高充满
+                val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
+                lpCover?.let {
+                    it.topMargin = 0
+                    it.bottomMargin = 0
+                    it.marginStart = 0
+                    coverView.layoutParams = it
+                }
+                // 竖屏面板需要兼顾左右避让
+                bottomAction?.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
+            }
             insets
         }
 
