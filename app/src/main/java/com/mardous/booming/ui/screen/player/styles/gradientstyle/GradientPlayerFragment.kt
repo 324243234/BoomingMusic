@@ -108,7 +108,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         if (isLandscapeOrTablet) {
             val lp = binding.mask.layoutParams as? ConstraintLayout.LayoutParams
             lp?.let {
-                it.matchConstraintPercentWidth = 0.35f
+                it.matchConstraintPercentWidth = 0.30f
                 it.horizontalBias = 1.0f
                 binding.mask.layoutParams = it
             }
