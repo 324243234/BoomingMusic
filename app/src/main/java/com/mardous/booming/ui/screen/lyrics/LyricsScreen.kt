@@ -201,7 +201,6 @@ fun LyricsScreen(
 
                         Box(modifier = Modifier.fillMaxSize()) {
                             AsyncImage(
-                                // 💡 使用 200x200 下采样以节约大量 GPU 计算，配合 crossfade 让切歌背景更丝滑
                                 model = ImageRequest.Builder(context)
                                     .data(song)
                                     .size(200)
@@ -275,7 +274,8 @@ fun CoverLyricsScreen(
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val isDefaultTheme = Preferences.nowPlayingScreen == NowPlayingScreen.Default
+    val currentScreen = Preferences.nowPlayingScreen
+    
     // ★ 核心修复：无论是 Default 还是 Gradient 主题，只要是横屏，一律隐藏全屏放大按钮
     val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient)
 
@@ -331,7 +331,7 @@ fun CoverLyricsScreen(
                     )
                 }
 
-                // 2. 放大按钮
+                // 2. 放大按钮 (横屏时会被优雅隐藏)
                 if (!hideExpandButton) {
                     FilledIconButton(
                         modifier = Modifier.size(36.dp), 
@@ -371,21 +371,17 @@ private fun LyricsSurface(
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     
-    // 🌡️ 手机全局温度雷达
     var isOverheating by remember { mutableStateOf(false) }
-    // 🔋 电量雷达
     var isLowBattery by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         
-        // 🌟 修复一：通过粘性广播瞬间读取初始电量，避免刚打开 App 时死等掉电
         val initialIntent = context.registerReceiver(null, filter)
         initialIntent?.let { intent ->
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
             if (level != -1 && scale != -1) {
-                // 阈值：低于等于 20%
                 isLowBattery = (level * 100 / scale.toFloat()) <= 20f
             }
         }
@@ -407,14 +403,12 @@ private fun LyricsSurface(
     DisposableEffect(Unit) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         
-        // 🌟 修复二：初始状态同步抓取
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             isOverheating = (powerManager?.currentThermalStatus ?: 0) >= PowerManager.THERMAL_STATUS_SEVERE
         }
 
         val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             PowerManager.OnThermalStatusChangedListener { status ->
-                // 阈值：修改为 SEVERE (严重发热) 才触发自我降频护盾
                 isOverheating = status >= PowerManager.THERMAL_STATUS_SEVERE
             }
         } else null
@@ -530,13 +524,11 @@ private fun LyricsSurface(
 
                         if (isPlaying && isVisible) {
                             if (isPowerSaveMode || isOverheating || isLowBattery) {
-                                // 🧊 【阶段一：自保降频模式 (30fps)】
                                 val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                                 val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
                                 lyricsViewState.updatePosition(smoothPosition)
                                 delay(33L)
                             } else {
-                                // 🔥 【阶段二：火力全开模式 (VSYNC)】
                                 withFrameNanos {
                                     val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                                     val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
@@ -544,7 +536,6 @@ private fun LyricsSurface(
                                 }
                             }
                         } else {
-                            // 💤 【阶段三：深度休眠模式 (0fps)】
                             delay(100L)
                         }
 
