@@ -40,17 +40,6 @@
             app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
-        <View
-            android:id="@+id/mask"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:background="@drawable/shadow_start_gradient"
-            app:layout_constraintBottom_toBottomOf="@id/playerAlbumCoverFragment"
-            app:layout_constraintEnd_toEndOf="@id/playerAlbumCoverFragment"
-            app:layout_constraintStart_toStartOf="@id/playerAlbumCoverFragment"
-            app:layout_constraintTop_toTopOf="@id/playerAlbumCoverFragment"
-            tools:backgroundTint="?colorSurface"/>
-
         <!-- ================= 右侧主播放面板 ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playbackControlsFragment"
@@ -63,7 +52,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:layout="@layout/fragment_gradient_player_playback_controls"/>
 
-        <!-- 动态底栏：包含了所有的按钮，系统会根据竖屏/平板状态智能显隐 -->
+        <!-- 动态底栏：包含了所有的按钮 -->
         <LinearLayout
             android:id="@+id/bottomActionContainer"
             android:layout_width="0dp"
@@ -138,7 +127,7 @@
                 app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
-        <!-- ★★★ 核心修复：右侧歌词【整体容器】(将歌词与进度条强绑定为一个整体) ★★★ -->
+        <!-- ★★★ 核心修复：单层极简容器，包含所有歌词和进度控件 ★★★ -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/rightLyricsContainer"
             android:layout_width="0dp"
@@ -156,109 +145,122 @@
                 android:layout_width="0dp"
                 android:layout_height="0dp"
                 android:layout_marginTop="8dp"
+                android:layout_marginBottom="12dp"
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toTopOf="@+id/lyricsExtraInfoContainer"
+                app:layout_constraintBottom_toTopOf="@+id/lyricsSongTitleText"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 2. 内部信息与进度条部分 (贴底) -->
-            <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/lyricsExtraInfoContainer"
-                android:layout_width="0dp"
+            <!-- 2. 歌名：优先占据空间，照搬 Default 的弹性链条 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsSongTitleText"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingHorizontal="16dp"
-                android:paddingBottom="0dp"
-                app:layout_constraintBottom_toBottomOf="parent"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginBottom="8dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:textColor="?android:attr/textColorPrimary"
+                android:includeFontPadding="false"
+                app:layout_constrainedWidth="true"
+                app:layout_constraintHorizontal_bias="0.0"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent">
+                app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
+                app:layout_constraintBottom_toTopOf="@+id/lyricsCurrentTime" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongTitleText"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textStyle="bold"
-                    android:textSize="18sp"
-                    android:layout_marginEnd="12dp"
-                    app:layout_constrainedWidth="true"
-                    app:layout_constraintHorizontal_bias="0.0"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
-                    app:layout_constraintTop_toTopOf="parent" />
+            <!-- 3. 歌手：见缝插针，跟在歌名后面 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsSongArtistText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="12dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textSize="16sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:includeFontPadding="false"
+                app:layout_constrainedWidth="true"
+                app:layout_constraintHorizontal_bias="0.0"
+                app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
+                app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
+                app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongArtistText"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textSize="16sp"
-                    app:layout_constrainedWidth="true"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
-                    app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+            <!-- 4. 收藏按钮 -->
+            <ImageView
+                android:id="@+id/lyricsFavoriteButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:padding="4dp"
+                android:src="@drawable/ic_favorite_outline_24dp"
+                app:layout_constraintEnd_toStartOf="@+id/lyricsNextButton"
+                app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
 
-                <ImageView
-                    android:id="@+id/lyricsFavoriteButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="8dp"
-                    android:padding="4dp"
-                    android:src="@drawable/ic_favorite_outline_24dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsNextButton"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+            <!-- 5. 迷你下一首按钮 -->
+            <ImageView
+                android:id="@+id/lyricsNextButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginEnd="16dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:padding="2dp"
+                android:src="@drawable/ic_next_24dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
 
-                <ImageView
-                    android:id="@+id/lyricsNextButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:padding="2dp"
-                    android:src="@drawable/ic_next_24dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+            <!-- 6. 当前时间 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsCurrentTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginBottom="6dp"
+                android:minWidth="36dp"
+                android:gravity="center"
+                android:textSize="12sp"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorSecondary"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                tools:text="00:00" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsCurrentTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:minWidth="36dp"
-                    android:textSize="12sp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
+            <!-- 7. 进度条 -->
+            <androidx.appcompat.widget.AppCompatSeekBar
+                android:id="@+id/lyricsInlineProgressSlider"
+                android:layout_width="0dp"
+                android:layout_height="24dp"
+                android:background="@null"
+                android:splitTrack="false"
+                android:thumb="@null"
+                android:minHeight="6dp"
+                android:maxHeight="6dp"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsCurrentTime"
+                app:layout_constraintTop_toTopOf="@+id/lyricsCurrentTime"
+                app:layout_constraintStart_toEndOf="@+id/lyricsCurrentTime"
+                app:layout_constraintEnd_toStartOf="@+id/lyricsTotalTime" />
 
-                <androidx.appcompat.widget.AppCompatSeekBar
-                    android:id="@+id/lyricsInlineProgressSlider"
-                    android:layout_width="0dp"
-                    android:layout_height="24dp"
-                    android:layout_marginTop="4dp"
-                    android:background="@null"
-                    android:splitTrack="false"
-                    android:thumb="@null"
-                    android:minHeight="6dp"
-                    android:maxHeight="6dp"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintStart_toEndOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsTotalTime" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsTotalTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:minWidth="36dp"
-                    android:gravity="end"
-                    android:textSize="12sp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
-            </androidx.constraintlayout.widget.ConstraintLayout>
+            <!-- 8. 总时间 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsTotalTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:minWidth="36dp"
+                android:gravity="center"
+                android:textSize="12sp"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorSecondary"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@+id/lyricsCurrentTime"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsCurrentTime"
+                tools:text="04:20" />
         </androidx.constraintlayout.widget.ConstraintLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
