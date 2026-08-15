@@ -1,7 +1,9 @@
 package com.mardous.booming.ui.screen.player.styles.gradientstyle
 
+import android.animation.AnimatorSet
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Color
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -10,15 +12,17 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.widget.Toolbar
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isInvisible
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -26,16 +30,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.viewpager.widget.ViewPager
+import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
-import com.mardous.booming.core.model.player.PlayerColorScheme
-import com.mardous.booming.core.model.player.PlayerColorSchemeMode
-import com.mardous.booming.core.model.player.PlayerTintTarget
-import com.mardous.booming.core.model.player.surfaceTintTarget
-import com.mardous.booming.core.model.player.tintTarget
+import com.mardous.booming.core.model.player.*
 import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
@@ -47,44 +48,45 @@ import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
-import com.mardous.booming.util.DISPLAY_NEXT_SONG
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.Job
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
 
-class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_player),
-    SharedPreferences.OnSharedPreferenceChangeListener {
-    
+class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_player), View.OnClickListener {
+
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
-    
-    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
+    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
 
     private var _binding: FragmentGradientPlayerBinding? = null
     private val binding get() = _binding!!
 
-    private var lastProcessedSongId: Long = -1L
-    private var isDraggingInlineSlider = false
-    
     private lateinit var controlsFragment: GradientPlayerControlsFragment
 
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
-    
+    private var lastProcessedSongId: Long = -1L
+    private var isDraggingInlineSlider = false
+
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
+
+    override val colorSchemeMode: PlayerColorSchemeMode
+        get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
+
+    override val playerControlsFragment: AbsPlayerControlsFragment
+        get() = controlsFragment
 
     private fun isDeviceStressed(): Boolean {
         if (powerManager.isPowerSaveMode) return true
@@ -96,205 +98,240 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         return false
     }
 
-    override val playerControlsFragment: AbsPlayerControlsFragment get() = controlsFragment
-    override val colorSchemeMode: PlayerColorSchemeMode get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Gradient)
-    
-    // 🌟 1. 复刻 Default：直接让基类控制收藏按钮的联动与数据库同步
-    override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
-        controlsFragment.setFavorite(isFavorite, withAnimation)
-        updateFavoriteIcon(isFavorite)
-    }
-
-    private fun updateFavoriteIcon(isFavorite: Boolean) {
-        binding.lyricsFavoriteButton?.apply {
-            tag = isFavorite
-            setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
-        }
-    }
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentGradientPlayerBinding.bind(view)
         
-        Preferences.registerOnSharedPreferenceChangeListener(this)
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
-        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (isLandscapeOrTablet) {
+            val maskView = view.findViewById<View>(R.id.mask)
+            val lp = maskView?.layoutParams as? ConstraintLayout.LayoutParams
+            lp?.let {
+                it.matchConstraintPercentWidth = 0.35f
+                it.horizontalBias = 1.0f
+                maskView.layoutParams = it
+            }
+            setupSlidingGhostMode(view)
+        } else {
+            view.findViewById<View>(R.id.rightLyricsContainer)?.visibility = View.GONE
+        }
+
+        view.findViewById<View>(R.id.openQueueButton)?.isVisible = !isLandscapeOrTablet
+        view.findViewById<View>(R.id.showLyricsButton)?.isVisible = !isLandscapeOrTablet
         
-        if (isLandscape) {
-            setupSlidingGhostMode(view) 
-            
-            canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
-                repeatMode = Player.REPEAT_MODE_OFF 
-                volume = 0f 
-                playbackParameters = PlaybackParameters(0.85f) 
+        view.findViewById<View>(R.id.goToArtistButton)?.isVisible = isLandscapeOrTablet
+        view.findViewById<View>(R.id.goToAlbumButton)?.isVisible = isLandscapeOrTablet
+        view.findViewById<View>(R.id.toggleLyricsFormatButton)?.isVisible = isLandscapeOrTablet
+        view.findViewById<View>(R.id.equalizerButton)?.isVisible = isLandscapeOrTablet
+
+        val coverView = view.findViewById<View>(R.id.playerAlbumCoverFragment)
+        val lyricsContainer = view.findViewById<View>(R.id.rightLyricsContainer)
+        val playbackControls = view.findViewById<View>(R.id.playbackControlsFragment)
+        val bottomAction = view.findViewById<View>(R.id.bottomActionContainer)
+        
+        ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+            val safeInsets = insets.getInsets(Type.systemBars() or Type.displayCutout())
+
+            if (isLandscapeOrTablet) {
+                // ★ 1. 左侧封面：全方位 Margin 安全避让
+                val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
+                lpCover?.let {
+                    it.topMargin = safeInsets.top       
+                    it.bottomMargin = safeInsets.bottom 
+                    it.marginStart = safeInsets.left    
+                    coverView.layoutParams = it
+                }
+
+                // ★ 2. 彻底修复：右侧歌词容器，统一使用 Margin，使其物理边界与左侧封面绝对齐平！
+                val lpLyrics = lyricsContainer?.layoutParams as? ConstraintLayout.LayoutParams
+                lpLyrics?.let {
+                    it.topMargin = safeInsets.top
+                    it.bottomMargin = safeInsets.bottom
+                    it.marginEnd = safeInsets.right
+                    lyricsContainer.layoutParams = it
+                }
+
+                // ★ 3. 彻底修复：右侧控制面板容器，同样使用 Margin 齐平
+                val lpControls = playbackControls?.layoutParams as? ConstraintLayout.LayoutParams
+                lpControls?.let {
+                    it.topMargin = safeInsets.top
+                    it.marginEnd = safeInsets.right
+                    playbackControls.layoutParams = it
+                }
+
+                // 底部动作栏：依然使用 padding，让点击热区和背景底色延伸到导航栏下方
+                bottomAction?.updatePadding(bottom = safeInsets.bottom, right = safeInsets.right)
+            } else {
+                // 竖屏：恢复所有容器的0边距
+                val lpCover = coverView?.layoutParams as? ConstraintLayout.LayoutParams
+                lpCover?.let {
+                    it.topMargin = 0; it.bottomMargin = 0; it.marginStart = 0
+                    coverView.layoutParams = it
+                }
+                val lpLyrics = lyricsContainer?.layoutParams as? ConstraintLayout.LayoutParams
+                lpLyrics?.let {
+                    it.topMargin = 0; it.bottomMargin = 0; it.marginEnd = 0
+                    lyricsContainer.layoutParams = it
+                }
+                val lpControls = playbackControls?.layoutParams as? ConstraintLayout.LayoutParams
+                lpControls?.let {
+                    it.topMargin = 0; it.marginEnd = 0
+                    playbackControls.layoutParams = it
+                }
                 
-                trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-                    .setMaxVideoSize(854, 480)
-                    .build()
+                bottomAction?.updatePadding(bottom = safeInsets.bottom, left = safeInsets.left, right = safeInsets.right)
+            }
+            insets
+        }
+
+        setupListeners() 
+        setupVideoPlayer(view)
+        setupLyricsSyncState()
+        setupNewActionButtons(view)
+    }
+
+    override fun gestureDetected(gestureType: GestureType): Boolean {
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        if (isLandscapeOrTablet) {
+            when (gestureType) {
+                is GestureType.Tap -> {
+                    handleCoverClick()
+                    return true
+                }
+                is GestureType.DoubleTap -> {
+                    when (gestureType.type) {
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
+                    }
+                }
+                else -> {}
+            }
+        }
+        return super.gestureDetected(gestureType)
+    }
+
+    private fun handleCoverClick() {
+        val rightLyricsContainer = view?.findViewById<View>(R.id.rightLyricsContainer)
+        val playbackControls = view?.findViewById<View>(R.id.playbackControlsFragment)
+        val bottomAction = view?.findViewById<View>(R.id.bottomActionContainer)
+        
+        val willShowLyrics = rightLyricsContainer?.isInvisible != false
+        
+        rightLyricsContainer?.isInvisible = !willShowLyrics
+        playbackControls?.isInvisible = willShowLyrics
+        bottomAction?.isInvisible = willShowLyrics
+    }
+
+    private fun setupListeners() {
+        view?.findViewById<View>(R.id.openQueueButton)?.setOnClickListener(this)
+        view?.findViewById<View>(R.id.showLyricsButton)?.setOnClickListener(this)
+        view?.findViewById<View>(R.id.soundSettingsButton)?.setOnClickListener(this)
+    }
+
+    override fun onClick(v: View) {
+        when (v.id) {
+            R.id.openQueueButton -> onQuickActionEvent(NowPlayingAction.OpenPlayQueue)
+            R.id.showLyricsButton -> onQuickActionEvent(NowPlayingAction.Lyrics)
+            R.id.soundSettingsButton -> onQuickActionEvent(NowPlayingAction.SoundSettings)
+        }
+    }
+
+    private fun setupNewActionButtons(view: View) {
+        view.findViewById<ImageView>(R.id.lyricsNextButton)?.setOnClickListener { playerViewModel.seekToNext() }
+        view.findViewById<ImageView>(R.id.lyricsFavoriteButton)?.setOnClickListener {
+            try {
+                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
+                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
+                }
+                requireContext().startService(intent)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+
+        view.findViewById<View>(R.id.goToArtistButton)?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
+        view.findViewById<View>(R.id.goToAlbumButton)?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_album, 0) }
+        view.findViewById<View>(R.id.equalizerButton)?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_equalizer, 0) }
+        
+        val toggleFormatBtn = view.findViewById<MaterialButton>(R.id.toggleLyricsFormatButton)
+        updateFormatIcon(toggleFormatBtn)
+        toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
+    }
+
+    private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
+                
+                val possibleNamesLower = listOf(
+                    songFile.nameWithoutExtension.lowercase(),
+                    "${song.artistName} - ${song.title}".lowercase(),
+                    "${song.title} - ${song.artistName}".lowercase()
+                ).filter { it.isNotBlank() }
+                
+                var deletedTtml = false
+                var deletedOther = false
+                
+                val filesInDir = parentDir.listFiles() ?: emptyArray()
+                val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
+                
+                for (file in filesInDir) {
+                    if (!file.isFile) continue
+                    val ext = file.extension.lowercase()
+                    if (!targetExtensions.contains(ext)) continue 
                     
-                addListener(object : Player.Listener {
-                    override fun onRenderedFirstFrame() {
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                        if (playerView?.alpha ?: 1f < 1f) {
-                            playerView?.animate()?.alpha(1f)?.setDuration(800)?.start()
+                    val fileNameLower = file.nameWithoutExtension.lowercase()
+                    
+                    if (possibleNamesLower.contains(fileNameLower)) {
+                        runCatching { 
+                            if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
+                            else file.writeText("") 
+                        } 
+                        if (file.delete() || !file.exists() || file.length() == 0L) {
+                            if (ext == "ttml") deletedTtml = true
+                            else deletedOther = true
                         }
                     }
-
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState == Player.STATE_ENDED) {
-                            val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                            playerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction {
-                                playerView.postDelayed({
-                                    canvasExoPlayer?.seekTo(0)
-                                    canvasExoPlayer?.play()
-                                }, 1000) 
-                            }?.start()
-                        }
-                    }
-                })
-            }
-            
-            view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply {
-                player = canvasExoPlayer
-                useController = false 
-                setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 
+                }
                 
-                isClickable = false
-                isFocusable = false
-                isFocusableInTouchMode = false
-                isLongClickable = false
-                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                setOnTouchListener { _, _ -> false }
-            }
-        }
-
-        // 🌟 2. 复刻 Default：直接绑定收藏按钮点击事件，调用控制台的 toggleFavorite
-        binding.lyricsFavoriteButton?.setOnClickListener {
-            controlsFragment.toggleFavorite()
-        }
-        binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
-
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            launch {
-                playerViewModel.currentSongFlow.collect { song ->
-                    if (song != null && song.id != lastProcessedSongId) {
-                        videoFetchJob?.cancel() 
-                        canvasExoPlayer?.stop() 
-                        canvasExoPlayer?.clearMediaItems() 
-                        
-                        val playerView = view.findViewById<PlayerView>(R.id.canvasPlayerView)
-                        playerView?.animate()?.cancel()
-                        playerView?.alpha = 0f
-
-                        binding.lyricsSongTitleText?.text = song.title
-                        binding.lyricsSongTitleText?.let { setMarquee(it, marquee = true) }
-
-                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
-                        binding.lyricsSongArtistText?.text = "- $artist"
-
-                        launch(Dispatchers.IO) {
-                            val isFav = repository.isSongFavorite(song.id)
-                            withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                withContext(Dispatchers.Main) {
+                    if (onlyTtml) {
+                        val msg = if (deletedTtml) "TTML 歌词文件已彻底删除" else "未找到匹配的本地 TTML 文件"
+                        context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
+                        if (deletedTtml) {
+                            lyricsRepository.clearMemoryCache()
+                            lyricsViewModel.updateSong(song)
                         }
-
-                        if (isLandscape) {
-                            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-
-                            if (isVideoEnabled && !isDeviceStressed()) {
-                                videoFetchJob = launch { 
-                                    delay(400) 
-                                    val videoUri = withContext(Dispatchers.IO) {
-                                        com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song)
-                                    }
-
-                                    if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
-                                        val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                                        if (recheckEnabled) {
-                                            withContext(Dispatchers.Main) {
-                                                canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
-                                                canvasExoPlayer?.prepare()
-                                                canvasExoPlayer?.play()
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            lastProcessedSongId = song.id
-                        }
+                    } else {
+                        if (deletedTtml || deletedOther) lyricsRepository.clearMemoryCache()
                     }
                 }
-            }
-
-            launch {
-                playerViewModel.mediaEvent.collect { event ->
-                    if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
-                        val currentSong = playerViewModel.currentSongFlow.value
-                        if (currentSong != null && currentSong.id != 0L) {
-                            launch(Dispatchers.IO) {
-                                val isFav = repository.isSongFavorite(currentSong.id)
-                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
-                            }
-                        }
-                    }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    context?.let { Toast.makeText(it, "关联文件清理失败，存储读写异常", Toast.LENGTH_SHORT).show() }
                 }
             }
         }
+    }
 
-        binding.lyricsInlineProgressSlider?.setOnTouchListener { v, event ->
-            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
-            false 
-        }
+    private fun toggleLyricsFormat(btn: MaterialButton?) {
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
+        lyricsRepository.clearMemoryCache()
+        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
+        context?.let { Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
+        updateFormatIcon(btn)
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+    }
 
-        binding.lyricsInlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                seekBar?.progress?.let { playerViewModel.seekTo(it.toLong()) }
-                seekBar?.postDelayed({ isDraggingInlineSlider = false }, 500)
-            }
-        })
-
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            val mainSlider = view.findViewById<MusicSlider>(R.id.progressSlider)
-            val rightCurrTime = view.findViewById<TextView>(R.id.songCurrentProgress)
-            val rightTotTime = view.findViewById<TextView>(R.id.songTotalTime)
-            val leftCurrTime = view.findViewById<TextView>(R.id.lyricsCurrentTime)
-            val leftTotTime = view.findViewById<TextView>(R.id.lyricsTotalTime)
-            var lastAppliedColor = android.graphics.Color.TRANSPARENT
-
-            playerViewModel.progressFlow.sample(60L).collect { progress ->
-                if (!isDraggingInlineSlider) {
-                    binding.lyricsInlineProgressSlider?.let { slider ->
-                        val currentProgress = progress.toInt()
-
-                        mainSlider?.let { main ->
-                            val max = main.valueTo.toInt()
-                            if (slider.max != max) {
-                                slider.max = max
-                                leftTotTime?.text = rightTotTime?.text
-                            }
-                        
-                            val mainColor = main.currentColor
-                            if (mainColor != android.graphics.Color.TRANSPARENT && mainColor != lastAppliedColor) {
-                                lastAppliedColor = mainColor 
-                                slider.applyColor(mainColor)
-                                val timeColor = mainColor.withAlpha(0.6f)
-                                leftCurrTime?.applyColor(timeColor)
-                                leftTotTime?.applyColor(timeColor)
-                            }
-                        }
-                        slider.progress = currentProgress
-
-                        rightCurrTime?.text?.let { rightText ->
-                            if (leftCurrTime != null && leftCurrTime.text != rightText) {
-                                leftCurrTime.text = rightText
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    private fun updateFormatIcon(btn: MaterialButton?) {
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        btn?.setIconResource(if (isCurrentlyTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
     }
 
     private fun setupSlidingGhostMode(rootView: View) {
@@ -334,45 +371,200 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         return null
     }
 
-    override fun gestureDetected(gestureType: GestureType): Boolean {
-        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        if (isLandscape) {
-            when (gestureType) {
-                is GestureType.Tap -> {
-                    handleCoverClick()
-                    return true
-                }
-                is GestureType.DoubleTap -> {
-                    when (gestureType.type) {
-                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
-                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
+    private fun setupVideoPlayer(view: View) {
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        if (!isLandscapeOrTablet) return
+
+        canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
+            repeatMode = Player.REPEAT_MODE_OFF
+            volume = 0f
+            playbackParameters = PlaybackParameters(0.85f)
+            trackSelectionParameters = trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).setMaxVideoSize(854, 480).build()
+
+            addListener(object : Player.Listener {
+                override fun onRenderedFirstFrame() { view.findViewById<PlayerView>(R.id.canvasPlayerView)?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(800).start() } }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        view.findViewById<PlayerView>(R.id.canvasPlayerView)?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction { view.postDelayed({ canvasExoPlayer?.seekTo(0); canvasExoPlayer?.play() }, 1000) }?.start()
                     }
                 }
-                else -> {}
+            })
+        }
+        view.findViewById<PlayerView>(R.id.canvasPlayerView)?.apply { player = canvasExoPlayer; useController = false; setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
+    }
+
+    private fun updateFavoriteIcon(isFavorite: Boolean) {
+        view?.findViewById<ImageView>(R.id.lyricsFavoriteButton)?.apply {
+            tag = isFavorite
+            setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+        }
+    }
+
+    private fun setupLyricsSyncState() {
+        val inlineSlider = view?.findViewById<SeekBar>(R.id.lyricsInlineProgressSlider)
+        inlineSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                seekBar?.progress?.let { playerViewModel.seekTo(it.toLong()) }
+                seekBar?.postDelayed({ isDraggingInlineSlider = false }, 500)
+            }
+        })
+
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            launch {
+                playerViewModel.currentSongFlow.collect { song ->
+                    if (song != null && song.id != lastProcessedSongId) {
+                        val titleText = view?.findViewById<TextView>(R.id.lyricsSongTitleText)
+                        titleText?.text = song.title
+                        titleText?.let { setMarquee(it, marquee = true) }
+                        
+                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
+                        view?.findViewById<TextView>(R.id.lyricsSongArtistText)?.text = "- $artist"
+                        
+                        launch(Dispatchers.IO) {
+                            val isFav = repository.isSongFavorite(song.id)
+                            withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                        }
+
+                        videoFetchJob?.cancel(); canvasExoPlayer?.stop(); canvasExoPlayer?.clearMediaItems()
+                        view?.findViewById<PlayerView>(R.id.canvasPlayerView)?.alpha = 0f
+
+                        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+                            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+                        val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                        
+                        if (isLandscapeOrTablet && isVideoEnabled && !isDeviceStressed()) {
+                            videoFetchJob = launch {
+                                delay(400)
+                                val videoUri = withContext(Dispatchers.IO) { com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song) }
+                                if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed()) {
+                                    val recheckEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                                    if (recheckEnabled) {
+                                        withContext(Dispatchers.Main) { canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri)); canvasExoPlayer?.prepare(); canvasExoPlayer?.play() }
+                                    }
+                                }
+                            }
+                        }
+                        lastProcessedSongId = song.id
+                    }
+                }
+            }
+            
+            launch {
+                playerViewModel.mediaEvent.collect { event ->
+                    if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
+                        val currentSong = playerViewModel.currentSongFlow.value
+                        if (currentSong != null && currentSong.id != 0L) {
+                            launch(Dispatchers.IO) {
+                                val isFav = repository.isSongFavorite(currentSong.id)
+                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            launch {
+                val leftCurrTime = view?.findViewById<TextView>(R.id.lyricsCurrentTime)
+                val leftTotTime = view?.findViewById<TextView>(R.id.lyricsTotalTime)
+                playerViewModel.progressFlow.sample(60L).collect { progress ->
+                    if (!isDraggingInlineSlider) {
+                        inlineSlider?.let { slider ->
+                            val currentProgress = progress.toInt()
+                            val mainSlider = view?.findViewById<com.mardous.booming.ui.component.views.MusicSlider>(R.id.progressSlider)
+                            val rightCurrTime = view?.findViewById<TextView>(R.id.songCurrentProgress)
+                            val rightTotTime = view?.findViewById<TextView>(R.id.songTotalTime)
+
+                            mainSlider?.let { main ->
+                                val max = main.valueTo.toInt()
+                                if (slider.max != max) { slider.max = max; leftTotTime?.text = rightTotTime?.text }
+                            }
+                            slider.progress = currentProgress
+                            rightCurrTime?.text?.let { rightText -> if (leftCurrTime != null && leftCurrTime.text != rightText) leftCurrTime.text = rightText }
+                        }
+                    }
+                }
             }
         }
-        return super.gestureDetected(gestureType)
     }
 
-    private fun handleCoverClick() {
-        val willShowLyrics = binding.rightLyricsFragment?.isInvisible != false
-        binding.rightLyricsFragment?.isInvisible = !willShowLyrics
-        binding.playbackControlsFragment?.isInvisible = willShowLyrics
-        binding.bottomActionContainer?.isInvisible = willShowLyrics
+    override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
+        controlsFragment.setFavorite(isFavorite, withAnimation)
+        updateFavoriteIcon(isFavorite)
     }
 
-    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
-        val targets = mutableListOf(
-            binding.colorBackground.surfaceTintTarget(scheme.surfaceColor)
-        )
+    override fun onMenuInflated(menu: Menu) {
+        super.onMenuInflated(menu)
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+
+        val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
+        toggleItem?.setOnMenuItemClickListener { toggleLyricsFormat(null); true }
+
+        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
+        if (isLandscapeOrTablet) {
+            videoToggleItem?.isVisible = true
+            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
+            
+            videoToggleItem?.setOnMenuItemClickListener {
+                val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+                videoToggleItem.title = if (newState) "动态封面: 关闭" else "动态封面: 开启"
+                playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+                true
+            }
+        } else {
+            videoToggleItem?.isVisible = false
+        }
+
+        menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { currentSong ->
+                val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
+                toast.show()
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
+                    withContext(Dispatchers.Main) {
+                        toast.cancel()
+                        if (!ttmlContent.isNullOrBlank()) {
+                            try {
+                                val songFile = File(currentSong.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                    Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
+                                    lyricsRepository.clearMemoryCache()
+                                    lyricsViewModel.updateSong(currentSong)
+                                }
+                            } catch (e: Exception) { Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show() }
+                        } else { Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show() }
+                    }
+                }
+            }
+            true 
+        }
         
-        binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
-        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
-        binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor)) }
-        binding.lyricsNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: scheme.onSurfaceColor, scheme.onSurfaceColor)) }
+        menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = true) }
+            true 
+        }
 
-        targets.addAll(playerControlsFragment.getTintTargets(scheme))
-        return targets
+        menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = false) }
+            false 
+        }
+
+        if (isLandscapeOrTablet) {
+            menu.removeItem(R.id.action_sound_settings)
+            menu.removeItem(R.id.action_favorite)
+        } else {
+            menu.removeItem(R.id.action_playing_queue)
+            menu.removeItem(R.id.action_show_lyrics)
+            menu.removeItem(R.id.action_sound_settings)
+            menu.removeItem(R.id.action_favorite)
+        }
     }
 
     override fun onCreateChildFragments() {
@@ -380,25 +572,73 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         controlsFragment = whichFragment(R.id.playbackControlsFragment)
     }
 
-    override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {}
+    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
+        val oldMaskColor = binding.mask.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
+        val oldPrimaryTextColor = view?.findViewById<MaterialButton>(R.id.soundSettingsButton)?.iconTint?.defaultColor ?: Color.WHITE
+        
+        val lyricsTitle = view?.findViewById<TextView>(R.id.lyricsSongTitleText)
+        val lyricsArtist = view?.findViewById<TextView>(R.id.lyricsSongArtistText)
+        val lyricsCurrTime = view?.findViewById<TextView>(R.id.lyricsCurrentTime)
+        val lyricsTotTime = view?.findViewById<TextView>(R.id.lyricsTotalTime)
+        val lyricsSlider = view?.findViewById<SeekBar>(R.id.lyricsInlineProgressSlider)
+        
+        val lyricsFav = view?.findViewById<ImageView>(R.id.lyricsFavoriteButton)
+        val lyricsNext = view?.findViewById<ImageView>(R.id.lyricsNextButton)
+        
+        val btnQueue = view?.findViewById<MaterialButton>(R.id.openQueueButton)
+        val btnShowLyrics = view?.findViewById<MaterialButton>(R.id.showLyricsButton)
+        val btnArtist = view?.findViewById<MaterialButton>(R.id.goToArtistButton)
+        val btnAlbum = view?.findViewById<MaterialButton>(R.id.goToAlbumButton)
+        val btnFormat = view?.findViewById<MaterialButton>(R.id.toggleLyricsFormatButton)
+        val btnSound = view?.findViewById<MaterialButton>(R.id.soundSettingsButton)
+        val btnEq = view?.findViewById<MaterialButton>(R.id.equalizerButton)
+        
+        val oldTitleColor = lyricsTitle?.currentTextColor ?: oldPrimaryTextColor
+        val oldArtistColor = lyricsArtist?.currentTextColor ?: oldPrimaryTextColor
+        
+        lyricsSlider?.applyColor(scheme.onSurfaceColor)
 
-    override fun onResume() {
-        super.onResume()
-        if (!isDeviceStressed()) canvasExoPlayer?.play()
+        return mutableListOf(
+            binding.colorBackground.surfaceTintTarget(scheme.surfaceColor),
+            binding.mask.tintTarget(oldMaskColor, scheme.surfaceColor)
+        ).also {
+            it.addAll(playerControlsFragment.getTintTargets(scheme))
+            lyricsTitle?.let { title -> it.add(title.tintTarget(oldTitleColor, scheme.onSurfaceColor)) }
+            lyricsArtist?.let { artist -> it.add(artist.tintTarget(oldArtistColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
+            lyricsCurrTime?.let { curr -> it.add(curr.tintTarget(curr.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
+            lyricsTotTime?.let { tot -> it.add(tot.tintTarget(tot.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
+            
+            lyricsFav?.let { fav -> it.add(fav.tintTarget(fav.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
+            lyricsNext?.let { next -> it.add(next.tintTarget(next.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
+            
+            btnQueue?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnShowLyrics?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnArtist?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnAlbum?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnFormat?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnSound?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+            btnEq?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> it.add(t) }
+        }
     }
 
-    override fun onPause() {
-        super.onPause()
-        canvasExoPlayer?.pause()
+    override fun onLyricsVisibilityChange(animatorSet: AnimatorSet, lyricsVisible: Boolean) {
+        view?.findViewById<MaterialButton>(R.id.showLyricsButton)?.let {
+            it.setIconResource(if (lyricsVisible) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
+            it.contentDescription = getString(if (lyricsVisible) R.string.action_hide_lyrics else R.string.action_show_lyrics)
+        }
+        controlsFragment.popupMenu?.menu?.findItem(R.id.action_show_lyrics)?.apply {
+            setIcon(if (lyricsVisible) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
+            title = getString(if (lyricsVisible) R.string.action_hide_lyrics else R.string.action_show_lyrics)
+        }
     }
 
     override fun onDestroyView() {
-        Preferences.unregisterOnSharedPreferenceChangeListener(this)
         videoFetchJob?.cancel()
-        videoFetchJob = null
         canvasExoPlayer?.release()
-        canvasExoPlayer = null
         super.onDestroyView()
         _binding = null
     }
+
+    override fun onResume() { super.onResume(); if (!isDeviceStressed()) canvasExoPlayer?.play() }
+    override fun onPause() { super.onPause(); canvasExoPlayer?.pause() }
 }
