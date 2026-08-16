@@ -77,7 +77,6 @@ import com.mardous.booming.data.model.QueueSong
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
-// 🌟 终极包名修复：基于你的截图，强行统一指向作者最新的存放路径
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.extensions.isBluetoothA2dpConnected
@@ -244,6 +243,18 @@ class PlaybackService :
         get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
+
+    private suspend fun resolveSongInstantly(mediaItem: MediaItem?): Song {
+        if (mediaItem == null) return Song.emptySong
+        return withContext(IO) {
+            val songId = mediaItem.mediaId.toLongOrNull()
+            if (songId != null) {
+                val song = runCatching { repository.songById(songId) }.getOrNull()
+                if (song != null && song != Song.emptySong) return@withContext song
+            }
+            runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -797,6 +808,59 @@ class PlaybackService :
         }
     }
 
+    // =======================================================
+    // 🌟 核心修复区：找回完整生命周期、播放错误处理与UI事件分发
+    // =======================================================
+    
+    override fun onPlayerError(error: PlaybackException) {
+        val nextMediaIndex = player.nextMediaItemIndex
+        if (nextMediaIndex != C.INDEX_UNSET &&
+            errorRecoveryRetryCount < MAX_RETRY_COUNT_AFTER_ERROR) {
+            errorRecoveryRetryCount++
+            player.seekToNextMediaItem()
+            player.prepare()
+        }
+        showToast(getString(R.string.playback_error_code, error.errorCodeName))
+    }
+
+    override fun onEvents(player: Player, events: Player.Events) {
+        if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+            events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+            events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+            if (player.isPlaying) errorRecoveryRetryCount = 0
+            cancelSleepTimerFadeOut()
+        }
+        if (events.contains(Player.EVENT_IS_PLAYING_CHANGED) &&
+            !events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+            updateEqualizerSessionState(player.isPlaying)
+        }
+        if (events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) {
+            queueStateHolder.submitRepeatMode(player.repeatMode)
+        }
+        if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
+            queueStateHolder.submitShuffleMode(player.shuffleModeEnabled)
+            if (!events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+                dispatchPlayQueue(player)
+                if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
+                    this.player.exoPlayer.shuffleOrder = ImprovedShuffleOrder(
+                        firstIndex = player.currentMediaItemIndex,
+                        length = player.mediaItemCount,
+                        randomSeed = Random.nextLong()
+                    )
+                }
+            }
+        }
+        if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+            events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+            val isStructuralChange = events.contains(Player.EVENT_TIMELINE_CHANGED) &&
+                    player.currentTimeline.windowCount != queueStateHolder.queueSize
+            if (!isStructuralChange) {
+                // 🌟 核心：通知ViewModel队列索引已改变，彻底打通UI死穴！
+                queueStateHolder.setPlayerIndex(player.currentMediaItemIndex)
+            }
+        }
+    }
+
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (player.playbackState == Player.STATE_ENDED &&
             preferences.getBoolean(CLEAR_QUEUE_ON_COMPLETION, false)) {
@@ -805,9 +869,9 @@ class PlaybackService :
         refreshMediaButtonCustomLayout()
     }
 
-    // 🌟 保留哈希防闪烁，彻底治愈无限重启的队列假死病！
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+            // 🌟 本地扩展：增加哈希校验防止车机拉取歌词时导致的UI无限循环闪烁
             var currentHash = 1
             val window = Timeline.Window()
             for (i in 0 until timeline.windowCount) {
@@ -888,8 +952,7 @@ class PlaybackService :
             val expectedMediaId = expectedMediaItem.mediaId
             
             withContext(IO) {
-                // 车机使用独立解析，绝不干扰主 UI 进程
-                val song = runCatching { repository.songById(expectedMediaId.toLong()) }.getOrNull() ?: Song.emptySong
+                val song = resolveSongInstantly(expectedMediaItem)
                 if (song == Song.emptySong) return@withContext
 
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
@@ -960,16 +1023,15 @@ class PlaybackService :
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
-
-        // 🌟 修复：防止车机 replaceMediaItem 造成的无限死循环导致卡顿！
         val newMediaId = mediaItem?.mediaId
+
         if (newMediaId != null && newMediaId == lastProcessedMediaId) {
             return
         }
         lastProcessedMediaId = newMediaId
 
         serviceScope.launch(IO) {
-            // 🌟 核心破冰：回归作者最原生、最安全的取法，找回完整带有文件路径的 Song 对象！
+            // 🌟 核心破冰：回归作者最原生、安全的取法。onEvents会先执行，这里的first()一定是最新的
             val newSong = queueStateHolder.currentSong.first()
 
             currentIsFavorite = runCatching<Boolean> { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
@@ -1066,13 +1128,10 @@ class PlaybackService :
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
                         val currentMediaItem = player.getMediaItemAt(currentIndex)
                         serviceScope.launch(IO) {
-                            val songId = currentMediaItem.mediaId.toLongOrNull()
-                            if (songId != null) {
-                                val song = runCatching { repository.songById(songId) }.getOrNull()
-                                if (song != null && song != Song.emptySong) {
-                                    withContext(Main) {
-                                        bluetoothLyricManager?.loadLyricsForSong(song)
-                                    }
+                            val song = resolveSongInstantly(currentMediaItem)
+                            if (song != Song.emptySong) {
+                                withContext(Main) {
+                                    bluetoothLyricManager?.loadLyricsForSong(song)
                                 }
                             }
                         }
@@ -1089,13 +1148,10 @@ class PlaybackService :
                 if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
                     val currentMediaItem = player.getMediaItemAt(currentIndex)
                     serviceScope.launch(IO) {
-                        val songId = currentMediaItem.mediaId.toLongOrNull()
-                        if (songId != null) {
-                            val song = runCatching { repository.songById(songId) }.getOrNull()
-                            if (song != null && song != Song.emptySong) {
-                                withContext(Main) {
-                                    bluetoothLyricManager?.forceReloadLyricsForSong(song)
-                                }
+                        val song = resolveSongInstantly(currentMediaItem)
+                        if (song != Song.emptySong) {
+                            withContext(Main) {
+                                bluetoothLyricManager?.forceReloadLyricsForSong(song)
                             }
                         }
                     }

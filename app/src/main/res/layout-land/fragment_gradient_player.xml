@@ -161,7 +161,7 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 2. 内部信息与进度条部分 (贴底) -->
+            <!-- 2. 内部信息与进度条部分 (贴底)android:textStyle="bold" -->
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/lyricsExtraInfoContainer"
                 android:layout_width="0dp"
@@ -178,13 +178,13 @@
                     android:layout_height="wrap_content"
                     android:singleLine="true"
                     android:ellipsize="end"
-                    android:textStyle="bold"
+                    
                     android:textSize="16sp"
                     android:layout_marginEnd="12dp"
                     app:layout_constrainedWidth="true"
                     app:layout_constraintHorizontal_bias="0.0"
                     app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
+                    app:layout_constraintEnd_toStartOf="@+id/lyricsSongArtistText"
                     app:layout_constraintTop_toTopOf="parent" />
 
                 <com.google.android.material.textview.MaterialTextView
@@ -198,7 +198,8 @@
                     app:layout_constrainedWidth="true"
                     app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
                     app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" 
+					app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText" />
 
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
