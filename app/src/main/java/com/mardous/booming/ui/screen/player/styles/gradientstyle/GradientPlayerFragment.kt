@@ -9,57 +9,45 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.SeekBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat.Type
-import androidx.core.view.isInvisible
-import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.viewpager.widget.ViewPager
 import com.google.android.material.button.MaterialButton
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.*
 import com.mardous.booming.core.model.theme.NowPlayingScreen
+import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
-import com.mardous.booming.extensions.media.albumArtistName
-import com.mardous.booming.extensions.media.displayArtistName
-import com.mardous.booming.extensions.resources.applyColor
-import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
-import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
-import com.mardous.booming.data.repository.LyricsRepository
-import com.mardous.booming.ui.component.views.MusicSlider
-import org.koin.androidx.viewmodel.ext.android.activityViewModel
-import org.koin.android.ext.android.inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.koin.android.ext.android.inject
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
 
 class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_player), View.OnClickListener {
@@ -67,7 +55,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     private val lyricsRepository: LyricsRepository by inject()
-    private val repository: com.mardous.booming.data.repository.Repository by inject()
+    private val repository: Repository by inject()
 
     private var _binding: FragmentGradientPlayerBinding? = null
     private val binding get() = _binding!!
@@ -77,7 +65,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
     private var lastProcessedSongId: Long = -1L
-    private var isDraggingInlineSlider = false
 
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
@@ -206,7 +193,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
         setupListeners() 
         setupVideoPlayer()
-        setupLyricsSyncState()
+        setupCanvasObserver()
         setupNewActionButtons()
         controlsFragment = whichFragment(R.id.playbackControlsFragment)
     }
@@ -235,7 +222,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     private fun handleCoverClick() {
         val willShowLyrics = binding.rightLyricsContainer?.visibility != View.VISIBLE
-        
         binding.rightLyricsContainer?.visibility = if (willShowLyrics) View.VISIBLE else View.INVISIBLE
         binding.playbackControlsFragment?.visibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
         binding.bottomActionContainer?.visibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
@@ -257,14 +243,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
 
     private fun setupNewActionButtons() {
         binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
-        
-        // ★ 核心修复：直接使用原作者自带的 toggleFavorite() 接口
         binding.lyricsFavoriteButton?.setOnClickListener {
-            // 1. 乐观更新（按钮瞬间变色，不卡顿）
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
-            
-            // 2. 官方通信：通知 Service 写数据库并广播全局状态
             playerViewModel.toggleFavorite() 
         }
 
@@ -275,64 +256,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val toggleFormatBtn = binding.toggleLyricsFormatButton
         updateFormatIcon(toggleFormatBtn)
         toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
-    }
-
-    private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val songFile = File(song.data)
-                val parentDir = songFile.parentFile ?: return@launch
-                
-                val possibleNamesLower = listOf(
-                    songFile.nameWithoutExtension.lowercase(),
-                    "${song.artistName} - ${song.title}".lowercase(),
-                    "${song.title} - ${song.artistName}".lowercase()
-                ).filter { it.isNotBlank() }
-                
-                var deletedTtml = false
-                var deletedOther = false
-                
-                val filesInDir = parentDir.listFiles() ?: emptyArray()
-                val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
-                
-                for (file in filesInDir) {
-                    if (!file.isFile) continue
-                    val ext = file.extension.lowercase()
-                    if (!targetExtensions.contains(ext)) continue 
-                    
-                    val fileNameLower = file.nameWithoutExtension.lowercase()
-                    
-                    if (possibleNamesLower.contains(fileNameLower)) {
-                        runCatching { 
-                            if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
-                            else file.writeText("") 
-                        } 
-                        if (file.delete() || !file.exists() || file.length() == 0L) {
-                            if (ext == "ttml") deletedTtml = true
-                            else deletedOther = true
-                        }
-                    }
-                }
-                
-                withContext(Dispatchers.Main) {
-                    if (onlyTtml) {
-                        val msg = if (deletedTtml) "TTML 歌词文件已彻底删除" else "未找到匹配的本地 TTML 文件"
-                        context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
-                        if (deletedTtml) {
-                            lyricsRepository.clearMemoryCache()
-                            lyricsViewModel.updateSong(song)
-                        }
-                    } else {
-                        if (deletedTtml || deletedOther) lyricsRepository.clearMemoryCache()
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    context?.let { Toast.makeText(it, "关联文件清理失败，存储读写异常", Toast.LENGTH_SHORT).show() }
-                }
-            }
-        }
     }
 
     private fun toggleLyricsFormat(btn: MaterialButton?) {
@@ -410,37 +333,20 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         binding.canvasPlayerView?.apply { player = canvasExoPlayer; useController = false; setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
     }
 
-    private fun setupLyricsSyncState() {
-        binding.lyricsInlineProgressSlider?.setOnTouchListener { v, event ->
-            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
-            false 
-        }
-
-        binding.lyricsInlineProgressSlider?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(seekBar: SeekBar?) { isDraggingInlineSlider = true }
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                seekBar?.progress?.let { playerViewModel.seekTo(it.toLong()) }
-                seekBar?.postDelayed({ isDraggingInlineSlider = false }, 500)
-            }
-        })
-
+    // 🌟 纯粹专注动态视频封面拉取和收藏状态同步，完全剔除 60ms 轮询消耗！
+    private fun setupCanvasObserver() {
         viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        binding.lyricsSongTitleText?.text = song.title
-                        binding.lyricsSongTitleText?.let { setMarquee(it, marquee = true) }
-                        
-                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
-                        binding.lyricsSongArtistText?.text = "- $artist"
-                        
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
                             withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
                         }
 
-                        videoFetchJob?.cancel(); canvasExoPlayer?.stop(); canvasExoPlayer?.clearMediaItems()
+                        videoFetchJob?.cancel()
+                        canvasExoPlayer?.stop()
+                        canvasExoPlayer?.clearMediaItems()
                         binding.canvasPlayerView?.alpha = 0f
 
                         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -477,33 +383,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     }
                 }
             }
-            
-            launch {
-                playerViewModel.progressFlow.sample(60L).collect { progress ->
-                    if (!isDraggingInlineSlider) {
-                        val slider = binding.lyricsInlineProgressSlider
-                        val currentProgress = progress.toInt()
-                        
-                        val mainSlider = binding.root.findViewById<MusicSlider>(R.id.progressSlider)
-                        val rightCurrTime = binding.root.findViewById<TextView>(R.id.songCurrentProgress)
-                        val rightTotTime = binding.root.findViewById<TextView>(R.id.songTotalTime)
-
-                        mainSlider?.let { main ->
-                            val max = main.valueTo.toInt()
-                            if (slider?.max != max) { 
-                                slider?.max = max
-                                binding.lyricsTotalTime?.text = rightTotTime?.text 
-                            }
-                        }
-                        slider?.progress = currentProgress
-                        rightCurrTime?.text?.let { rightText -> 
-                            if (binding.lyricsCurrentTime?.text != rightText) {
-                                binding.lyricsCurrentTime?.text = rightText
-                            } 
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -531,52 +410,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         } else {
             videoToggleItem?.isVisible = false
         }
-
-        menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { currentSong ->
-                val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
-                toast.show()
-                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
-                    withContext(Dispatchers.Main) {
-                        toast.cancel()
-                        if (!ttmlContent.isNullOrBlank()) {
-                            try {
-                                val songFile = File(currentSong.data)
-                                val parentDir = songFile.parentFile
-                                if (parentDir != null && parentDir.exists()) {
-                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                    Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
-                                    lyricsRepository.clearMemoryCache()
-                                    lyricsViewModel.updateSong(currentSong)
-                                }
-                            } catch (e: Exception) { Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show() }
-                        } else { Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show() }
-                    }
-                }
-            }
-            true 
-        }
-        
-        menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = true) }
-            true 
-        }
-
-        menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = false) }
-            false 
-        }
-
-        if (isLandscapeOrTablet) {
-            menu.removeItem(R.id.action_sound_settings)
-            menu.removeItem(R.id.action_favorite)
-        } else {
-            menu.removeItem(R.id.action_playing_queue)
-            menu.removeItem(R.id.action_show_lyrics)
-            menu.removeItem(R.id.action_sound_settings)
-            menu.removeItem(R.id.action_favorite)
-        }
     }
 
     override fun onCreateChildFragments() {
@@ -587,19 +420,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldMaskColor = binding.mask?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.soundSettingsButton?.iconTint?.defaultColor ?: Color.WHITE
-        
-        binding.lyricsInlineProgressSlider?.applyColor(scheme.onSurfaceColor)
 
         val targets = mutableListOf<PlayerTintTarget>()
         binding.colorBackground?.let { targets.add(it.surfaceTintTarget(scheme.surfaceColor)) }
         binding.mask?.let { targets.add(it.tintTarget(oldMaskColor, scheme.surfaceColor)) }
         
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
-        
-        binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
-        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
-        binding.lyricsCurrentTime?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
-        binding.lyricsTotalTime?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.6f))) }
         
         binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
         binding.lyricsNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
@@ -633,6 +459,13 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         _binding = null
     }
 
-    override fun onResume() { super.onResume(); if (!isDeviceStressed()) canvasExoPlayer?.play() }
-    override fun onPause() { super.onPause(); canvasExoPlayer?.pause() }
+    override fun onResume() { 
+        super.onResume()
+        if (!isDeviceStressed()) canvasExoPlayer?.play() 
+    }
+    
+    override fun onPause() { 
+        super.onPause()
+        canvasExoPlayer?.pause() 
+    }
 }

@@ -3,6 +3,7 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/colorBackground"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="?attr/colorSurface"
@@ -10,11 +11,10 @@
     android:focusable="true">
 
     <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/colorBackground"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <!-- ================= 左侧区域 ================= -->
+        <!-- ================= 左侧区域 (1:1 纯粹封面 / 动态视频) ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -51,7 +51,7 @@
             app:layout_constraintTop_toTopOf="@id/playerAlbumCoverFragment"
             tools:backgroundTint="?colorSurface"/>
 
-        <!-- ================= 右侧主播放面板 ================= -->
+        <!-- ================= 右侧主控制台 (仅在非纯歌词模式下显示) ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playbackControlsFragment"
             android:name="com.mardous.booming.ui.screen.player.styles.gradientstyle.GradientPlayerControlsFragment"
@@ -63,7 +63,6 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:layout="@layout/fragment_gradient_player_playback_controls"/>
 
-        <!-- 动态底栏：包含了所有的按钮，系统会根据竖屏/平板状态智能显隐 -->
         <LinearLayout
             android:id="@+id/bottomActionContainer"
             android:layout_width="0dp"
@@ -138,7 +137,7 @@
                 app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
-        <!-- ★★★ 右侧歌词【整体容器】★★★ -->
+        <!-- ================= 核心：右侧 100% 纯粹全屏沉浸歌词 ================= -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/rightLyricsContainer"
             android:layout_width="0dp"
@@ -149,131 +148,50 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 1. 内部歌词部分 -->
+            <!-- 1. 歌词控件 100% 纵向铺满，单屏显示行数翻倍 -->
             <androidx.fragment.app.FragmentContainerView
                 android:id="@+id/rightLyricsFragment"
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginTop="8dp"
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toTopOf="@+id/lyricsExtraInfoContainer"
+                app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 2. 内部信息与进度条部分 (贴底) -->
-            <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/lyricsExtraInfoContainer"
-                android:layout_width="0dp"
+            <!-- 2. 右下角垂直悬浮胶囊：[ 收藏 -> 下一首 ]，与 Compose 的 [ 译 ] 按钮无缝垂直对齐 -->
+            <LinearLayout
+                android:id="@+id/lyricsFloatingCapsule"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingHorizontal="16dp"
-                android:paddingBottom="0dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:layout_marginEnd="24dp"
+                android:layout_marginBottom="60dp"
                 app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent">
 
-                <!-- 🌟 歌名：完全参照 default 逻辑，右侧直接锚定收藏按钮，设置 bias="0.0" 靠左android:textStyle="bold" -->
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongTitleText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="12dp"
-                    android:singleLine="true"
-                    android:ellipsize="end"                    
-                    android:textSize="16sp"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:includeFontPadding="false"
-                    app:layout_constrainedWidth="true"
-                    app:layout_constraintHorizontal_bias="0.0"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
-                    app:layout_constraintTop_toTopOf="parent" />
-
-                <!-- 🌟 歌手：完全参照 default 逻辑，生存在“歌名结尾”和“收藏按钮开头”的夹缝中 -->
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongArtistText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="12dp"
-                    android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textSize="14sp"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:includeFontPadding="false"
-                    app:layout_constrainedWidth="true"
-                    app:layout_constraintHorizontal_bias="0.0"
-                    app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText" />
-
-                <!-- 收藏按钮 (紧贴下一首按钮) -->
+                <!-- 收藏按钮 -->
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="0dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:padding="4dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:padding="6dp"
+                    android:layout_marginBottom="8dp"
                     android:src="@drawable/ic_favorite_outline_24dp"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsNextButton"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+                    android:background="?attr/selectableItemBackgroundBorderless" />
 
-                <!-- 迷你下一首按钮 (锚定最右侧边缘) -->
+                <!-- 下一首按钮 -->
                 <ImageView
                     android:id="@+id/lyricsNextButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:padding="2dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:padding="6dp"
                     android:src="@drawable/ic_next_24dp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+                    android:background="?attr/selectableItemBackgroundBorderless" />
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsCurrentTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:minWidth="36dp"
-                    android:textSize="12sp"
-                    android:singleLine="true"
-                    android:gravity="center"
-                    android:textColor="?android:attr/textColorSecondary"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
+            </LinearLayout>
 
-                <androidx.appcompat.widget.AppCompatSeekBar
-                    android:id="@+id/lyricsInlineProgressSlider"
-                    android:layout_width="0dp"
-                    android:layout_height="24dp"
-                    android:layout_marginTop="4dp"
-                    android:background="@null"
-                    android:splitTrack="false"
-                    android:thumb="@null"
-                    android:minHeight="6dp"
-                    android:maxHeight="6dp"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintTop_toTopOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintStart_toEndOf="@+id/lyricsCurrentTime"
-                    app:layout_constraintEnd_toStartOf="@+id/lyricsTotalTime" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsTotalTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:minWidth="36dp"
-                    android:gravity="end"
-                    android:singleLine="true"
-                    android:textSize="12sp"
-                    android:textColor="?android:attr/textColorSecondary"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
-            </androidx.constraintlayout.widget.ConstraintLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
