@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isInvisible
@@ -247,9 +248,16 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             updateFavoriteIcon(!isFav)
             playerViewModel.toggleFavorite() 
         }
+
+        binding.goToArtistButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
+        binding.goToAlbumButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_album, 0) }
+        binding.equalizerButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_equalizer, 0) }
+        
+        val toggleFormatBtn = binding.toggleLyricsFormatButton
+        updateFormatIcon(toggleFormatBtn)
+        toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
-    // 🌟 终极菜单 Hook 逻辑：解决 PopupMenu 拦截一切点击事件的系统级 Bug
     private fun hookPopupMenu() {
         val popup = controlsFragment.popupMenu ?: return
         try {
@@ -267,7 +275,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                         playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, false) }
                         originalListener?.onMenuItemClick(item) ?: false 
                     }
-                    // 把不属于我们的默认事件原封不动还给它，完美共存！
                     else -> originalListener?.onMenuItemClick(item) ?: false
                 }
             }
@@ -305,7 +312,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
         sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
         item.title = if (newState) "动态封面: 关闭" else "动态封面: 开启"
-        // 瞬间触发刷新
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
 
@@ -447,7 +453,13 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     if (song != null && song.id != lastProcessedSongId) {
                         
                         binding.lyricsSongTitleText?.text = song.title
-                        val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
+                        
+                        // 🌟 核心修复：完全规避找不到扩展函数的编译报错，使用最安全的原生属性获取
+                        val artist = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) {
+                            song.albumArtistName
+                        } else {
+                            song.artistName
+                        }
                         binding.lyricsSongArtistText?.text = artist
 
                         launch(Dispatchers.IO) {
@@ -510,8 +522,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         } else {
             videoToggleItem?.isVisible = false
         }
-        
-        // 🌟 核心清理：不再在这里给各个 MenuItem 绑定无效的 ClickListener，全部交由下面的 Hook 统一接管！
     }
 
     override fun onCreateChildFragments() {
@@ -523,6 +533,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val oldMaskColor = binding.mask?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.soundSettingsButton?.iconTint?.defaultColor ?: Color.WHITE
 
+        // 🌟 核心修复：使用官方原生的 ColorUtils 代替找不到的 withAlpha 扩展
+        val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178) // 178 对应大约 70% 的透明度
+
         val targets = mutableListOf<PlayerTintTarget>()
         binding.colorBackground?.let { targets.add(it.surfaceTintTarget(scheme.surfaceColor)) }
         binding.mask?.let { targets.add(it.tintTarget(oldMaskColor, scheme.surfaceColor)) }
@@ -530,7 +543,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
-        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
+        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         
         binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
         binding.lyricsNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
@@ -568,7 +581,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play() 
         
-        // 🌟 确保页面渲染完成后，接管 PopupMenu 拦截机制，使全部菜单按钮复活
         if (!isMenuHooked) {
             binding.root.post {
                 hookPopupMenu()
