@@ -73,7 +73,7 @@ import com.mardous.booming.core.audio.AudioOutputObserver
 import com.mardous.booming.core.model.queue.QueuePosition
 import com.mardous.booming.data.local.MediaStoreObserver
 import com.mardous.booming.data.local.ReplayGainTagExtractor
-import com.mardous.booming.data.local.repository.LyricsRepository
+import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.model.QueueSong
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.network.NetworkFeature
