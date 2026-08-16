@@ -37,10 +37,6 @@ import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.databinding.FragmentGradientPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
-import com.mardous.booming.extensions.media.albumArtistName
-import com.mardous.booming.extensions.media.displayArtistName
-import com.mardous.booming.extensions.resources.applyColor
-import com.mardous.booming.extensions.resources.withAlpha
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
@@ -72,6 +68,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
     private var lastProcessedSongId: Long = -1L
+    private var isMenuHooked = false
 
     private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
     private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
@@ -250,80 +247,66 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             updateFavoriteIcon(!isFav)
             playerViewModel.toggleFavorite() 
         }
-
-        binding.goToArtistButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }
-        binding.goToAlbumButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_album, 0) }
-        binding.equalizerButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_equalizer, 0) }
-        
-        val toggleFormatBtn = binding.toggleLyricsFormatButton
-        updateFormatIcon(toggleFormatBtn)
-        toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
-    // 🌟 100% 还原 DefaultPlayerFragment 的菜单与点击分发逻辑
-    override fun onMenuInflated(menu: Menu) {
-        super.onMenuInflated(menu)
-        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
-            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
-
-        val toggleItem = menu.findItem(R.id.action_toggle_lyrics_format)
-        toggleItem?.setOnMenuItemClickListener { toggleLyricsFormat(null); true }
-
-        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
-        if (isLandscapeOrTablet) {
-            videoToggleItem?.isVisible = true
-            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
+    // 🌟 终极菜单 Hook 逻辑：解决 PopupMenu 拦截一切点击事件的系统级 Bug
+    private fun hookPopupMenu() {
+        val popup = controlsFragment.popupMenu ?: return
+        try {
+            val field = popup.javaClass.getDeclaredField("mMenuItemClickListener")
+            field.isAccessible = true
+            val originalListener = field.get(popup) as? androidx.appcompat.widget.PopupMenu.OnMenuItemClickListener
             
-            videoToggleItem?.setOnMenuItemClickListener {
-                val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-                videoToggleItem.title = if (newState) "动态封面: 关闭" else "动态封面: 开启"
-                playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
-                true
-            }
-        } else {
-            videoToggleItem?.isVisible = false
-        }
-
-        menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { currentSong ->
-                val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
-                toast.show()
-
-                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
-                    withContext(Dispatchers.Main) {
-                        toast.cancel()
-                        if (!ttmlContent.isNullOrBlank()) {
-                            try {
-                                val songFile = File(currentSong.data)
-                                val parentDir = songFile.parentFile
-                                if (parentDir != null && parentDir.exists()) {
-                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                    Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
-                                    lyricsRepository.clearMemoryCache()
-                                    lyricsViewModel.updateSong(currentSong)
-                                }
-                            } catch (e: Exception) { Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show() }
-                        } else {
-                            Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
-                        }
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    R.id.action_toggle_lyrics_format -> { toggleLyricsFormat(); true }
+                    R.id.action_toggle_video_cover -> { toggleVideoCover(item); true }
+                    R.id.action_fetch_ttml -> { fetchTtml(); true }
+                    R.id.action_delete_ttml -> { playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, true) }; true }
+                    R.id.action_delete_from_device -> { 
+                        playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, false) }
+                        originalListener?.onMenuItemClick(item) ?: false 
                     }
+                    // 把不属于我们的默认事件原封不动还给它，完美共存！
+                    else -> originalListener?.onMenuItemClick(item) ?: false
                 }
             }
-            true 
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        
-        menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = true) }
-            true 
-        }
+    }
 
-        menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
-            playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, onlyTtml = false) }
-            false 
+    private fun fetchTtml() {
+        playerViewModel.currentSongFlow.value?.let { currentSong ->
+            val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
+            toast.show()
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
+                withContext(Dispatchers.Main) {
+                    toast.cancel()
+                    if (!ttmlContent.isNullOrBlank()) {
+                        try {
+                            val songFile = File(currentSong.data)
+                            val parentDir = songFile.parentFile
+                            if (parentDir != null && parentDir.exists()) {
+                                File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
+                                lyricsRepository.clearMemoryCache()
+                                lyricsViewModel.updateSong(currentSong)
+                            }
+                        } catch (e: Exception) { Toast.makeText(context, "保存文件失败，请检查读写权限", Toast.LENGTH_SHORT).show() }
+                    } else { Toast.makeText(context, "获取失败：全网未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show() }
+                }
+            }
         }
+    }
+
+    private fun toggleVideoCover(item: MenuItem) {
+        val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+        sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+        item.title = if (newState) "动态封面: 关闭" else "动态封面: 开启"
+        // 瞬间触发刷新
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
 
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
@@ -340,7 +323,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 
                 var deletedTtml = false
                 var deletedOther = false
-                
                 val filesInDir = parentDir.listFiles() ?: emptyArray()
                 val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
                 
@@ -350,13 +332,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                     if (!targetExtensions.contains(ext)) continue 
                     
                     val fileNameLower = file.nameWithoutExtension.lowercase()
-                    
                     if (possibleNamesLower.contains(fileNameLower)) {
                         runCatching { 
                             if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
                             else file.writeText("") 
                         } 
-                        
                         if (file.delete() || !file.exists() || file.length() == 0L) {
                             if (ext == "ttml") deletedTtml = true
                             else deletedOther = true
@@ -385,7 +365,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         }
     }
 
-    private fun toggleLyricsFormat(btn: MaterialButton?) {
+    private fun toggleLyricsFormat(btn: MaterialButton? = binding.toggleLyricsFormatButton) {
         val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
@@ -465,13 +445,11 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        // 🌟 切歌时同步歌曲标题 (顶部悬浮双行)
-                        binding.lyricsSongTitleText?.text = song.title
-                        binding.lyricsSongTitleText?.let { setMarquee(it, marquee = true) }
                         
+                        binding.lyricsSongTitleText?.text = song.title
                         val artist = if (Preferences.preferAlbumArtistName) song.albumArtistName().displayArtistName() else song.displayArtistName()
                         binding.lyricsSongArtistText?.text = artist
-                        
+
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
                             withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
@@ -519,6 +497,23 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         }
     }
 
+    override fun onMenuInflated(menu: Menu) {
+        super.onMenuInflated(menu)
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+
+        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
+        if (isLandscapeOrTablet) {
+            videoToggleItem?.isVisible = true
+            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
+        } else {
+            videoToggleItem?.isVisible = false
+        }
+        
+        // 🌟 核心清理：不再在这里给各个 MenuItem 绑定无效的 ClickListener，全部交由下面的 Hook 统一接管！
+    }
+
     override fun onCreateChildFragments() {
         super.onCreateChildFragments()
         controlsFragment = whichFragment(R.id.playbackControlsFragment)
@@ -534,7 +529,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         
-        // 🌟 沉浸式胶囊与左上角歌曲标题的动态换色绑定
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor.withAlpha(0.7f))) }
         
@@ -573,6 +567,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun onResume() { 
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play() 
+        
+        // 🌟 确保页面渲染完成后，接管 PopupMenu 拦截机制，使全部菜单按钮复活
+        if (!isMenuHooked) {
+            binding.root.post {
+                hookPopupMenu()
+                isMenuHooked = true
+            }
+        }
     }
     
     override fun onPause() { 
