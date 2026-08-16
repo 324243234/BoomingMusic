@@ -185,8 +185,7 @@
                     app:layout_constraintHorizontal_bias="0.0"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintBottom_toBottomOf="parent" />
+                    app:layout_constraintTop_toTopOf="parent" />
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/lyricsSongArtistText"
@@ -199,8 +198,7 @@
                     app:layout_constrainedWidth="true"
                     app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
                     app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
-                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText"
-					app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText" />
+                    app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
 
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
