@@ -258,16 +258,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private fun setupNewActionButtons() {
         binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
         
-        // ★ 核心修复：100% 同步 DefaultPlayerFragment 的 startService 原生逻辑
+        // ★ 核心修复：直接使用原作者自带的 toggleFavorite() 接口
         binding.lyricsFavoriteButton?.setOnClickListener {
+            // 1. 乐观更新（按钮瞬间变色，不卡顿）
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
-            try {
-                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
-                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
-                }
-                requireContext().startService(intent)
-            } catch (e: Exception) { e.printStackTrace() }
+            
+            // 2. 官方通信：通知 Service 写数据库并广播全局状态
+            playerViewModel.toggleFavorite() 
         }
 
         binding.goToArtistButton?.setOnClickListener { controlsFragment.popupMenu?.menu?.performIdentifierAction(R.id.action_go_to_artist, 0) }

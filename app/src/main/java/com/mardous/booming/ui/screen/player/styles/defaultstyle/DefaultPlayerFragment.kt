@@ -169,14 +169,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
 
         binding.leftFavoriteButton?.setOnClickListener {
+           // 1. 乐观更新（按钮瞬间变色，不卡顿）
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
-            try {
-                val intent = android.content.Intent(requireContext(), Class.forName("com.mardous.booming.playback.PlaybackService")).apply {
-                    action = "com.mardous.booming.action.ACTION_TOGGLE_FAVORITE"
-                }
-                requireContext().startService(intent)
-            } catch (e: Exception) { e.printStackTrace() }
+            
+            // 2. 官方通信：通知 Service 写数据库并广播全局状态
+            playerViewModel.toggleFavorite()
         }
         binding.leftNextButton?.setOnClickListener { playerViewModel.seekToNext() }
 
