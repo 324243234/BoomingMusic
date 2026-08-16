@@ -22,7 +22,6 @@ import com.mardous.booming.core.model.lyrics.LyricsViewSettings
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Key
 import com.mardous.booming.data.local.lyrics.InstrumentalDetector
-import com.mardous.booming.data.local.repository.LyricsRepository
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsSource
 import com.mardous.booming.data.model.lyrics.RawLyrics
@@ -30,6 +29,7 @@ import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.BetterLyrics
 import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.LRCLib
 import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.Lyrically
+import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.extensions.files.belongsTo
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import com.mardous.booming.extensions.utilities.sanitize
@@ -103,10 +103,9 @@ class LyricsViewModel(
     }
 
     fun getSearchUrl(song: Song): String {
-        val url = "https://lrclib.net/search/"
         val query = if (song.isArtistNameUnknown()) song.title
         else "${song.artistName} ${song.title}"
-        return url + Uri.encode(query)
+        return "https://lrclib.net/search/${Uri.encode(query)}"
     }
 
     fun loadEditorContent(song: Song) = viewModelScope.launch(IO) {

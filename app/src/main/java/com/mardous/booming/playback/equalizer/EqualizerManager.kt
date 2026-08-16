@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.milliseconds
 
 val Context.eqDataStore by preferencesDataStore("equalizer")
 
@@ -120,7 +121,7 @@ class EqualizerManager(
             eqState.filterNot { it == EqState.Unspecified },
             context.eqDataStore.data
         ) { eqState, prefs ->
-            val json = prefs[Keys.CUSTOM_PRESET].orEmpty().trim()
+            val json = prefs[Keys.CUSTOM_PROFILE].orEmpty().trim()
             runCatching {
                 Json.decodeFromString<EqProfile>(json)
             }.getOrElse { null }
@@ -130,7 +131,7 @@ class EqualizerManager(
 
     val eqProfiles = context.eqDataStore.data
         .map { prefs ->
-            val json = prefs[Keys.PRESETS].orEmpty().trim()
+            val json = prefs[Keys.PROFILES].orEmpty().trim()
             runCatching {
                 Json.decodeFromString<List<EqProfile>>(json)
             }.getOrElse {
@@ -145,7 +146,7 @@ class EqualizerManager(
             eqProfiles,
             context.eqDataStore.data
         ) { state, profiles, prefs ->
-            val json = prefs[Keys.PRESET].orEmpty().trim()
+            val json = prefs[Keys.PROFILE].orEmpty().trim()
             runCatching {
                 Json.decodeFromString<EqProfile>(json)
             }.getOrElse {
@@ -307,7 +308,7 @@ class EqualizerManager(
 
     init {
         eqState.filterNot { it == EqState.Unspecified }
-            .debounce(100)
+            .debounce(100.milliseconds)
             .onEach { newState ->
                 val isDisabled = newState.isDisabledByReason
                 if (eqEngine == null && eqSession.id != NO_SESSION_ID && !isDisabled) {
@@ -329,7 +330,7 @@ class EqualizerManager(
             }
             .launchIn(eqScope)
 
-        balanceState.debounce(50)
+        balanceState.debounce(50.milliseconds)
             .onEach { balanceState ->
                 balanceProcessor.setBalance(balanceState.left, balanceState.right)
             }
@@ -337,7 +338,7 @@ class EqualizerManager(
             .launchIn(eqScope)
 
         replayGainState.filterNot { it == ReplayGainState.Unspecified }
-            .debounce(50)
+            .debounce(50.milliseconds)
             .onEach { state ->
                 if (state.mode.isOn) {
                     replayGainProcessor.mode = state.mode
@@ -352,7 +353,7 @@ class EqualizerManager(
             .flowOn(Dispatchers.Main)
             .launchIn(eqScope)
 
-        bitPerfectAudio.debounce(100)
+        bitPerfectAudio.debounce(100.milliseconds)
             .onEach { bitPerfectEnabled ->
                 audioOutputObserver.setBitPerfectEnabled(bitPerfectEnabled)
             }
@@ -360,9 +361,7 @@ class EqualizerManager(
             .launchIn(eqScope)
 
         audioOutputObserver.audioDevice
-            .onEach {
-                setCurrentDevice(it)
-            }
+            .onEach { setCurrentDevice(it) }
             .flowOn(IO)
             .launchIn(eqScope)
     }
@@ -377,8 +376,8 @@ class EqualizerManager(
                 val eqInitialized = prefs[Keys.EQ_INITIALIZED]
                 if (eqInitialized != true) {
                     prefs[Keys.EQ_ENGINE_MODE] = engineMode.ordinal
-                    prefs[Keys.PRESETS] = Json.encodeToString(
-                        getPresetsByBandCount(engineMode.defaultBandCount)
+                    prefs[Keys.PROFILES] = Json.encodeToString(
+                        getProfilesByBandCount(engineMode.defaultBandCount)
                     )
                     prefs[Keys.EQ_INITIALIZED] = true
                 }
@@ -417,7 +416,7 @@ class EqualizerManager(
     fun getNewExportName(): String = getFormattedFileName("BoomingEQ", "json")
 
     fun getEmptyCustomProfile(bandCount: Int): EqProfile {
-        return EqProfile(EqProfile.CUSTOM_PRESET_NAME, FloatArray(bandCount), isCustom = true)
+        return EqProfile(EqProfile.CUSTOM_PROFILE_NAME, FloatArray(bandCount), isCustom = true)
     }
 
     fun getNewProfileFromCustom(
@@ -467,7 +466,7 @@ class EqualizerManager(
 
         setEqualizerProfiles(newProfiles)
         if (profile == eqCurrentProfile.value) {
-            setCurrentProfile(currentProfiles[targetIndex])
+            setCurrentProfile(newProfiles[targetIndex])
         }
         return true
     }
@@ -580,7 +579,7 @@ class EqualizerManager(
 
     private suspend fun setEqualizerProfiles(profiles: List<EqProfile>) {
         context.eqDataStore.edit {
-            it[Keys.PRESETS] = Json.encodeToString(profiles)
+            it[Keys.PROFILES] = Json.encodeToString(profiles)
         }
     }
 
@@ -599,7 +598,7 @@ class EqualizerManager(
                 )
             } else {
                 context.eqDataStore.edit {
-                    it[Keys.PRESET] = Json.encodeToString(eqProfile)
+                    it[Keys.PROFILE] = Json.encodeToString(eqProfile)
                 }
                 applyChangesToEngine(profile = eqProfile)
             }
@@ -613,7 +612,7 @@ class EqualizerManager(
             newBandLevels[band] = gainInDb
         }
         val customProfile = currentProfile.copy(
-            name = EqProfile.CUSTOM_PRESET_NAME,
+            name = EqProfile.CUSTOM_PROFILE_NAME,
             levels = newBandLevels,
             isAutoEq = false,
             isCustom = true
@@ -625,9 +624,9 @@ class EqualizerManager(
         if (profile.isCustom) {
             val serializedProfile = Json.encodeToString(profile)
             context.eqDataStore.edit {
-                it[Keys.CUSTOM_PRESET] = serializedProfile
+                it[Keys.CUSTOM_PROFILE] = serializedProfile
                 if (fromUser) {
-                    it[Keys.PRESET] = serializedProfile
+                    it[Keys.PROFILE] = serializedProfile
                 }
             }
             if (fromUser) {
@@ -723,9 +722,9 @@ class EqualizerManager(
             prefs[Keys.EQ_PRO_MODE_ENABLED] = state.proMode
             if (newProfile != null) {
                 val serializedProfile = Json.encodeToString(newProfile)
-                prefs[Keys.PRESET] = serializedProfile
+                prefs[Keys.PROFILE] = serializedProfile
                 if (newProfile.isCustom) {
-                    prefs[Keys.CUSTOM_PRESET] = serializedProfile
+                    prefs[Keys.CUSTOM_PROFILE] = serializedProfile
                 }
             }
         }
@@ -915,7 +914,7 @@ class EqualizerManager(
         }
     }
 
-    private fun getPresetsByBandCount(bandCount: Int) = when (bandCount) {
+    private fun getProfilesByBandCount(bandCount: Int) = when (bandCount) {
         5 -> listOf(
             EqProfile("Bass Boost", floatArrayOf(11f, 6f, -1f, -2.5f, -0.5f)),
             EqProfile("Classical", floatArrayOf(4f, 0.5f, 0.5f, 2.5f, 4.5f)),
@@ -1095,9 +1094,9 @@ class EqualizerManager(
             val LOUDNESS_ENABLED = booleanPreferencesKey("eq.loudness.enabled")
             val LOUDNESS_GAIN = floatPreferencesKey("eq.loudness.gain")
             val AUTO_EQ_PROFILES = stringPreferencesKey("eq.profiles.autoeq")
-            val PRESETS = stringPreferencesKey("eq.profiles")
-            val PRESET = stringPreferencesKey("eq.profile")
-            val CUSTOM_PRESET = stringPreferencesKey("eq.profile.custom")
+            val PROFILES = stringPreferencesKey("eq.profiles")
+            val PROFILE = stringPreferencesKey("eq.profile")
+            val CUSTOM_PROFILE = stringPreferencesKey("eq.profile.custom")
             val BIT_PERFECT = booleanPreferencesKey("audio.bitperfect")
             val AUDIO_OFFLOAD = booleanPreferencesKey("audio.offload")
             val AUDIO_FLOAT_OUTPUT = booleanPreferencesKey("audio.float_output")
