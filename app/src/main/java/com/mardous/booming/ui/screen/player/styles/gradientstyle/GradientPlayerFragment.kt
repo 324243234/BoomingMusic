@@ -49,7 +49,7 @@ import com.mardous.booming.ui.component.base.AbsPlayerFragment
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
-import com.mardous.booming.data.local.repository.LyricsRepository
+import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.ui.component.views.MusicSlider
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import org.koin.android.ext.android.inject
