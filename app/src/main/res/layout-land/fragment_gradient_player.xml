@@ -9,7 +9,6 @@
     android:clickable="true"
     android:focusable="true">
 
-    <!-- 🌟 原作者的动态取色锚点，已完美保留 -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/colorBackground"
         android:layout_width="match_parent"
@@ -52,7 +51,7 @@
             app:layout_constraintTop_toTopOf="@id/playerAlbumCoverFragment"
             tools:backgroundTint="?colorSurface"/>
 
-        <!-- ================= 右侧主控制台 ================= -->
+        <!-- ================= 主控制台 ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playbackControlsFragment"
             android:name="com.mardous.booming.ui.screen.player.styles.gradientstyle.GradientPlayerControlsFragment"
@@ -74,7 +73,6 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintBottom_toBottomOf="parent">
 
-            <!-- 原有按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/openQueueButton"
                 style="?materialIconButtonStyle"
@@ -93,16 +91,6 @@
                 app:icon="@drawable/ic_lyrics_outline_24dp"
                 app:iconTint="?colorOnSurface" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/soundSettingsButton"
-                style="?materialIconButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="2dp"
-                app:icon="@drawable/ic_volume_up_24dp"
-                app:iconTint="?colorOnSurface" />
-
-            <!-- 新增横屏快捷按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/goToArtistButton"
                 style="?materialIconButtonStyle"
@@ -131,6 +119,15 @@
                 app:iconTint="?colorOnSurface" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/soundSettingsButton"
+                style="?materialIconButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="2dp"
+                app:icon="@drawable/ic_volume_up_24dp"
+                app:iconTint="?colorOnSurface" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/equalizerButton"
                 style="?materialIconButtonStyle"
                 android:layout_width="wrap_content"
@@ -140,7 +137,7 @@
                 app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
-        <!-- ================= 右侧沉浸式区域 (点击封面后显示) ================= -->
+        <!-- ================= 右侧沉浸式区域 ================= -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/rightLyricsContainer"
             android:layout_width="0dp"
@@ -151,15 +148,15 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 🌟 极简歌曲信息行：左上方显示，歌名在上歌手在下，限制最大宽度自动截断 -->
+            <!-- 🌟 极度压缩的顶部信息栏：对齐状态栏，极致挤压高度 -->
             <LinearLayout
                 android:id="@+id/lyricsTopHeader"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:layout_marginTop="24dp"
-                android:layout_marginStart="24dp"
-                android:layout_marginEnd="32dp"
+                android:layout_marginTop="2dp"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="16dp"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent">
@@ -171,7 +168,8 @@
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textStyle="bold"
-                    android:textSize="18sp"
+                    android:textSize="16sp"
+                    android:includeFontPadding="false"
                     android:textColor="?android:attr/textColorPrimary"
                     tools:text="歌曲名称" />
 
@@ -179,27 +177,28 @@
                     android:id="@+id/lyricsSongArtistText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
+                    android:layout_marginTop="0dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textSize="14sp"
+                    android:includeFontPadding="false"
                     android:textColor="?android:attr/textColorSecondary"
                     tools:text="歌手名称" />
             </LinearLayout>
 
-            <!-- 歌词控件：100% 铺满右侧，位于信息行下方 -->
+            <!-- 歌词容器：最大限度占用空间 -->
             <androidx.fragment.app.FragmentContainerView
                 android:id="@+id/rightLyricsFragment"
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="2dp"
                 app:layout_constraintTop_toBottomOf="@+id/lyricsTopHeader"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 右下角垂直悬浮胶囊 -->
+            <!-- 右下角悬浮胶囊 -->
             <LinearLayout
                 android:id="@+id/lyricsFloatingCapsule"
                 android:layout_width="wrap_content"
@@ -217,6 +216,7 @@
                     android:layout_height="36dp"
                     android:padding="6dp"
                     android:layout_marginBottom="8dp"
+					android:alpha="0.5"
                     android:src="@drawable/ic_favorite_outline_24dp"
                     android:background="?attr/selectableItemBackgroundBorderless" />
 
@@ -225,6 +225,7 @@
                     android:layout_width="36dp"
                     android:layout_height="36dp"
                     android:padding="6dp"
+					android:alpha="0.6"
                     android:src="@drawable/ic_next_24dp"
                     android:background="?attr/selectableItemBackgroundBorderless" />
             </LinearLayout>

@@ -258,29 +258,40 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
-    // 🌟 由于 Gradient 使用的是 PopupMenu 而非 Toolbar，这里是唯一能突破系统限制接管点击的地方
-    private fun hookPopupMenu() {
+    // 🌟 终极解决方案：完全摒弃危险反射，直接利用原生 API 接管 PopupMenu 下的各个 MenuItem
+    private fun setupPopupMenu() {
         val popup = controlsFragment.popupMenu ?: return
-        try {
-            val field = popup.javaClass.getDeclaredField("mMenuItemClickListener")
-            field.isAccessible = true
-            val originalListener = field.get(popup) as? androidx.appcompat.widget.PopupMenu.OnMenuItemClickListener
-            
-            popup.setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    R.id.action_toggle_lyrics_format -> { toggleLyricsFormat(); true }
-                    R.id.action_toggle_video_cover -> { toggleVideoCover(item); true }
-                    R.id.action_fetch_ttml -> { fetchTtml(); true }
-                    R.id.action_delete_ttml -> { playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, true) }; true }
-                    R.id.action_delete_from_device -> { 
-                        playerViewModel.currentSongFlow.value?.let { deleteAssociatedLyricsFiles(it, false) }
-                        originalListener?.onMenuItemClick(item) ?: false 
-                    }
-                    else -> originalListener?.onMenuItemClick(item) ?: false
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        val menu = popup.menu
+
+        // 初始化动态封面菜单标题
+        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
+        val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
+        videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
+
+        // 强力绑定每一个自定义事件！直接生效！
+        menu.findItem(R.id.action_toggle_lyrics_format)?.setOnMenuItemClickListener {
+            toggleLyricsFormat()
+            true
+        }
+        
+        videoToggleItem?.setOnMenuItemClickListener { item ->
+            toggleVideoCover(item)
+            true
+        }
+        
+        menu.findItem(R.id.action_fetch_ttml)?.setOnMenuItemClickListener {
+            fetchTtml()
+            true
+        }
+        
+        menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { song -> deleteAssociatedLyricsFiles(song, true) }
+            true
+        }
+        
+        menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { song -> deleteAssociatedLyricsFiles(song, false) }
+            false // 返回 false，让原版的删除弹窗逻辑也能顺利执行
         }
     }
 
@@ -452,11 +463,9 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        // 🌟 同步左上角歌曲信息，修复原属性报错问题
-                        binding.lyricsSongTitleText?.text = song.title
                         
+                        binding.lyricsSongTitleText?.text = song.title
                         val artistStr = if (Preferences.preferAlbumArtistName) {
-                            // song.albumArtistName 可能不存在或为空，安全回退
                             val albumArtist = song.albumArtistName
                             if (albumArtist.isNullOrEmpty()) song.artistName else albumArtist
                         } else {
@@ -511,21 +520,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         }
     }
 
-    override fun onMenuInflated(menu: Menu) {
-        super.onMenuInflated(menu)
-        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
-            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
-
-        val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
-        if (isLandscapeOrTablet) {
-            videoToggleItem?.isVisible = true
-            val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-            videoToggleItem?.title = if (isVideoEnabled) "动态封面: 关闭" else "动态封面: 开启"
-        } else {
-            videoToggleItem?.isVisible = false
-        }
-    }
-
     override fun onCreateChildFragments() {
         super.onCreateChildFragments()
         controlsFragment = whichFragment(R.id.playbackControlsFragment)
@@ -534,19 +528,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldMaskColor = binding.mask?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.soundSettingsButton?.iconTint?.defaultColor ?: Color.WHITE
-
-        // 🌟 修复 Color 扩展找不到的编译错误，使用 Android 原生 ColorUtils 处理透明度
         val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
 
         val targets = mutableListOf<PlayerTintTarget>()
-        
-        // 🌟 保留原主题最核心的动态颜色提取锚点着色
         binding.colorBackground?.let { targets.add(it.surfaceTintTarget(scheme.surfaceColor)) }
         binding.mask?.let { targets.add(it.tintTarget(oldMaskColor, scheme.surfaceColor)) }
         
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         
-        // 🌟 左上角信息区动态变色
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         
@@ -586,10 +575,10 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play() 
         
-        // 🌟 在 Fragment 准备好显示时，执行对 PopupMenu 的接管操作
+        // 🌟 将事件强力绑定推迟到 Fragment 渲染完毕且菜单已装载之后执行
         if (!isMenuHooked) {
             binding.root.post {
-                hookPopupMenu()
+                setupPopupMenu()
                 isMenuHooked = true
             }
         }
