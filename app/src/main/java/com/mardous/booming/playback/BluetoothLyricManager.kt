@@ -5,7 +5,7 @@ import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import com.mardous.booming.data.local.repository.LyricsRepository
+import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import kotlinx.coroutines.CoroutineScope

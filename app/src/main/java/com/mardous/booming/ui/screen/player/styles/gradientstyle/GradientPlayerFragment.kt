@@ -67,7 +67,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     private val lyricsRepository: LyricsRepository by inject()
-    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
+    private val repository: com.mardous.booming.data.repository.Repository by inject()
 
     private var _binding: FragmentGradientPlayerBinding? = null
     private val binding get() = _binding!!

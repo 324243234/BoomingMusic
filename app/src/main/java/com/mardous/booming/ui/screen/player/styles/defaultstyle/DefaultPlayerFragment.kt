@@ -37,7 +37,7 @@ import com.mardous.booming.core.model.player.PlayerTintTarget
 import com.mardous.booming.core.model.player.surfaceTintTarget
 import com.mardous.booming.core.model.player.tintTarget
 import com.mardous.booming.core.model.theme.NowPlayingScreen
-import com.mardous.booming.data.local.repository.LyricsRepository
+import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.databinding.FragmentDefaultPlayerBinding
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
 import com.mardous.booming.extensions.media.albumArtistName
@@ -69,7 +69,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
     private val sharedPreferences: SharedPreferences by inject()
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     
-    private val repository: com.mardous.booming.data.local.repository.Repository by inject()
+    private val repository: com.mardous.booming.data.repository.Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentDefaultPlayerBinding? = null
