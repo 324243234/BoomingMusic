@@ -172,15 +172,14 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent">
 
-                <!-- 🌟 歌名：完全参照 default 逻辑，右侧直接锚定收藏按钮，设置 bias="0.0" 靠左 -->
+                <!-- 🌟 歌名：完全参照 default 逻辑，右侧直接锚定收藏按钮，设置 bias="0.0" 靠左android:textStyle="bold" -->
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/lyricsSongTitleText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="12dp"
                     android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textStyle="bold"
+                    android:ellipsize="end"                    
                     android:textSize="16sp"
                     android:textColor="?android:attr/textColorPrimary"
                     android:includeFontPadding="false"

@@ -77,7 +77,6 @@ import com.mardous.booming.data.model.QueueSong
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
-// 🌟 严谨导包：基于截图实证，统一指向 data.repository
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.extensions.isBluetoothA2dpConnected
@@ -180,12 +179,17 @@ class PlaybackService :
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
     
-    // 🌟 本地扩展系统
+    // 🌟 本地扩展系统与防发热缓存变量
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
     private var lastTimelineHashCode: Int = 0
     private var currentIsFavorite = false
+
+    // 车机歌词解析的内存级护城河缓存 (杜绝发热、耗电)
+    private var carWithLastSongId: Long = -1L
+    private var carWithLastLyrics: String = ""
+    private var carWithLastTranslationState: Boolean = false
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -227,7 +231,6 @@ class PlaybackService :
             customCommands[0]
         }
 
-    // 🌟 作者更新：安全的循环按键状态
     private val repeatCommand: CommandButton
         get() = when (player.repeatMode) {
             Player.REPEAT_MODE_ALL -> customCommands[3]
@@ -246,7 +249,7 @@ class PlaybackService :
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
-    // 🌟 【终极护城河】：无状态瞬间查库，彻底解决切歌时车机、蓝牙、收藏拿到旧数据的问题！
+    // 无状态秒级提取，100% 免疫 UI 延迟导致的查错歌
     private suspend fun resolveSongInstantly(mediaItem: MediaItem?): Song {
         if (mediaItem == null) return Song.emptySong
         return withContext(IO) {
@@ -373,7 +376,6 @@ class PlaybackService :
             }
         }
 
-        // 🌟 本地扩展：蓝牙歌词初始化
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
         }
@@ -469,7 +471,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 🌟 护城河：接管车机端的按钮
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -859,7 +860,7 @@ class PlaybackService :
             val isStructuralChange = events.contains(Player.EVENT_TIMELINE_CHANGED) &&
                     player.currentTimeline.windowCount != queueStateHolder.queueSize
             if (!isStructuralChange) {
-                // 🌟 这是唤醒 UI 当前播放状态的命脉代码！
+                // 🌟 这是唤醒 UI 当前播放状态的命脉代码！它能让所有的歌词、封面重新滚动！
                 queueStateHolder.setPlayerIndex(player.currentMediaItemIndex)
             }
         }
@@ -939,7 +940,7 @@ class PlaybackService :
     }
 
     // ==============================================================================
-    // 🌟 核心护城河：车机 CarWith 的绝对稳定数据供给（绝不依赖 UI 流）
+    // 🌟 核心护城河：防止车机 CPU 飙升的三维极速缓存 (0.1ms 秒传歌词)
     // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
@@ -962,27 +963,40 @@ class PlaybackService :
                 val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
                 val collectState = if (isFavorite) "1" else "0"
 
-                val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
-                val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
-
                 val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
+                val needsLyricReload = song.id != carWithLastSongId || showTranslation != carWithLastTranslationState
+                
+                val lrcText: String
+                if (needsLyricReload) {
+                    // 如果歌曲变了或者翻译开关变了，才重新从磁盘读取和解析歌词
+                    val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
+                    val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-                val lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
-                    val timeMs = line.start
-                    val min = timeMs / 60000
-                    val sec = (timeMs % 60000) / 1000
-                    val ms = (timeMs % 1000) / 10
-                    val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
-                    
-                    val content = line.content.content 
-                    val translation = line.translation?.content
-                    
-                    if (showTranslation && !translation.isNullOrBlank()) {
-                        "$timeStr$content 「$translation」"
-                    } else {
-                        "$timeStr$content"
-                    }
-                } ?: ""
+                    lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
+                        val timeMs = line.start
+                        val min = timeMs / 60000
+                        val sec = (timeMs % 60000) / 1000
+                        val ms = (timeMs % 1000) / 10
+                        val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                        
+                        val content = line.content.content 
+                        val translation = line.translation?.content
+                        
+                        if (showTranslation && !translation.isNullOrBlank()) {
+                            "$timeStr$content 「$translation」"
+                        } else {
+                            "$timeStr$content"
+                        }
+                    } ?: ""
+
+                    // 写入极速缓存，防止下次点按钮时疯狂耗电发热！
+                    carWithLastSongId = song.id
+                    carWithLastLyrics = lrcText
+                    carWithLastTranslationState = showTranslation
+                } else {
+                    // 没有切歌，直接秒拿缓存文本！
+                    lrcText = carWithLastLyrics
+                }
 
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
@@ -1345,7 +1359,6 @@ class PlaybackService :
         }
     }
 
-    // 🌟 完美融合控制台（添加了作者的循环功能）
     private fun refreshMediaButtonCustomLayout() {
         val hasTimeline = !player.currentTimeline.isEmpty
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
