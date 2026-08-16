@@ -148,12 +148,13 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 🌟 极度压缩的顶部信息栏：对齐状态栏，极致挤压高度 -->
+            <!-- 🌟 重构的顶部信息栏：横向排列，左侧文字权重 1 铺满，右侧放收藏按钮 -->
             <LinearLayout
                 android:id="@+id/lyricsTopHeader"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
                 android:layout_marginTop="2dp"
                 android:layout_marginStart="16dp"
                 android:layout_marginEnd="16dp"
@@ -161,32 +162,51 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent">
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongTitleText"
-                    android:layout_width="match_parent"
+                <!-- 垂直文字块：包裹歌名和歌手 -->
+                <LinearLayout
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textStyle="bold"
-                    android:textSize="18sp"
-                    android:includeFontPadding="false"
-                    android:textColor="?android:attr/textColorPrimary"
-                    tools:text="歌曲名称" />
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginEnd="12dp">
 
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/lyricsSongArtistText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="0dp"
-                    android:singleLine="true"
-                    android:ellipsize="end"
-                    android:textSize="14sp"
-                    android:includeFontPadding="false"
-                    android:textColor="?android:attr/textColorSecondary"
-                    tools:text="歌手名称" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/lyricsSongTitleText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:singleLine="true"
+                        android:ellipsize="end"
+                        android:textStyle="bold"
+                        android:textSize="18sp"
+                        android:includeFontPadding="false"
+                        android:textColor="?android:attr/textColorPrimary"
+                        tools:text="歌曲名称" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/lyricsSongArtistText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="0dp"
+                        android:singleLine="true"
+                        android:ellipsize="end"
+                        android:textSize="14sp"
+                        android:includeFontPadding="false"
+                        android:textColor="?android:attr/textColorSecondary"
+                        tools:text="歌手名称" />
+                </LinearLayout>
+
+                <!-- 移放至顶部的收藏按钮 (适当上调明度至 0.6 以搭配文字) -->
+                <ImageView
+                    android:id="@+id/lyricsFavoriteButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:padding="4dp"
+                    android:alpha="0.5"
+                    android:src="@drawable/ic_favorite_outline_24dp"
+                    android:background="?attr/selectableItemBackgroundBorderless" />
             </LinearLayout>
 
-            <!-- 歌词容器：最大限度占用空间 -->
+            <!-- 歌词容器 -->
             <androidx.fragment.app.FragmentContainerView
                 android:id="@+id/rightLyricsFragment"
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
@@ -198,7 +218,7 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 右下角悬浮胶囊 -->
+            <!-- 右下角悬浮胶囊：现在仅剩“下一首” -->
             <LinearLayout
                 android:id="@+id/lyricsFloatingCapsule"
                 android:layout_width="wrap_content"
@@ -211,21 +231,11 @@
                 app:layout_constraintEnd_toEndOf="parent">
 
                 <ImageView
-                    android:id="@+id/lyricsFavoriteButton"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:padding="6dp"
-                    android:layout_marginBottom="4dp"
-					android:alpha="0.3"
-                    android:src="@drawable/ic_favorite_outline_24dp"
-                    android:background="?attr/selectableItemBackgroundBorderless" />
-
-                <ImageView
                     android:id="@+id/lyricsNextButton"
                     android:layout_width="36dp"
                     android:layout_height="36dp"
                     android:padding="6dp"
-					android:alpha="0.3"
+                    android:alpha="0.3"
                     android:src="@drawable/ic_next_24dp"
                     android:background="?attr/selectableItemBackgroundBorderless" />
             </LinearLayout>
