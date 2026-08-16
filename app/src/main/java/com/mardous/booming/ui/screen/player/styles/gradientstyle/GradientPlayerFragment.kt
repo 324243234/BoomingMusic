@@ -258,6 +258,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
+    // 🌟 由于 Gradient 使用的是 PopupMenu 而非 Toolbar，这里是唯一能突破系统限制接管点击的地方
     private fun hookPopupMenu() {
         val popup = controlsFragment.popupMenu ?: return
         try {
@@ -451,16 +452,17 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        
+                        // 🌟 同步左上角歌曲信息，修复原属性报错问题
                         binding.lyricsSongTitleText?.text = song.title
                         
-                        // 🌟 核心修复：完全规避找不到扩展函数的编译报错，使用最安全的原生属性获取
-                        val artist = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) {
-                            song.albumArtistName
+                        val artistStr = if (Preferences.preferAlbumArtistName) {
+                            // song.albumArtistName 可能不存在或为空，安全回退
+                            val albumArtist = song.albumArtistName
+                            if (albumArtist.isNullOrEmpty()) song.artistName else albumArtist
                         } else {
                             song.artistName
                         }
-                        binding.lyricsSongArtistText?.text = artist
+                        binding.lyricsSongArtistText?.text = artistStr
 
                         launch(Dispatchers.IO) {
                             val isFav = repository.isSongFavorite(song.id)
@@ -533,15 +535,18 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val oldMaskColor = binding.mask?.backgroundTintList?.defaultColor ?: Color.TRANSPARENT
         val oldPrimaryTextColor = binding.soundSettingsButton?.iconTint?.defaultColor ?: Color.WHITE
 
-        // 🌟 核心修复：使用官方原生的 ColorUtils 代替找不到的 withAlpha 扩展
-        val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178) // 178 对应大约 70% 的透明度
+        // 🌟 修复 Color 扩展找不到的编译错误，使用 Android 原生 ColorUtils 处理透明度
+        val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
 
         val targets = mutableListOf<PlayerTintTarget>()
+        
+        // 🌟 保留原主题最核心的动态颜色提取锚点着色
         binding.colorBackground?.let { targets.add(it.surfaceTintTarget(scheme.surfaceColor)) }
         binding.mask?.let { targets.add(it.tintTarget(oldMaskColor, scheme.surfaceColor)) }
         
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         
+        // 🌟 左上角信息区动态变色
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         
@@ -581,6 +586,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play() 
         
+        // 🌟 在 Fragment 准备好显示时，执行对 PopupMenu 的接管操作
         if (!isMenuHooked) {
             binding.root.post {
                 hookPopupMenu()

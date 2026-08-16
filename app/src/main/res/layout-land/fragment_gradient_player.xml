@@ -9,11 +9,13 @@
     android:clickable="true"
     android:focusable="true">
 
+    <!-- 🌟 原作者的动态取色锚点，已完美保留 -->
     <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/colorBackground"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <!-- ================= 左侧区域 (纯净封面/视频) ================= -->
+        <!-- ================= 左侧区域 (1:1 封面 / 动态视频) ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playerAlbumCoverFragment"
             android:name="com.mardous.booming.ui.screen.player.cover.CoverPagerFragment"
@@ -50,7 +52,7 @@
             app:layout_constraintTop_toTopOf="@id/playerAlbumCoverFragment"
             tools:backgroundTint="?colorSurface"/>
 
-        <!-- ================= 主控制台 ================= -->
+        <!-- ================= 右侧主控制台 ================= -->
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/playbackControlsFragment"
             android:name="com.mardous.booming.ui.screen.player.styles.gradientstyle.GradientPlayerControlsFragment"
@@ -72,6 +74,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintBottom_toBottomOf="parent">
 
+            <!-- 原有按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/openQueueButton"
                 style="?materialIconButtonStyle"
@@ -90,6 +93,16 @@
                 app:icon="@drawable/ic_lyrics_outline_24dp"
                 app:iconTint="?colorOnSurface" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/soundSettingsButton"
+                style="?materialIconButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="2dp"
+                app:icon="@drawable/ic_volume_up_24dp"
+                app:iconTint="?colorOnSurface" />
+
+            <!-- 新增横屏快捷按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/goToArtistButton"
                 style="?materialIconButtonStyle"
@@ -118,15 +131,6 @@
                 app:iconTint="?colorOnSurface" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/soundSettingsButton"
-                style="?materialIconButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="2dp"
-                app:icon="@drawable/ic_volume_up_24dp"
-                app:iconTint="?colorOnSurface" />
-
-            <com.google.android.material.button.MaterialButton
                 android:id="@+id/equalizerButton"
                 style="?materialIconButtonStyle"
                 android:layout_width="wrap_content"
@@ -136,7 +140,7 @@
                 app:iconTint="?colorOnSurface" />
         </LinearLayout>
 
-        <!-- ================= 右侧沉浸式区域 ================= -->
+        <!-- ================= 右侧沉浸式区域 (点击封面后显示) ================= -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/rightLyricsContainer"
             android:layout_width="0dp"
@@ -147,7 +151,7 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 🌟 核心：歌词正左上方显示的歌曲信息，歌名在上歌手在下，限制最大宽度 -->
+            <!-- 🌟 极简歌曲信息行：左上方显示，歌名在上歌手在下，限制最大宽度自动截断 -->
             <LinearLayout
                 android:id="@+id/lyricsTopHeader"
                 android:layout_width="0dp"
@@ -183,7 +187,7 @@
                     tools:text="歌手名称" />
             </LinearLayout>
 
-            <!-- 100% 纵向铺满歌词，顶部放置于信息行下方 -->
+            <!-- 歌词控件：100% 铺满右侧，位于信息行下方 -->
             <androidx.fragment.app.FragmentContainerView
                 android:id="@+id/rightLyricsFragment"
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
