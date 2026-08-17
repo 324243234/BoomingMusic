@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Christians Mart¨ªnez Alvarado
+ * Copyright (c) 2024 Christians MartÃ­nez Alvarado
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -102,11 +102,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private var wrappedAdapter: RecyclerView.Adapter<*>? = null
     private var recyclerViewDragDropManager: RecyclerViewDragDropManager? = null
 
-    private var isFirstLoad = true
-    
-    // ?? ĞÔÄÜ»¤³ÇºÓ£º¼ÇÂ¼×îºóÒ»´Î³É¹¦±£´æµÄÊı¾İÌØÕ÷Âë£¬·ÀÖ¹ÎŞĞ§ÖØ¸´ I/O ¶ÁĞ´
-    private var lastSyncedSignature: String = ""
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sharedElementEnterTransition = MaterialContainerTransform(requireContext(), true).apply {
@@ -155,18 +150,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             binding.progressIndicator.hide()
             val newSongs = songsEntity.toSongs()
             playlistSongAdapter?.dataSet = newSongs
-            
-            if (isFirstLoad) {
-                isFirstLoad = false
-                // ³õ´Î¼ÓÔØÖ»¼ÆËãÊı¾İÖ¸ÎÆ£¬¾ø¶Ô²»´¥·¢ M3U ±£´æ£¬½ÚÔ¼ËãÁ¦
-                lastSyncedSignature = newSongs.joinToString(",") { it.id.toString() }
-            } else {
-                // Êı¾İ¿â·¢ÉúÔöÉ¾µÈ±ä¶¯Ê±£¬¾­¹ıÌØÕ÷ÂëĞ£ÑéºóÔÙ±£´æ
-                val playlistName = playlist.playlistEntity.playlistName
-                if (playlistName.isNotEmpty() && newSongs.isNotEmpty()) {
-                    syncPlaylistToLocalM3u(playlistName, newSongs, isManualExport = false)
-                }
-            }
+            // ğŸŒŸ å½»åº•ç§»é™¤äº†è¿™é‡Œçš„è‡ªåŠ¨å¯¼å‡ºä»£ç ï¼Œä¸å†æµªè´¹ä»»ä½•è®¡ç®—èµ„æº
         }
         
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
@@ -176,7 +160,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    // ================== ?? ºËĞÄÒıÇæ£º±¾µØÖÃ¶¥ÌØÈ¨ÏµÍ³ ==================
+    // ================== ğŸŒŸ æ ¸å¿ƒå¼•æ“ï¼šæœ¬åœ°ç½®é¡¶ç‰¹æƒç³»ç»Ÿ ==================
 
     private fun getPinnedSongIds(): Set<String> {
         val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
@@ -194,7 +178,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         
         val newlyPinnedSongs = songsToPin.filter { it.id.toString() !in currentPinnedIds }
         if (newlyPinnedSongs.isEmpty()) {
-            Toast.makeText(requireContext(), "Ñ¡ÖĞµÄ¸èÇúÒÑÔÚÖÃ¶¥ÁĞÖĞ", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "é€‰ä¸­çš„æ­Œæ›²å·²åœ¨ç½®é¡¶åˆ—ä¸­", Toast.LENGTH_SHORT).show()
             return
         }
         
@@ -211,9 +195,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         binding.recyclerView.adapter?.notifyDataSetChanged()
         binding.recyclerView.scrollToPosition(0)
         
+        // ä»…ä¿å­˜åœ¨åº”ç”¨å†…æ•°æ®åº“ï¼Œä¸å†™ç‰©ç†æ–‡ä»¶
         playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-        syncPlaylistToLocalM3u(playlist.playlistEntity.playlistName, currentSongs, isManualExport = false)
-        Toast.makeText(requireContext(), "ÒÑÖÃ¶¥ ${newlyPinnedSongs.size} Ê×¸èÇú", Toast.LENGTH_SHORT).show()
+        Toast.makeText(requireContext(), "å·²ç½®é¡¶ ${newlyPinnedSongs.size} é¦–æ­Œæ›²", Toast.LENGTH_SHORT).show()
     }
 
     private fun unpinSongs(songsToUnpin: List<Song>) {
@@ -237,9 +221,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             playlistSongAdapter?.dataSet = currentSongs
             binding.recyclerView.adapter?.notifyDataSetChanged()
             
+            // ä»…ä¿å­˜åœ¨åº”ç”¨å†…æ•°æ®åº“ï¼Œä¸å†™ç‰©ç†æ–‡ä»¶
             playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-            syncPlaylistToLocalM3u(playlist.playlistEntity.playlistName, currentSongs, isManualExport = false)
-            Toast.makeText(requireContext(), "ÒÑÈ¡ÏûÖÃ¶¥", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "å·²å–æ¶ˆç½®é¡¶", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -329,19 +313,18 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-        // ÊÖ¶¯µ¼³ö°´Å¥
+        // ğŸŒŸ å”¯ä¸€è§¦å‘ M3U å¯¼å‡ºçš„å…¥å£ï¼ˆæ‰‹åŠ¨å¯¼å‡ºï¼‰
         if (menuItem.itemId == R.id.action_export_playlist) {
             val currentSongs = playlistSongAdapter?.dataSet
             val playlistName = playlist.playlistEntity.playlistName
             if (!currentSongs.isNullOrEmpty() && playlistName.isNotEmpty()) {
                 syncPlaylistToLocalM3u(playlistName, currentSongs, isManualExport = true)
             } else {
-                Toast.makeText(requireContext(), "²¥·ÅÁĞ±íÎª¿Õ»òÃû³ÆÎŞĞ§£¬ÎŞ·¨µ¼³ö", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "æ’­æ”¾åˆ—è¡¨ä¸ºç©ºæˆ–åç§°æ— æ•ˆï¼Œæ— æ³•å¯¼å‡º", Toast.LENGTH_SHORT).show()
             }
             return true
         }
 
-        // À¹½ØÅÅĞò²Ëµ¥£¬±£»¤ÖÃ¶¥ÌØÈ¨
         val currentSongs = playlistSongAdapter?.dataSet
         if (!currentSongs.isNullOrEmpty()) {
             val pinnedIds = getPinnedSongIds()
@@ -370,8 +353,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 binding.recyclerView.adapter?.notifyDataSetChanged()
                 binding.recyclerView.scrollToPosition(0)
                 
+                // ä»…ä¿å­˜åœ¨åº”ç”¨å†…æ•°æ®åº“
                 playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-                syncPlaylistToLocalM3u(playlist.playlistEntity.playlistName, finalSortedList, isManualExport = false)
                 return true
             }
         }
@@ -417,7 +400,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 true
             }
             R.id.action_fetch_ttml -> {
-                val toast = Toast.makeText(requireContext(), "ÕıÔÚ»ñÈ¡: ${song.title} µÄTTML...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "æ­£åœ¨è·å–: ${song.title} çš„TTML...", Toast.LENGTH_LONG)
                 toast.show()
 
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -431,14 +414,14 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                 val parentDir = songFile.parentFile
                                 if (parentDir != null && parentDir.exists()) {
                                     File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                    Toast.makeText(requireContext(), "TTML »ñÈ¡³É¹¦£¡", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(requireContext(), "TTML è·å–æˆåŠŸï¼", Toast.LENGTH_SHORT).show()
                                     lyricsRepository.clearMemoryCache()
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(requireContext(), "±£´æÊ§°Ü£ºÇë¼ì²é¶ÁĞ´È¨ÏŞ", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "ä¿å­˜å¤±è´¥ï¼šè¯·æ£€æŸ¥è¯»å†™æƒé™", Toast.LENGTH_SHORT).show()
                             }
                         } else {
-                            Toast.makeText(requireContext(), "»ñÈ¡Ê§°Ü£ºÈ«ÍøÎ´ÕÒµ½¸Ã¸èÇúµÄÖğ×Ö¸è´Ê", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "è·å–å¤±è´¥ï¼šå…¨ç½‘æœªæ‰¾åˆ°è¯¥æ­Œæ›²çš„é€å­—æ­Œè¯", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -464,7 +447,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             }
             R.id.action_fetch_ttml -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "ÕıÔÚºóÌ¨Îª ${songs.size} Ê×¸èÇú»ñÈ¡ TTML...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "æ­£åœ¨åå°ä¸º ${songs.size} é¦–æ­Œæ›²è·å– TTML...", Toast.LENGTH_LONG)
                     toast.show()
 
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -488,7 +471,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             lyricsRepository.clearMemoryCache()
-                            Toast.makeText(requireContext(), "ÅúÁ¿»ñÈ¡Íê³É: ³É¹¦ $successCount/${songs.size} Ê×", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "æ‰¹é‡è·å–å®Œæˆ: æˆåŠŸ $successCount/${songs.size} é¦–", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -504,32 +487,21 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
     
     /**
-     * ?? Ç¿ÖÆÎïÀí¸²¸ÇÍ¬²½ M3U£º×Ô´ø·ÀĞ¹Â©Óë°´Ğè¶ÁĞ´ÒıÇæ
+     * ğŸŒŸ å¼ºåˆ¶ç‰©ç†è¦†ç›–åŒæ­¥ M3U æ–¹æ³•
+     * åªåœ¨æ‰‹åŠ¨ç‚¹å‡»å¯¼å‡ºæ—¶è§¦å‘ï¼Œå½»åº•ä¿®å¤å¯¼å‡ºâ€œå¹½çµç¼“å­˜â€ Bugï¼Œå®Œå…¨éš”ç»æ€§èƒ½æµªè´¹
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
         if (playlistName.isBlank() || songs.isEmpty()) return
 
-        // 1. Éú³Éµ±Ç°µÄ¾«È·Êı¾İÖ¸ÎÆ
-        val currentSignature = songs.joinToString(",") { it.id.toString() }
-        
-        // 2. Ö»ÓĞµ±ĞòÁĞÕæÕı·¢Éú±ä»¯£¨»òÕßÊÇÊÖ¶¯Ç¿ĞĞµ¼³ö£©Ê±²Å·ÅĞĞ£¬±ÜÃâÈÎºÎÎŞÒâÒåµÄºÄµçºÍÔËËã£¡
-        if (!isManualExport && currentSignature == lastSyncedSignature) {
-            return
-        }
-        
-        // 3. ¸üĞÂÖ¸ÎÆ£¬·ÀÖ¹ÖØ¸´Ö´ĞĞ
-        lastSyncedSignature = currentSignature
-
-        // 4. ·ÀĞ¹Â©Éî¿½±´£º²¶»ñ°²È«¶ÔÏó£¬ÇĞ¶ÏÓë UI ¿Ø¼şµÄÒıÓÃÁ´
         val appContext = requireContext().applicationContext
-        val safePlaylistName = playlistName
-        val safeSongs = songs.toList() // ?? ±ØĞëÉî¿½±´£¬·ÀÖ¹ÔÚºóÌ¨Ğ´ÎÄ¼şÊ±±» UI Ïß³ÌÍ¬Ê±ĞŞ¸Äµ¼ÖÂ Crash
+        val safeSongs = songs.toList() // æ·±æ‹·è´é˜²å¹¶å‘å´©æºƒ
 
-        // 5. GlobalScope ·ÅĞĞ£ºÔÚºóÌ¨¶ÀÁ¢Ïß³Ì¾ø¶ÔĞ´Íê£¬²»¹Ü Fragment ÊÇ·ñÏú»Ù
+        // ğŸŒŸ ä½¿ç”¨ GlobalScope ä¿è¯å“ªæ€•åˆšç‚¹å®Œä¿å­˜å°±é€€å‡ºé¡µé¢ï¼Œåå°å†™ç›˜ä¹Ÿç»ä¸ä¸­æ–­
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
             try {
                 val m3uContent = StringBuilder()
+                // å¼ºåˆ¶ä½¿ç”¨ \r\n æ ‡å‡†æ¢è¡Œï¼Œç¡®ä¿è½¦æœºã€ä¸‰æ–¹æ’­æ”¾å™¨ 100% è¯†åˆ«ä¸æˆªæ–­
                 m3uContent.append("#EXTM3U\r\n")
                 for (song in safeSongs) {
                     val durationSec = song.duration / 1000
@@ -543,17 +515,17 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     playlistDir.mkdirs() 
                 }
 
-                val safeFileName = safePlaylistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
                 val m3uFile = File(playlistDir, "$safeFileName.m3u")
                 
-                // ÎïÀí¼¶¸²¸Ç
+                // ğŸŒŸ æœ€å¼ºç‰©ç†æˆªæ–­å¤å†™å¼•æ“ï¼šæœç» M3U æ–‡ä»¶å¹½çµç¼“å­˜å’Œæ–‡ä»¶æœ«å°¾æ®‹ç•™ä¹±ç 
                 java.io.FileOutputStream(m3uFile, false).use { fos ->
                     fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
                     fos.flush()
-                    fos.fd.sync() 
+                    fos.fd.sync() // ç»å¯¹å¼ºè¿« Linux å†…æ ¸å°†æ•°æ®ç ¸å‘ç‰©ç†é—ªå­˜
                 }
 
-                // Ç¿ÖÆ´¥·¢ Android É¨Ãè£¬ÈÃ³µ»úË²¼ä·¢ÏÖ¸Ä±ä
+                // å¼ºåˆ¶è¦æ±‚ Android MediaStore é©¬ä¸Šæ‰«ææ­¤æ–‡ä»¶ï¼Œç²‰ç¢å¯¼å…¥æ—¶è¯»å‡ºæ—§æ•°æ®çš„ Bug
                 MediaScannerConnection.scanFile(
                     appContext,
                     arrayOf(m3uFile.absolutePath),
@@ -565,7 +537,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             appContext, 
-                            "²¥·ÅÁĞ±íÒÑÎïÀí¸²¸ÇÖÁ:\n${m3uFile.absolutePath}", 
+                            "æ’­æ”¾åˆ—è¡¨å·²ç‰©ç†è¦†ç›–è‡³:\n${m3uFile.absolutePath}", 
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -574,7 +546,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 e.printStackTrace()
                 if (isManualExport) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(appContext, "Í¬²½Ê§°Ü: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(appContext, "å¯¼å‡ºå¤±è´¥: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -584,15 +556,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     override fun onPause() {
         recyclerViewDragDropManager?.cancelDrag()
         playlistSongAdapter?.saveSongs(playlist.playlistEntity)
-        
-        // ÖÕ¼«¶µµ×£ºµ±ÓÃ»§Àë¿ªÒ³ÃæÊ±³¢ÊÔÍ¬²½¡£
-        // £¨ÒÀ¿¿Êı¾İÌØÕ÷Âë `lastSyncedSignature` À¹½Ø£¬Èç¹ûÄãÃ»Åö¹ıÁĞ±í£¬´Ëµ÷ÓÃ½«ÏûºÄ 0 ĞÔÄÜÖ±½Ó·µ»Ø£©
-        val currentSongs = playlistSongAdapter?.dataSet
-        val playlistName = playlist.playlistEntity.playlistName
-        if (!currentSongs.isNullOrEmpty() && playlistName.isNotEmpty()) {
-            syncPlaylistToLocalM3u(playlistName, currentSongs, isManualExport = false)
-        }
-        
+        // å½»åº•ç§»é™¤äº†è¿™é‡Œçš„è‡ªåŠ¨å…œåº•è¦†ç›–ï¼Œä¸å†æµªè´¹ä»»ä½•æ€§èƒ½ï¼
         super.onPause()
     }
 
