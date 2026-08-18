@@ -201,7 +201,6 @@ fun LyricsScreen(
 
                         Box(modifier = Modifier.fillMaxSize()) {
                             AsyncImage(
-                                // 💡 使用 200x200 下采样以节约大量 GPU 计算，配合 crossfade 让切歌背景更丝滑
                                 model = ImageRequest.Builder(context)
                                     .data(song)
                                     .size(200)
@@ -269,20 +268,41 @@ fun CoverLyricsScreen(
     val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
     val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
     val uiState by lyricsViewModel.lyricsUiState.collectAsState()
+    val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    // 🌟 修复：声明 currentScreen 变量获取当前的播放器主题
     val currentScreen = Preferences.nowPlayingScreen
-	val isDefaultTheme = Preferences.nowPlayingScreen == NowPlayingScreen.Default
     val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient)
 
     val translationKey = "lyrics_show_translation"
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+
+    // 🌟 极致稳定的防混淆探测引擎：物理文件寻址，不涉及任何对象反射
+    var hasTranslation by remember(song, uiState) { mutableStateOf(false) }
+    LaunchedEffect(song, uiState) {
+        if (song == null) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            var found = false
+            try {
+                // 读取缓存于本地的 TTML 物理文件（100%安全，不受 R8 影响，不占内存）
+                val songFile = java.io.File(song!!.data)
+                val parent = songFile.parentFile
+                if (parent != null && parent.exists()) {
+                    val ttmlFile = java.io.File(parent, "${songFile.nameWithoutExtension}.ttml")
+                    if (ttmlFile.exists()) {
+                        // 使用流式极速扫描，遇到目标字符立即中断跳出
+                        found = ttmlFile.useLines { lines -> lines.any { it.contains("x-translation") } }
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+            hasTranslation = found
+        }
+    }
 
     PlayerTheme(playerColorScheme) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -310,29 +330,11 @@ fun CoverLyricsScreen(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    .padding(end = 24.dp, bottom = 16.dp), 
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(end = 24.dp, bottom = 24.dp), // 🌟 恢复标准的底部安全距离
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 1. 翻译按钮
-                IconButton(
-                    modifier = Modifier.size(36.dp),
-                    onClick = {
-                        try {
-                            val newState = !isTranslationEnabled
-                            isTranslationEnabled = newState
-                            prefs.edit().putBoolean(translationKey, newState).apply()
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
-                ) {
-                    Text(
-                        text = "译",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
-                    )
-                }
-
-                // 2. 放大按钮
+                // 1. 放大按钮
                 if (!hideExpandButton) {
                     FilledIconButton(
                         modifier = Modifier.size(36.dp), 
@@ -346,6 +348,26 @@ fun CoverLyricsScreen(
                             painter = painterResource(R.drawable.ic_open_in_full_24dp),
                             contentDescription = stringResource(R.string.action_lyrics_editor),
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // 2. 翻译按钮 (根据是否含翻译智能显示/隐藏)
+                if (hasTranslation) {
+                    IconButton(
+                        modifier = Modifier.size(36.dp),
+                        onClick = {
+                            try {
+                                val newState = !isTranslationEnabled
+                                isTranslationEnabled = newState
+                                prefs.edit().putBoolean(translationKey, newState).apply()
+                            } catch (e: Exception) { e.printStackTrace() }
+                        }
+                    ) {
+                        Text(
+                            text = "译",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
                         )
                     }
                 }
@@ -372,21 +394,17 @@ private fun LyricsSurface(
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     
-    // 🌡️ 手机全局温度雷达
     var isOverheating by remember { mutableStateOf(false) }
-    // 🔋 电量雷达
     var isLowBattery by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         
-        // 🌟 修复一：通过粘性广播瞬间读取初始电量，避免刚打开 App 时死等掉电
         val initialIntent = context.registerReceiver(null, filter)
         initialIntent?.let { intent ->
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
             if (level != -1 && scale != -1) {
-                // 阈值：低于等于 20%
                 isLowBattery = (level * 100 / scale.toFloat()) <= 20f
             }
         }
@@ -408,14 +426,12 @@ private fun LyricsSurface(
     DisposableEffect(Unit) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         
-        // 🌟 修复二：初始状态同步抓取
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             isOverheating = (powerManager?.currentThermalStatus ?: 0) >= PowerManager.THERMAL_STATUS_SEVERE
         }
 
         val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             PowerManager.OnThermalStatusChangedListener { status ->
-                // 阈值：修改为 SEVERE (严重发热) 才触发自我降频护盾
                 isOverheating = status >= PowerManager.THERMAL_STATUS_SEVERE
             }
         } else null
@@ -531,13 +547,11 @@ private fun LyricsSurface(
 
                         if (isPlaying && isVisible) {
                             if (isPowerSaveMode || isOverheating || isLowBattery) {
-                                // 🧊 【阶段一：自保降频模式 (30fps)】
                                 val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                                 val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
                                 lyricsViewState.updatePosition(smoothPosition)
                                 delay(33L)
                             } else {
-                                // 🔥 【阶段二：火力全开模式 (VSYNC)】
                                 withFrameNanos {
                                     val elapsed = SystemClock.elapsedRealtime() - baseRealtime
                                     val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
@@ -545,7 +559,6 @@ private fun LyricsSurface(
                                 }
                             }
                         } else {
-                            // 💤 【阶段三：深度休眠模式 (0fps)】
                             delay(100L)
                         }
 

@@ -242,7 +242,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     }
 
     private fun setupNewActionButtons() {
-        binding.lyricsNextButton?.setOnClickListener { playerViewModel.seekToNext() }
         binding.lyricsFavoriteButton?.setOnClickListener {
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
@@ -258,17 +257,14 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         toggleFormatBtn?.setOnClickListener { toggleLyricsFormat(toggleFormatBtn) }
     }
 
-    // ğŸŒŸ ç»ˆæè§£å†³æ–¹æ¡ˆï¼šå®Œå…¨æ‘’å¼ƒå±é™©åå°„ï¼Œç›´æ¥åˆ©ç”¨åŸç”Ÿ API æ¥ç®¡ PopupMenu ä¸‹çš„å„ä¸ª MenuItem
     private fun setupPopupMenu() {
         val popup = controlsFragment.popupMenu ?: return
         val menu = popup.menu
 
-        // åˆå§‹åŒ–åŠ¨æ€å°é¢èœå•æ ‡é¢˜
         val videoToggleItem = menu.findItem(R.id.action_toggle_video_cover)
         val isVideoEnabled = sharedPreferences.getBoolean("pref_enable_video_cover", true)
-        videoToggleItem?.title = if (isVideoEnabled) "åŠ¨æ€å°é¢: å…³é—­" else "åŠ¨æ€å°é¢: å¼€å¯"
+        videoToggleItem?.title = if (isVideoEnabled) "¶¯Ì¬·âÃæ: ¹Ø±Õ" else "¶¯Ì¬·âÃæ: ¿ªÆô"
 
-        // å¼ºåŠ›ç»‘å®šæ¯ä¸€ä¸ªè‡ªå®šä¹‰äº‹ä»¶ï¼ç›´æ¥ç”Ÿæ•ˆï¼
         menu.findItem(R.id.action_toggle_lyrics_format)?.setOnMenuItemClickListener {
             toggleLyricsFormat()
             true
@@ -291,13 +287,13 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         
         menu.findItem(R.id.action_delete_from_device)?.setOnMenuItemClickListener {
             playerViewModel.currentSongFlow.value?.let { song -> deleteAssociatedLyricsFiles(song, false) }
-            false // è¿”å› falseï¼Œè®©åŸç‰ˆçš„åˆ é™¤å¼¹çª—é€»è¾‘ä¹Ÿèƒ½é¡ºåˆ©æ‰§è¡Œ
+            false 
         }
     }
 
     private fun fetchTtml() {
         playerViewModel.currentSongFlow.value?.let { currentSong ->
-            val toast = Toast.makeText(context, "æ­£åœ¨æ£€ç´¢å¹¶è·å–é€å­— TTML...", Toast.LENGTH_LONG)
+            val toast = Toast.makeText(context, "ÕıÔÚ¼ìË÷²¢»ñÈ¡Öğ×Ö TTML...", Toast.LENGTH_LONG)
             toast.show()
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
@@ -309,12 +305,12 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                             val parentDir = songFile.parentFile
                             if (parentDir != null && parentDir.exists()) {
                                 File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                Toast.makeText(context, "è·å–æˆåŠŸï¼å·²ä¿å­˜ä¸º TTML", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "»ñÈ¡³É¹¦£¡ÒÑ±£´æÎª TTML", Toast.LENGTH_SHORT).show()
                                 lyricsRepository.clearMemoryCache()
                                 lyricsViewModel.updateSong(currentSong)
                             }
-                        } catch (e: Exception) { Toast.makeText(context, "ä¿å­˜æ–‡ä»¶å¤±è´¥ï¼Œè¯·æ£€æŸ¥è¯»å†™æƒé™", Toast.LENGTH_SHORT).show() }
-                    } else { Toast.makeText(context, "è·å–å¤±è´¥ï¼šå…¨ç½‘æœªæ‰¾åˆ°è¯¥æ­Œæ›²çš„é€å­—æ­Œè¯", Toast.LENGTH_SHORT).show() }
+                        } catch (e: Exception) { Toast.makeText(context, "±£´æÎÄ¼şÊ§°Ü£¬Çë¼ì²é¶ÁĞ´È¨ÏŞ", Toast.LENGTH_SHORT).show() }
+                    } else { Toast.makeText(context, "»ñÈ¡Ê§°Ü£ºÈ«ÍøÎ´ÕÒµ½¸Ã¸èÇúµÄÖğ×Ö¸è´Ê", Toast.LENGTH_SHORT).show() }
                 }
             }
         }
@@ -323,7 +319,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
     private fun toggleVideoCover(item: MenuItem) {
         val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
         sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-        item.title = if (newState) "åŠ¨æ€å°é¢: å…³é—­" else "åŠ¨æ€å°é¢: å¼€å¯"
+        item.title = if (newState) "¶¯Ì¬·âÃæ: ¹Ø±Õ" else "¶¯Ì¬·âÃæ: ¿ªÆô"
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
 
@@ -364,7 +360,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 
                 withContext(Dispatchers.Main) {
                     if (onlyTtml) {
-                        val msg = if (deletedTtml) "TTML æ­Œè¯æ–‡ä»¶å·²å½»åº•åˆ é™¤" else "æœªæ‰¾åˆ°åŒ¹é…çš„æœ¬åœ° TTML æ–‡ä»¶"
+                        val msg = if (deletedTtml) "TTML ¸è´ÊÎÄ¼şÒÑ³¹µ×É¾³ı" else "Î´ÕÒµ½Æ¥ÅäµÄ±¾µØ TTML ÎÄ¼ş"
                         context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
                         if (deletedTtml) {
                             lyricsRepository.clearMemoryCache()
@@ -377,7 +373,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    context?.let { Toast.makeText(it, "å…³è”æ–‡ä»¶æ¸…ç†å¤±è´¥ï¼Œå­˜å‚¨è¯»å†™å¼‚å¸¸", Toast.LENGTH_SHORT).show() }
+                    context?.let { Toast.makeText(it, "¹ØÁªÎÄ¼şÇåÀíÊ§°Ü£¬´æ´¢¶ÁĞ´Òì³£", Toast.LENGTH_SHORT).show() }
                 }
             }
         }
@@ -389,7 +385,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         lyricsRepository.clearMemoryCache()
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
-        context?.let { Toast.makeText(it, if (isCurrentlyTtml) "å·²åˆ‡æ¢ä¸º LRC æ»šåŠ¨æ­Œè¯" else "å·²åˆ‡æ¢ä¸º TTML é€å­—æ­Œè¯", Toast.LENGTH_SHORT).show() }
+        context?.let { Toast.makeText(it, if (isCurrentlyTtml) "ÒÑÇĞ»»Îª LRC ¹ö¶¯¸è´Ê" else "ÒÑÇĞ»»Îª TTML Öğ×Ö¸è´Ê", Toast.LENGTH_SHORT).show() }
         updateFormatIcon(btn)
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
@@ -540,7 +536,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         
         binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
-        binding.lyricsNextButton?.let { targets.add(it.tintTarget(it.imageTintList?.defaultColor ?: oldPrimaryTextColor, scheme.onSurfaceColor)) }
+        // ?? ÒÆ³ıÁËÔ­ÓĞµÄ lyricsNextButton È¾É«Ä¿±ê
         
         binding.openQueueButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
         binding.showLyricsButton?.iconButtonTintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)?.let { t -> targets.add(t) }
@@ -575,7 +571,6 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
         super.onResume()
         if (!isDeviceStressed()) canvasExoPlayer?.play() 
         
-        // ğŸŒŸ å°†äº‹ä»¶å¼ºåŠ›ç»‘å®šæ¨è¿Ÿåˆ° Fragment æ¸²æŸ“å®Œæ¯•ä¸”èœå•å·²è£…è½½ä¹‹åæ‰§è¡Œ
         if (!isMenuHooked) {
             binding.root.post {
                 setupPopupMenu()

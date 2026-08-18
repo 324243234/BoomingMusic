@@ -218,27 +218,7 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- 右下角悬浮胶囊：现在仅剩“下一首” -->
-            <LinearLayout
-                android:id="@+id/lyricsFloatingCapsule"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:gravity="center"
-                android:layout_marginEnd="24dp"
-                android:layout_marginBottom="50dp"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent">
-
-                <ImageView
-                    android:id="@+id/lyricsNextButton"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:padding="6dp"
-                    android:alpha="0.3"
-                    android:src="@drawable/ic_next_24dp"
-                    android:background="?attr/selectableItemBackgroundBorderless" />
-            </LinearLayout>
+            
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
