@@ -169,11 +169,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
 
         binding.leftFavoriteButton?.setOnClickListener {
-           // 1. 乐观更新（按钮瞬间变色，不卡顿）
             val isFav = it.tag as? Boolean ?: false
             updateFavoriteIcon(!isFav)
-            
-            // 2. 官方通信：通知 Service 写数据库并广播全局状态
             playerViewModel.toggleFavorite()
         }
         binding.leftNextButton?.setOnClickListener { playerViewModel.seekToNext() }
@@ -423,6 +420,62 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         }
     }
 
+    // 🌟 核心：一键拉黑并清除动封逻辑
+    private fun addToVideoBlacklist(song: com.mardous.booming.data.model.Song) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
+                val audioFileName = songFile.nameWithoutExtension
+
+                val possibleNamesLower = listOf(
+                    audioFileName.lowercase(),
+                    "${song.artistName} - ${song.title}".lowercase(),
+                    "${song.title} - ${song.artistName}".lowercase()
+                ).filter { it.isNotBlank() }
+
+                // 1. 删除目前可能存在的动态视频
+                val dirsToScan = listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() })
+                for (dir in dirsToScan) {
+                    val filesInDir = dir.listFiles() ?: emptyArray()
+                    for (file in filesInDir) {
+                        val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
+                        if (ext == "mp4" || ext == "webm") {
+                            val fileNameLower = file.nameWithoutExtension.lowercase()
+                            if (possibleNamesLower.contains(fileNameLower)) {
+                                if (file.isDirectory) file.deleteRecursively() else file.delete()
+                            }
+                        }
+                    }
+                }
+
+                // 2. 在 .MP4 隐藏目录强制创建一个同名的黑名单文件夹
+                val hiddenVideoDir = File(parentDir, ".MP4")
+                if (!hiddenVideoDir.exists()) hiddenVideoDir.mkdirs()
+                
+                val blacklistFolder = File(hiddenVideoDir, "$audioFileName.mp4")
+                if (!blacklistFolder.exists()) {
+                    blacklistFolder.mkdirs() // 建立占位符，触发底层 AnimatedCanvasFetcher 秒级拉黑
+                }
+
+                withContext(Dispatchers.Main) {
+                    context?.let { Toast.makeText(it, "已加入动封黑名单，并清理相关视频", Toast.LENGTH_SHORT).show() }
+                    
+                    // 瞬间停止画面，归零缓存
+                    videoFetchJob?.cancel()
+                    canvasExoPlayer?.stop()
+                    canvasExoPlayer?.clearMediaItems()
+                    view?.findViewById<androidx.media3.ui.PlayerView>(R.id.canvasPlayerView)?.alpha = 0f
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    context?.let { Toast.makeText(it, "拉黑失败，存储异常", Toast.LENGTH_SHORT).show() }
+                }
+            }
+        }
+    }
+
     private fun deleteAssociatedLyricsFiles(song: com.mardous.booming.data.model.Song, onlyTtml: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -439,27 +492,21 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 var deletedOther = false
                 val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
                 
-                // 🌟 核心同步更新：把父目录和 .MP4 隐藏目录一起打包进扫描队列
                 val dirsToScan = listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() })
                 
                 for (dir in dirsToScan) {
                     val filesInDir = dir.listFiles() ?: emptyArray()
                     for (file in filesInDir) {
-                        // 🌟 兼顾用户用来做“拉黑占位”的同名文件夹
                         val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
                         if (!targetExtensions.contains(ext)) continue 
                         
                         val fileNameLower = file.nameWithoutExtension.lowercase()
                         if (possibleNamesLower.contains(fileNameLower)) {
-                            
-                            // 如果是用户为了屏蔽视频而创建的占位文件夹，直接连锅端
                             if (file.isDirectory) {
                                 file.deleteRecursively()
                                 if (ext != "ttml") deletedOther = true
                                 continue
                             }
-                            
-                            // 正常文件的极速清空与删除
                             runCatching { 
                                 if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
                                 else file.writeText("") 
@@ -550,6 +597,12 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
             true 
+        }
+
+        // 🌟 新增：动封黑名单逻辑绑定
+        menu.findItem(R.id.action_blacklist_video)?.setOnMenuItemClickListener {
+            playerViewModel.currentSongFlow.value?.let { song -> addToVideoBlacklist(song) }
+            true
         }
         
         menu.findItem(R.id.action_delete_ttml)?.setOnMenuItemClickListener {

@@ -61,6 +61,9 @@
         android:icon="@drawable/ic_album_24dp"
         app:showAsAction="never"/>
 	<item
+        android:id="@+id/action_blacklist_video"
+        android:title="动封黑名单" />
+	<item
 		android:id="@+id/action_add_to_playlist"
 		android:title="@string/action_add_to_playlist"
 		android:icon="@drawable/ic_playlist_add_24dp"
