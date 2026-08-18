@@ -372,7 +372,7 @@ fun CoverLyricsScreen(
                         Text(
                             text = "\u8BD1", 
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 0.6f) 
                         )
                     }
                 }
