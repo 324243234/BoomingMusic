@@ -281,97 +281,81 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 纯内存极速探测引擎 (拒绝任何本地文件 IO，使用双重防混淆策略，并完美规避 LRC 零点陷阱)
+    // 🌟 终极纯内存极速探测引擎 (拒绝文件 IO，完美解决 TTML "null" 陷阱与 LRC 识别瞎点)
     var hasTranslation by remember(uiState) { mutableStateOf(false) }
     
     LaunchedEffect(uiState) {
-        // 使用 Default 线程池处理 CPU 密集型正则和反射，不阻塞 UI 渲染，也不消耗 I/O
         withContext(Dispatchers.Default) {
             var found = false
             try {
                 when (uiState) {
                     is LyricsUiState.Plain -> {
                         val text = (uiState as LyricsUiState.Plain).lyrics
-                        // 1. 严格匹配翻译专属 Tag，拒绝误杀 transition 等常规英文单词
+                        // 1. TTML 标准标记
                         if (text.contains("x-translation", ignoreCase = true)) {
                             found = true
                         } else {
-                            // 2. 极速分析内存中文本，探测 LRC 同时间轴堆叠
+                            // 2. LRC 重复时间轴探测 (🚨 必须加 MULTILINE，否则 ^ 只匹配第一行！)
                             var dupCount = 0
                             val tsSet = mutableSetOf<String>()
-                            val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""")
-                            for (line in text.split('\n')) {
-                                val match = regex.find(line.trim())
-                                if (match != null) {
-                                    val ts = match.value
-                                    // 🚨 防误杀核心：绝对忽略 [00:00.00] 及其变体，因为它们常常是作词/作曲元数据！
-                                    if (!ts.contains("00:00.0")) {
-                                        if (!tsSet.add(ts)) {
-                                            dupCount++
-                                            // 🚨 提升安全阈值：发现 4 次以上非 0 时间轴重复，才断定是真翻译！
-                                            if (dupCount >= 4) { found = true; break }
-                                        }
+                            val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""", RegexOption.MULTILINE)
+                            val matches = regex.findAll(text)
+                            for (match in matches) {
+                                val ts = match.value
+                                // 过滤掉 [00:00.00] 歌曲信息元数据
+                                if (!ts.contains("00:00.0")) {
+                                    if (!tsSet.add(ts)) {
+                                        dupCount++
+                                        if (dupCount >= 3) { found = true; break }
                                     }
                                 }
                             }
                         }
                     }
                     is LyricsUiState.Synced -> {
-                        val syncedLyrics = (uiState as LyricsUiState.Synced).syncedLyrics
+                        // 直接序列化为文本，完全免疫任何 R8 代码混淆和反射失效！
+                        val stateStr = uiState.syncedLyrics.toString()
                         
-                        // 策略 A：标准的 Getter 反射提取（规避 Kotlin 属性私有化报错）
-                        val getLinesMethod = syncedLyrics.javaClass.methods.find { it.name == "getLines" || it.name == "lines" }
-                        val lines = getLinesMethod?.invoke(syncedLyrics) as? List<*>
+                        // 策略 A：探测 TTML 的 trans 字段
+                        // 🚨 防误杀核心：必须提取出值，排除 "trans=null" 或 "trans=" 的空情况
+                        val transRegex = Regex("""(?:trans|translation)=([^,}\]]+)""", RegexOption.IGNORE_CASE)
+                        val transMatches = transRegex.findAll(stateStr)
+                        for (match in transMatches) {
+                            val transVal = match.groupValues[1].trim().replace("\"", "").replace("'", "")
+                            if (transVal != "null" && transVal.isNotEmpty()) {
+                                found = true
+                                break
+                            }
+                        }
                         
-                        if (lines != null && lines.isNotEmpty()) {
-                            val firstLine = lines.firstOrNull { it != null }
-                            if (firstLine != null) {
-                                // 1. 探测对象内部 TTML 特有的 trans 属性
-                                val getTransMethod = firstLine.javaClass.methods.find { it.name.contains("trans", ignoreCase = true) || it.name.contains("getTrans", ignoreCase = true) }
-                                if (getTransMethod != null) {
-                                    found = lines.any { !(getTransMethod.invoke(it) as? String).isNullOrBlank() }
-                                }
-                                
-                                // 2. 探测内存对象内部 LRC 重复时间戳特征
-                                if (!found) {
-                                    val getTimeMethod = firstLine.javaClass.methods.find { it.name.contains("time", ignoreCase = true) || it.name.contains("getTime", ignoreCase = true) || it.name.contains("start", ignoreCase = true) }
-                                    if (getTimeMethod != null) {
-                                        var dupCount = 0
-                                        val timeSet = mutableSetOf<Long>()
-                                        for (line in lines) {
-                                            val timeVal = (getTimeMethod.invoke(line) as? Number)?.toLong() ?: continue
-                                            // 🚨 防误杀核心：时间戳必须大于 0！(排除 metadata)
-                                            if (timeVal > 0L) {
-                                                if (!timeSet.add(timeVal)) {
-                                                    dupCount++
-                                                    if (dupCount >= 4) { found = true; break }
-                                                }
-                                            }
-                                        }
+                        // 策略 B：探测 LRC 被解析为独立行时的重复时间戳
+                        if (!found) {
+                            val timeRegex = Regex("""(?:time|start)[a-zA-Z]*=([^,}\]]+)""", RegexOption.IGNORE_CASE)
+                            val timeMatches = timeRegex.findAll(stateStr)
+                            val timeSet = mutableSetOf<String>()
+                            var dupCount = 0
+                            for (match in timeMatches) {
+                                val tsStr = match.groupValues[1].trim().replace("\"", "").replace("'", "")
+                                // 过滤掉 0 毫秒的元数据时间戳
+                                if (tsStr != "0" && tsStr != "0L" && tsStr != "null" && tsStr.isNotEmpty() && !tsStr.contains("00:00.0")) {
+                                    if (!timeSet.add(tsStr)) {
+                                        dupCount++
+                                        if (dupCount >= 3) { found = true; break }
                                     }
                                 }
                             }
                         }
                         
-                        // 策略 B：对象序列化文本提取（如果被混淆，全靠这一步保底，万无一失）
+                        // 策略 C：探测 LRC 相同时间戳被解析器合并到 text 字段 (\n)
                         if (!found) {
-                            val stateStr = syncedLyrics.toString()
-                            if (stateStr.contains("trans=", ignoreCase = true)) {
-                                found = true
-                            } else {
-                                val timeRegex = Regex("""(?:time|start)=([\d]+)""")
-                                val matches = timeRegex.findAll(stateStr)
-                                val timeSet = mutableSetOf<String>()
-                                var dupCount = 0
-                                for (match in matches) {
-                                    val tsStr = match.groupValues[1]
-                                    // 🚨 防误杀核心：时间戳必须不是 0
-                                    if (tsStr != "0") {
-                                        if (!timeSet.add(tsStr)) {
-                                            dupCount++
-                                            if (dupCount >= 4) { found = true; break }
-                                        }
-                                    }
+                            val textRegex = Regex("""text=([^,}\]]+)""", RegexOption.IGNORE_CASE)
+                            val textMatches = textRegex.findAll(stateStr)
+                            var newlineCount = 0
+                            for (match in textMatches) {
+                                val textVal = match.groupValues[1]
+                                if (textVal.contains("\\n") || textVal.contains("\n")) {
+                                    newlineCount++
+                                    if (newlineCount >= 3) { found = true; break }
                                 }
                             }
                         }
@@ -445,7 +429,6 @@ fun CoverLyricsScreen(
                             } catch (e: Exception) { e.printStackTrace() }
                         }
                     ) {
-                        // 🌟 终极防乱码：使用 "译" 字底层的 Unicode 编码。无论你文件保存成了什么编码，它在手机上绝对只会显示正常的 "译" 字！
                         Text(
                             text = "\u8BD1", 
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
