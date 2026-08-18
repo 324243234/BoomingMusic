@@ -334,7 +334,7 @@ fun CoverLyricsScreen(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 12.dp), 
+                    .padding(end = 16.dp, bottom = 8.dp), 
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

@@ -148,13 +148,11 @@
             app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- 🌟 重构的顶部信息栏：横向排列，左侧文字权重 1 铺满，右侧放收藏按钮 -->
-            <LinearLayout
+            <!-- 🌟 升级的顶部信息栏：采用约束布局打包链，让收藏按钮“动态紧贴”在文字块右侧且垂直居中 -->
+            <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/lyricsTopHeader"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
                 android:layout_marginTop="2dp"
                 android:layout_marginStart="16dp"
                 android:layout_marginEnd="16dp"
@@ -164,11 +162,18 @@
 
                 <!-- 垂直文字块：包裹歌名和歌手 -->
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:id="@+id/lyricsTextContainer"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:orientation="vertical"
-                    android:layout_marginEnd="12dp">
+                    android:layout_marginEnd="12dp"
+                    app:layout_constrainedWidth="true"
+                    app:layout_constraintHorizontal_bias="0"
+                    app:layout_constraintHorizontal_chainStyle="packed"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent">
 
                     <com.google.android.material.textview.MaterialTextView
                         android:id="@+id/lyricsSongTitleText"
@@ -189,13 +194,13 @@
                         android:layout_marginTop="0dp"
                         android:singleLine="true"
                         android:ellipsize="end"
-                        android:textSize="14sp"
+                        android:textSize="15sp"
                         android:includeFontPadding="false"
                         android:textColor="?android:attr/textColorSecondary"
                         tools:text="歌手名称" />
                 </LinearLayout>
 
-                <!-- 移放至顶部的收藏按钮 (适当上调明度至 0.6 以搭配文字) -->
+                <!-- 收藏按钮：紧贴文字块右侧，整体垂直居中 -->
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
                     android:layout_width="32dp"
@@ -203,8 +208,13 @@
                     android:padding="4dp"
                     android:alpha="0.5"
                     android:src="@drawable/ic_favorite_outline_24dp"
-                    android:background="?attr/selectableItemBackgroundBorderless" />
-            </LinearLayout>
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    app:layout_constraintStart_toEndOf="@+id/lyricsTextContainer"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
 
             <!-- 歌词容器 -->
             <androidx.fragment.app.FragmentContainerView
@@ -212,13 +222,11 @@
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginTop="2dp"
+                android:layout_marginTop="6dp"
                 app:layout_constraintTop_toBottomOf="@+id/lyricsTopHeader"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
-
-            
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
