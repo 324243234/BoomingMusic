@@ -1,4 +1,4 @@
-﻿package com.mardous.booming.ui.screen.lyrics
+package com.mardous.booming.ui.screen.lyrics
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -281,21 +281,19 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 极致性能优化引擎：杜绝物理读取，纯内存极速探测 TTML 与 LRC 双格式
+    // 🌟 纯内存极速探测引擎 (拒绝任何本地文件 IO，使用双重防混淆策略)
     var hasTranslation by remember(uiState) { mutableStateOf(false) }
     
     LaunchedEffect(uiState) {
-        // 使用 Default 线程池处理 CPU 密集型正则和反射，不阻塞 UI 渲染，也不消耗 I/O
         withContext(Dispatchers.Default) {
             var found = false
             try {
                 when (uiState) {
                     is LyricsUiState.Plain -> {
                         val text = (uiState as LyricsUiState.Plain).lyrics
-                        if (text.contains("x-translation")) {
+                        if (text.contains("x-translation", ignoreCase = true) || text.contains("trans", ignoreCase = true)) {
                             found = true
                         } else {
-                            // 极速分析内存中文本，探测 LRC 同时间轴堆叠
                             var dupCount = 0
                             val tsSet = mutableSetOf<String>()
                             val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""")
@@ -304,7 +302,7 @@ fun CoverLyricsScreen(
                                 if (match != null) {
                                     if (!tsSet.add(match.value)) {
                                         dupCount++
-                                        if (dupCount >= 3) { found = true; break }
+                                        if (dupCount >= 2) { found = true; break }
                                     }
                                 }
                             }
@@ -312,39 +310,56 @@ fun CoverLyricsScreen(
                     }
                     is LyricsUiState.Synced -> {
                         val syncedLyrics = (uiState as LyricsUiState.Synced).syncedLyrics
-                        val linesField = syncedLyrics.javaClass.declaredFields.find { it.name == "lines" }
-                        if (linesField != null) {
-                            linesField.isAccessible = true
-                            val lines = linesField.get(syncedLyrics) as? List<*>
-                            val firstLine = lines?.firstOrNull { it != null }
-                            
+                        
+                        // 策略 A：标准的 Getter 反射提取（规避 Kotlin 属性私有化报错）
+                        val getLinesMethod = syncedLyrics.javaClass.methods.find { it.name == "getLines" || it.name == "lines" }
+                        val lines = getLinesMethod?.invoke(syncedLyrics) as? List<*>
+                        
+                        if (lines != null && lines.isNotEmpty()) {
+                            val firstLine = lines.firstOrNull { it != null }
                             if (firstLine != null) {
-                                // 1. 探测对象内部 TTML 特有的 trans 属性
-                                val transField = firstLine.javaClass.declaredFields.find { it.name.contains("trans", ignoreCase = true) }
-                                if (transField != null) {
-                                    transField.isAccessible = true
-                                    found = lines.any { !(transField.get(it) as? String).isNullOrBlank() }
+                                val getTransMethod = firstLine.javaClass.methods.find { it.name.contains("trans", ignoreCase = true) || it.name.contains("getTrans", ignoreCase = true) }
+                                if (getTransMethod != null) {
+                                    found = lines.any { !(getTransMethod.invoke(it) as? String).isNullOrBlank() }
                                 }
-                                // 2. 探测内存对象内部 LRC 重复时间戳特征
+                                
                                 if (!found) {
-                                    val timeField = firstLine.javaClass.declaredFields.find { it.name.contains("time", ignoreCase = true) || it.name.contains("start", ignoreCase = true) }
-                                    if (timeField != null) {
-                                        timeField.isAccessible = true
+                                    val getTimeMethod = firstLine.javaClass.methods.find { it.name.contains("time", ignoreCase = true) || it.name.contains("getTime", ignoreCase = true) || it.name.contains("start", ignoreCase = true) }
+                                    if (getTimeMethod != null) {
                                         var dupCount = 0
                                         val timeSet = mutableSetOf<Long>()
                                         for (line in lines) {
-                                            val timeVal = (timeField.get(line) as? Number)?.toLong() ?: continue
+                                            val timeVal = (getTimeMethod.invoke(line) as? Number)?.toLong() ?: continue
                                             if (!timeSet.add(timeVal)) {
                                                 dupCount++
-                                                if (dupCount >= 3) { found = true; break }
+                                                if (dupCount >= 2) { found = true; break }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                        
+                        // 策略 B：对象序列化文本提取（如果被混淆，全靠这一步保底，万无一失）
+                        if (!found) {
+                            val stateStr = syncedLyrics.toString()
+                            if (stateStr.contains("trans=", ignoreCase = true) || stateStr.contains("translation", ignoreCase = true)) {
+                                found = true
+                            } else {
+                                val timeRegex = Regex("""(?:time|start)=([\d]+)""")
+                                val matches = timeRegex.findAll(stateStr)
+                                val timeSet = mutableSetOf<String>()
+                                var dupCount = 0
+                                for (match in matches) {
+                                    if (!timeSet.add(match.groupValues[1])) {
+                                        dupCount++
+                                        if (dupCount >= 2) { found = true; break }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    else -> { found = false }
+                    else -> {}
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -374,12 +389,12 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // 全局悬浮侧边栏 (绝对安全隔离：去除了无效逻辑，贴边优化)
+            // 全局悬浮侧边栏
             Column(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 8.dp), 
+                    .padding(end = 16.dp, bottom = 12.dp), 
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -401,7 +416,7 @@ fun CoverLyricsScreen(
                     }
                 }
 
-                // 2. 翻译按钮 (根据 UI 内存状态 智能秒显/隐藏)
+                // 2. 翻译按钮 (智能显示/隐藏)
                 if (hasTranslation) {
                     IconButton(
                         modifier = Modifier.size(36.dp),
@@ -413,8 +428,9 @@ fun CoverLyricsScreen(
                             } catch (e: Exception) { e.printStackTrace() }
                         }
                     ) {
+                        // 🌟 终极防乱码：使用 "译" 字底层的 Unicode 编码。无论你文件保存成了什么编码，它在手机上绝对只会显示正常的 "译" 字！
                         Text(
-                            text = "译",
+                            text = "\u8BD1", 
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.4f else 1.0f) 
                         )
