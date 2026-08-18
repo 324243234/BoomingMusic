@@ -182,8 +182,8 @@
                 <!-- 🌟 收藏按钮：与【歌名】形成打包链，永远紧跟歌名右侧，并与歌名垂直居中对齐 -->
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="29dp"
+                    android:layout_height="29dp"
                     android:layout_marginStart="8dp"
                     android:padding="4dp"
                     android:alpha="0.5"
@@ -199,7 +199,7 @@
                     android:id="@+id/lyricsSongArtistText"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="2dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textSize="15sp"
@@ -218,7 +218,7 @@
                 android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginTop="7dp"
+                android:layout_marginTop="8dp"
                 app:layout_constraintTop_toBottomOf="@+id/lyricsTopHeader"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
