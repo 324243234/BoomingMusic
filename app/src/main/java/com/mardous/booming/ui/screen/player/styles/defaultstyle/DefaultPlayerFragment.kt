@@ -208,7 +208,6 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             if (isVideoEnabled && !isDeviceStressed()) {
                                 videoFetchJob = launch { 
                                     delay(400) 
-                                    // 🌟 修复：传入 requireContext()
                                     val videoUri = withContext(Dispatchers.IO) {
                                         com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song)
                                     }
@@ -401,10 +400,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
         val isCurrentlyTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         val newFormat = if (isCurrentlyTtml) "lrc" else "ttml"
         
-        // 🌟 【核心修复 1：时序修正】必须先清空内存里的旧格式歌词缓存
         lyricsRepository.clearMemoryCache()
         
-        // 🌟 接着修改配置，瞬间触发 PlaybackService，确保它拿到的绝对是新格式
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
         context?.let { Toast.makeText(it, if (isCurrentlyTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
         playerToolbar.menu?.let { updateMenuTitle(it) }
@@ -440,26 +437,37 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 
                 var deletedTtml = false
                 var deletedOther = false
-                
-                val filesInDir = parentDir.listFiles() ?: emptyArray()
                 val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
                 
-                for (file in filesInDir) {
-                    if (!file.isFile) continue
-                    val ext = file.extension.lowercase()
-                    if (!targetExtensions.contains(ext)) continue 
-                    
-                    val fileNameLower = file.nameWithoutExtension.lowercase()
-                    
-                    if (possibleNamesLower.contains(fileNameLower)) {
-                        runCatching { 
-                            if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
-                            else file.writeText("") 
-                        } 
+                // 🌟 核心同步更新：把父目录和 .MP4 隐藏目录一起打包进扫描队列
+                val dirsToScan = listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() })
+                
+                for (dir in dirsToScan) {
+                    val filesInDir = dir.listFiles() ?: emptyArray()
+                    for (file in filesInDir) {
+                        // 🌟 兼顾用户用来做“拉黑占位”的同名文件夹
+                        val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
+                        if (!targetExtensions.contains(ext)) continue 
                         
-                        if (file.delete() || !file.exists() || file.length() == 0L) {
-                            if (ext == "ttml") deletedTtml = true
-                            else deletedOther = true
+                        val fileNameLower = file.nameWithoutExtension.lowercase()
+                        if (possibleNamesLower.contains(fileNameLower)) {
+                            
+                            // 如果是用户为了屏蔽视频而创建的占位文件夹，直接连锅端
+                            if (file.isDirectory) {
+                                file.deleteRecursively()
+                                if (ext != "ttml") deletedOther = true
+                                continue
+                            }
+                            
+                            // 正常文件的极速清空与删除
+                            runCatching { 
+                                if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
+                                else file.writeText("") 
+                            } 
+                            if (file.delete() || !file.exists() || file.length() == 0L) {
+                                if (ext == "ttml") deletedTtml = true
+                                else deletedOther = true
+                            }
                         }
                     }
                 }
@@ -473,6 +481,8 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
+                        val msg = if (deletedTtml || deletedOther) "本地歌词及封面视频已彻底清空" else "未找到任何相关本地文件"
+                        context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
                         if (deletedTtml || deletedOther) lyricsRepository.clearMemoryCache()
                     }
                 }

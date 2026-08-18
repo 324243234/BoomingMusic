@@ -18,8 +18,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (严格计分版 + 冷热双轨 LRU 缓存系统)
- * <= 3.5MB：永久落盘
+ * 动态专辑画布引擎 (严格计分版 + 冷热双轨 LRU 缓存系统 + 隐藏文件夹防相册污染)
+ * <= 3.5MB：永久落盘至歌曲所在目录的 .MP4 隐藏文件夹
  * >  3.5MB：存入临时 LRU 缓存池，最多保留 5 首，避免大文件撑爆车机空间
  */
 object AnimatedCanvasFetcher {
@@ -109,6 +109,7 @@ object AnimatedCanvasFetcher {
     }
 
     // 🌟 新增 Context 参数，用于获取 Android CacheDir
+    // 🌟 2. 在主流程中加入对 BLOCKED 的秒级熔断拦截
     suspend fun fetchCanvasUri(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val cacheKey = "${song.artistName}_${song.title}"
         uriCache.get(cacheKey)?.let { 
@@ -119,29 +120,52 @@ object AnimatedCanvasFetcher {
         yield()
         val audioFileName = File(song.data).nameWithoutExtension
 
-        // 🌟 1. 检查永久冷端本地缓存 (Permanent)
+        // 1. 检查永久冷端本地缓存 (Permanent)
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
-            val songVideo = checkLocalVideo(parentDir, audioFileName) 
-                ?: checkLocalVideo(parentDir, getSafeFilename(song.title)) 
-                ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}") 
+            val hiddenVideoDir = File(parentDir, ".MP4")
+
+            // 优先去 .MP4 隐藏文件夹里找
+            var songVideo = if (hiddenVideoDir.exists()) {
+                checkLocalVideo(hiddenVideoDir, audioFileName)
+                    ?: checkLocalVideo(hiddenVideoDir, getSafeFilename(song.title))
+                    ?: checkLocalVideo(hiddenVideoDir, "${song.artistName} - ${song.title}")
+            } else null
+
+            // 兜底：兼容以前下载在父目录的旧视频
+            if (songVideo == null) {
+                songVideo = checkLocalVideo(parentDir, audioFileName)
+                    ?: checkLocalVideo(parentDir, getSafeFilename(song.title))
+                    ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}")
+            }
             
+            // 🛑 拦截生效：遇到占位黑名单，直接返回 null，不播放也不走网络下载！
+            if (songVideo == "BLOCKED") {
+                Log.d(TAG, "⛔ 检测到黑名单空文件/文件夹占位，已永远跳过该歌曲的视频加载: $audioFileName")
+                return@withContext null
+            }
             if (songVideo != null) return@withContext cacheAndReturn(cacheKey, songVideo)
 
+            // 同样拦截 Album 级别的黑名单
             val albumName = song.albumName
             if (!albumName.isNullOrBlank()) {
-                val albumVideo = checkLocalVideo(parentDir, getSafeFilename(albumName))
+                var albumVideo = if (hiddenVideoDir.exists()) checkLocalVideo(hiddenVideoDir, getSafeFilename(albumName)) else null
+                if (albumVideo == null) albumVideo = checkLocalVideo(parentDir, getSafeFilename(albumName))
+
+                if (albumVideo == "BLOCKED") {
+                    Log.d(TAG, "⛔ 检测到专辑黑名单占位，跳过视频加载")
+                    return@withContext null
+                }
                 if (albumVideo != null) return@withContext cacheAndReturn(cacheKey, albumVideo)
             }
         }
 
-        // 🌟 2. 检查临时热端 LRU 缓存 (Temporary)
+        // 2. 检查临时热端 LRU 缓存 (Temporary)
         val tempDir = getTempCacheDir(context)
         val tempVideoPath = checkLocalVideo(tempDir, audioFileName)
+        if (tempVideoPath == "BLOCKED") return@withContext null
         if (tempVideoPath != null) {
-            // 更新最后修改时间，防止被 LRU 误删
             File(tempVideoPath).setLastModified(System.currentTimeMillis())
-            Log.d(TAG, "🔥 命中临时大文件 LRU 热缓存: $tempVideoPath")
             return@withContext cacheAndReturn(cacheKey, tempVideoPath)
         }
 
@@ -380,9 +404,11 @@ object AnimatedCanvasFetcher {
                         val contentLength = conn.contentLengthLong
                         val targetFile: File
 
-                        // 🌟 根据体积决定它是进入冷端（永久）还是热端（临时LRU）
+                        // 🌟 根据体积决定它是进入冷端（永久隐藏）还是热端（临时LRU）
                         if (contentLength <= MAX_PERMANENT_BYTES && parentDir != null) {
-                            targetFile = File(parentDir, "$audioFileName.mp4")
+                            val hiddenVideoDir = File(parentDir, ".MP4")
+                            if (!hiddenVideoDir.exists()) hiddenVideoDir.mkdirs() // 自动创建隐藏文件夹
+                            targetFile = File(hiddenVideoDir, "$audioFileName.mp4")
                             Log.d(TAG, "⬇️ 文件较小 (${contentLength/1024}KB) -> 转入永久存储: ${targetFile.absolutePath}")
                         } else {
                             val tempDir = getTempCacheDir(context)
@@ -421,11 +447,21 @@ object AnimatedCanvasFetcher {
         return name.replace(Regex("""[\\/:*?"<>|]"""), "_")
     }
 
+    // 🌟 1. 修改检查逻辑，支持 0字节/文件夹 占位熔断
     private fun checkLocalVideo(dir: File, targetName: String): String? {
         val safeName = getSafeFilename(targetName)
         for (ext in VIDEO_EXTENSIONS) {
             val file = File(dir, "$safeName$ext")
-            if (file.exists() && file.isFile && file.length() > 0) return file.absolutePath
+            // 只要同名对象存在
+            if (file.exists()) {
+                // 如果是正常的非空文件，正常返回去播放
+                if (file.isFile && file.length() > 0) {
+                    return file.absolutePath
+                } else {
+                    // 🛑 核心：如果是 0 字节的空文件，或者是用户新建的同名文件夹，视为“黑名单拦截标记”！
+                    return "BLOCKED"
+                }
+            }
         }
         return null
     }

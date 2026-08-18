@@ -337,23 +337,37 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 
                 var deletedTtml = false
                 var deletedOther = false
-                val filesInDir = parentDir.listFiles() ?: emptyArray()
                 val targetExtensions = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm") 
                 
-                for (file in filesInDir) {
-                    if (!file.isFile) continue
-                    val ext = file.extension.lowercase()
-                    if (!targetExtensions.contains(ext)) continue 
-                    
-                    val fileNameLower = file.nameWithoutExtension.lowercase()
-                    if (possibleNamesLower.contains(fileNameLower)) {
-                        runCatching { 
-                            if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
-                            else file.writeText("") 
-                        } 
-                        if (file.delete() || !file.exists() || file.length() == 0L) {
-                            if (ext == "ttml") deletedTtml = true
-                            else deletedOther = true
+                // 🌟 核心同步更新：把父目录和 .MP4 隐藏目录一起打包进扫描队列
+                val dirsToScan = listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() })
+                
+                for (dir in dirsToScan) {
+                    val filesInDir = dir.listFiles() ?: emptyArray()
+                    for (file in filesInDir) {
+                        // 🌟 兼顾用户用来做“拉黑占位”的同名文件夹
+                        val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
+                        if (!targetExtensions.contains(ext)) continue 
+                        
+                        val fileNameLower = file.nameWithoutExtension.lowercase()
+                        if (possibleNamesLower.contains(fileNameLower)) {
+                            
+                            // 如果是用户为了屏蔽视频而创建的占位文件夹，直接连锅端
+                            if (file.isDirectory) {
+                                file.deleteRecursively()
+                                if (ext != "ttml") deletedOther = true
+                                continue
+                            }
+                            
+                            // 正常文件的极速清空与删除
+                            runCatching { 
+                                if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0))
+                                else file.writeText("") 
+                            } 
+                            if (file.delete() || !file.exists() || file.length() == 0L) {
+                                if (ext == "ttml") deletedTtml = true
+                                else deletedOther = true
+                            }
                         }
                     }
                 }
@@ -367,6 +381,8 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                             lyricsViewModel.updateSong(song)
                         }
                     } else {
+                        val msg = if (deletedTtml || deletedOther) "本地歌词及封面视频已彻底清空" else "未找到任何相关本地文件"
+                        context?.let { Toast.makeText(it, msg, Toast.LENGTH_SHORT).show() }
                         if (deletedTtml || deletedOther) lyricsRepository.clearMemoryCache()
                     }
                 }

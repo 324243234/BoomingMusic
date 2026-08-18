@@ -182,8 +182,8 @@
                 <!-- 🌟 收藏按钮：与【歌名】形成打包链，永远紧跟歌名右侧，并与歌名垂直居中对齐 -->
                 <ImageView
                     android:id="@+id/lyricsFavoriteButton"
-                    android:layout_width="29dp"
-                    android:layout_height="29dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:layout_marginStart="8dp"
                     android:padding="4dp"
                     android:alpha="0.5"
@@ -199,7 +199,7 @@
                     android:id="@+id/lyricsSongArtistText"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
+                    android:layout_marginTop="3dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textSize="15sp"
