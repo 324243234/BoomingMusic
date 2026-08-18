@@ -281,91 +281,29 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 终极纯内存极速探测引擎 (拒绝文件 IO，完美解决 TTML "null" 陷阱与 LRC 识别瞎点)
+    // 🌟 原生降维打击：直接利用底层解析器完美分离的 translation 模型，0毫秒损耗，无视混淆！
     var hasTranslation by remember(uiState) { mutableStateOf(false) }
     
     LaunchedEffect(uiState) {
         withContext(Dispatchers.Default) {
-            var found = false
-            try {
+            hasTranslation = try {
                 when (uiState) {
-                    is LyricsUiState.Plain -> {
-                        val text = (uiState as LyricsUiState.Plain).lyrics
-                        // 1. TTML 标准标记
-                        if (text.contains("x-translation", ignoreCase = true)) {
-                            found = true
-                        } else {
-                            // 2. LRC 重复时间轴探测 (🚨 必须加 MULTILINE，否则 ^ 只匹配第一行！)
-                            var dupCount = 0
-                            val tsSet = mutableSetOf<String>()
-                            val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""", RegexOption.MULTILINE)
-                            val matches = regex.findAll(text)
-                            for (match in matches) {
-                                val ts = match.value
-                                // 过滤掉 [00:00.00] 歌曲信息元数据
-                                if (!ts.contains("00:00.0")) {
-                                    if (!tsSet.add(ts)) {
-                                        dupCount++
-                                        if (dupCount >= 3) { found = true; break }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     is LyricsUiState.Synced -> {
-                        // 直接序列化为文本，完全免疫任何 R8 代码混淆和反射失效！
-                        val stateStr = uiState.syncedLyrics.toString()
-                        
-                        // 策略 A：探测 TTML 的 trans 字段
-                        // 🚨 防误杀核心：必须提取出值，排除 "trans=null" 或 "trans=" 的空情况
-                        val transRegex = Regex("""(?:trans|translation)=([^,}\]]+)""", RegexOption.IGNORE_CASE)
-                        val transMatches = transRegex.findAll(stateStr)
-                        for (match in transMatches) {
-                            val transVal = match.groupValues[1].trim().replace("\"", "").replace("'", "")
-                            if (transVal != "null" && transVal.isNotEmpty()) {
-                                found = true
-                                break
-                            }
-                        }
-                        
-                        // 策略 B：探测 LRC 被解析为独立行时的重复时间戳
-                        if (!found) {
-                            val timeRegex = Regex("""(?:time|start)[a-zA-Z]*=([^,}\]]+)""", RegexOption.IGNORE_CASE)
-                            val timeMatches = timeRegex.findAll(stateStr)
-                            val timeSet = mutableSetOf<String>()
-                            var dupCount = 0
-                            for (match in timeMatches) {
-                                val tsStr = match.groupValues[1].trim().replace("\"", "").replace("'", "")
-                                // 过滤掉 0 毫秒的元数据时间戳
-                                if (tsStr != "0" && tsStr != "0L" && tsStr != "null" && tsStr.isNotEmpty() && !tsStr.contains("00:00.0")) {
-                                    if (!timeSet.add(tsStr)) {
-                                        dupCount++
-                                        if (dupCount >= 3) { found = true; break }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // 策略 C：探测 LRC 相同时间戳被解析器合并到 text 字段 (\n)
-                        if (!found) {
-                            val textRegex = Regex("""text=([^,}\]]+)""", RegexOption.IGNORE_CASE)
-                            val textMatches = textRegex.findAll(stateStr)
-                            var newlineCount = 0
-                            for (match in textMatches) {
-                                val textVal = match.groupValues[1]
-                                if (textVal.contains("\\n") || textVal.contains("\n")) {
-                                    newlineCount++
-                                    if (newlineCount >= 3) { found = true; break }
-                                }
-                            }
+                        // 底层的 LrcLyricsParser 和 TtmlLyricsParser 已经完成了所有艰苦的解析工作，
+                        // 我们只需检查任何一行是否存在真实的 translation 即可！
+                        uiState.syncedLyrics.lines.any { line -> 
+                            line.translation != null && !line.translation.isEmpty 
                         }
                     }
-                    else -> { found = false }
+                    is LyricsUiState.Plain -> {
+                        // 极低概率的兜底：纯文本且未同步的歌词
+                        uiState.lyrics.contains("x-translation", ignoreCase = true)
+                    }
+                    else -> false
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                false
             }
-            hasTranslation = found
         }
     }
 
@@ -417,7 +355,7 @@ fun CoverLyricsScreen(
                     }
                 }
 
-                // 2. 翻译按钮 (智能显示/隐藏)
+                // 2. 翻译按钮 (根据原生的解析结果 智能显示/隐藏)
                 if (hasTranslation) {
                     IconButton(
                         modifier = Modifier.size(36.dp),
@@ -429,6 +367,7 @@ fun CoverLyricsScreen(
                             } catch (e: Exception) { e.printStackTrace() }
                         }
                     ) {
+                        // 🌟 Unicode 防御机制：\u8BD1 等价于 "译"，无论文件被破坏成什么编码，UI永远显示正常中文！
                         Text(
                             text = "\u8BD1", 
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
