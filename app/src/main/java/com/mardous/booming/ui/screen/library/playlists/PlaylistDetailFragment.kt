@@ -17,6 +17,7 @@
 
 package com.mardous.booming.ui.screen.library.playlists
 
+import android.util.Log
 import android.content.Context
 import android.graphics.Color
 import android.media.MediaScannerConnection
@@ -82,6 +83,7 @@ import org.jaudiotagger.tag.images.ArtworkFactory
 import org.koin.core.parameter.parametersOf
 import java.io.File
 import java.lang.StringBuilder
+
 
 /**
  * @author Christians M. A. (mardous)
