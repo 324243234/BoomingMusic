@@ -1,4 +1,4 @@
-package com.mardous.booming.ui.screen.lyrics
+﻿package com.mardous.booming.ui.screen.lyrics
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -268,7 +268,6 @@ fun CoverLyricsScreen(
     val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
     val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
     val uiState by lyricsViewModel.lyricsUiState.collectAsState()
-    val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
     )
@@ -282,24 +281,74 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 极致稳定的防混淆探测引擎：物理文件寻址，不涉及任何对象反射
-    var hasTranslation by remember(song, uiState) { mutableStateOf(false) }
-    LaunchedEffect(song, uiState) {
-        if (song == null) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
+    // 🌟 极致性能优化引擎：杜绝物理读取，纯内存极速探测 TTML 与 LRC 双格式
+    var hasTranslation by remember(uiState) { mutableStateOf(false) }
+    
+    LaunchedEffect(uiState) {
+        // 使用 Default 线程池处理 CPU 密集型正则和反射，不阻塞 UI 渲染，也不消耗 I/O
+        withContext(Dispatchers.Default) {
             var found = false
             try {
-                // 读取缓存于本地的 TTML 物理文件（100%安全，不受 R8 影响，不占内存）
-                val songFile = java.io.File(song!!.data)
-                val parent = songFile.parentFile
-                if (parent != null && parent.exists()) {
-                    val ttmlFile = java.io.File(parent, "${songFile.nameWithoutExtension}.ttml")
-                    if (ttmlFile.exists()) {
-                        // 使用流式极速扫描，遇到目标字符立即中断跳出
-                        found = ttmlFile.useLines { lines -> lines.any { it.contains("x-translation") } }
+                when (uiState) {
+                    is LyricsUiState.Plain -> {
+                        val text = (uiState as LyricsUiState.Plain).lyrics
+                        if (text.contains("x-translation")) {
+                            found = true
+                        } else {
+                            // 极速分析内存中文本，探测 LRC 同时间轴堆叠
+                            var dupCount = 0
+                            val tsSet = mutableSetOf<String>()
+                            val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""")
+                            for (line in text.split('\n')) {
+                                val match = regex.find(line.trim())
+                                if (match != null) {
+                                    if (!tsSet.add(match.value)) {
+                                        dupCount++
+                                        if (dupCount >= 3) { found = true; break }
+                                    }
+                                }
+                            }
+                        }
                     }
+                    is LyricsUiState.Synced -> {
+                        val syncedLyrics = (uiState as LyricsUiState.Synced).syncedLyrics
+                        val linesField = syncedLyrics.javaClass.declaredFields.find { it.name == "lines" }
+                        if (linesField != null) {
+                            linesField.isAccessible = true
+                            val lines = linesField.get(syncedLyrics) as? List<*>
+                            val firstLine = lines?.firstOrNull { it != null }
+                            
+                            if (firstLine != null) {
+                                // 1. 探测对象内部 TTML 特有的 trans 属性
+                                val transField = firstLine.javaClass.declaredFields.find { it.name.contains("trans", ignoreCase = true) }
+                                if (transField != null) {
+                                    transField.isAccessible = true
+                                    found = lines.any { !(transField.get(it) as? String).isNullOrBlank() }
+                                }
+                                // 2. 探测内存对象内部 LRC 重复时间戳特征
+                                if (!found) {
+                                    val timeField = firstLine.javaClass.declaredFields.find { it.name.contains("time", ignoreCase = true) || it.name.contains("start", ignoreCase = true) }
+                                    if (timeField != null) {
+                                        timeField.isAccessible = true
+                                        var dupCount = 0
+                                        val timeSet = mutableSetOf<Long>()
+                                        for (line in lines) {
+                                            val timeVal = (timeField.get(line) as? Number)?.toLong() ?: continue
+                                            if (!timeSet.add(timeVal)) {
+                                                dupCount++
+                                                if (dupCount >= 3) { found = true; break }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else -> { found = false }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             hasTranslation = found
         }
     }
@@ -325,12 +374,12 @@ fun CoverLyricsScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // 全局悬浮侧边栏
+            // 全局悬浮侧边栏 (绝对安全隔离：去除了无效逻辑，贴边优化)
             Column(
                 modifier = Modifier
                     .wrapContentSize()
                     .align(Alignment.BottomEnd)
-                    .padding(end = 24.dp, bottom = 24.dp), // 🌟 恢复标准的底部安全距离
+                    .padding(end = 16.dp, bottom = 8.dp), 
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -352,7 +401,7 @@ fun CoverLyricsScreen(
                     }
                 }
 
-                // 2. 翻译按钮 (根据是否含翻译智能显示/隐藏)
+                // 2. 翻译按钮 (根据 UI 内存状态 智能秒显/隐藏)
                 if (hasTranslation) {
                     IconButton(
                         modifier = Modifier.size(36.dp),
