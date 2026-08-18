@@ -25,6 +25,12 @@
         android:title="取消置顶"
         app:showAsAction="never"/>
 	<item
+    android:id="@+id/action_fetch_lrc"
+    android:title="获取并写入 LRC 歌词" />
+    <item
+    android:id="@+id/action_fetch_cover"
+    android:title="获取并写入静态封面" />
+	<item
         android:id="@+id/action_fetch_ttml"
         android:title="获取逐字 TTML"
         app:showAsAction="never"/>

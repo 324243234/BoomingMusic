@@ -339,6 +339,7 @@ dependencies {
     implementation(libs.versioncompare)
     implementation(libs.commons.text)
     implementation(libs.juniversalchardet)
+	implementation("net.jthink:jaudiotagger:3.0.1")
 }
 
 fun getProperties(fileName: String): Properties? {

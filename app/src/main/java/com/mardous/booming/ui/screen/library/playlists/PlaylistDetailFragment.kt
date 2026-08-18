@@ -76,6 +76,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.images.ArtworkFactory
 import org.koin.core.parameter.parametersOf
 import java.io.File
 import java.lang.StringBuilder
@@ -445,6 +448,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 RemoveFromPlaylistDialog.create(songs.toSongsEntity(playlist.playlistEntity))
                     .show(childFragmentManager, "REMOVE_FROM_PLAYLIST")
             }
+			
+			
+			
             R.id.action_fetch_ttml -> {
                 if (songs.isNotEmpty()) {
                     val toast = Toast.makeText(requireContext(), "正在后台为 ${songs.size} 首歌曲获取 TTML...", Toast.LENGTH_LONG)
@@ -476,6 +482,92 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     }
                 }
             }
+			
+			
+			// 🌟 1. 批量获取 LRC
+            R.id.action_fetch_lrc -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取 LRC 歌词...", Toast.LENGTH_LONG)
+                    toast.show()
+
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
+                            if (!result.lrcWithTrans.isNullOrBlank()) {
+                                try {
+                                    val songFile = File(song.data)
+                                    val parentDir = songFile.parentFile
+                                    if (parentDir != null && parentDir.exists()) {
+                                        // 1. 写入同名 .lrc 文件
+                                        File(parentDir, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                        
+                                        // 2. 物理写入音频文件内嵌标签 (Jaudiotagger)
+                                        val f = AudioFileIO.read(songFile)
+                                        val tag = f.tagOrCreateAndSetDefault
+                                        tag.setField(FieldKey.LYRICS, result.lrcWithTrans)
+                                        f.commit()
+                                        
+                                        successCount++
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "LRC 写入失败: ${song.title}", e)
+                                }
+                            }
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            lyricsRepository.clearMemoryCache()
+                            Toast.makeText(requireContext(), "LRC 批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
+            // 🌟 2. 批量获取静态封面
+            R.id.action_fetch_cover -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取高清静态封面...", Toast.LENGTH_LONG)
+                    toast.show()
+
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
+                            if (result.coverBytes != null) {
+                                try {
+                                    val songFile = File(song.data)
+                                    // 物理写入音频文件内嵌封面 (Jaudiotagger)
+                                    val f = AudioFileIO.read(songFile)
+                                    val tag = f.tagOrCreateAndSetDefault
+                                    
+                                    val artwork = ArtworkFactory.getNew()
+                                    artwork.binaryData = result.coverBytes
+                                    artwork.mimeType = "image/jpeg"
+                                    
+                                    tag.deleteArtworkField()
+                                    tag.setField(artwork)
+                                    f.commit()
+                                    
+                                    successCount++
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Cover 写入失败: ${song.title}", e)
+                                }
+                            }
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            // 提示更新完成（注意：封面可能需要清除 Glide/Coil 图片缓存才能立马在 UI 显示新图）
+                            Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+			
+			
+			
             R.id.action_pin_to_top -> {
                 if (songs.isNotEmpty()) pinSongsToTop(songs)
             }
