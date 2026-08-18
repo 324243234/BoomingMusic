@@ -281,23 +281,24 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 原生降维打击：直接利用底层解析器完美分离的 translation 模型，0毫秒损耗，无视混淆！
+    // 🌟 原生降维打击：直接利用作者解析好的数据模型 (line.translation)，秒杀一切正则和反射！
     var hasTranslation by remember(uiState) { mutableStateOf(false) }
     
     LaunchedEffect(uiState) {
         withContext(Dispatchers.Default) {
             hasTranslation = try {
-                when (uiState) {
+                // 🌟 修复: 引入局部常量 currentState，解决 Kotlin 委托属性无法智能转换 (Smart Cast) 的问题
+                when (val currentState = uiState) {
                     is LyricsUiState.Synced -> {
                         // 底层的 LrcLyricsParser 和 TtmlLyricsParser 已经完成了所有艰苦的解析工作，
                         // 我们只需检查任何一行是否存在真实的 translation 即可！
-                        uiState.syncedLyrics.lines.any { line -> 
+                        currentState.syncedLyrics.lines.any { line -> 
                             line.translation != null && !line.translation.isEmpty 
                         }
                     }
                     is LyricsUiState.Plain -> {
                         // 极低概率的兜底：纯文本且未同步的歌词
-                        uiState.lyrics.contains("x-translation", ignoreCase = true)
+                        currentState.lyrics.contains("x-translation", ignoreCase = true)
                     }
                     else -> false
                 }
