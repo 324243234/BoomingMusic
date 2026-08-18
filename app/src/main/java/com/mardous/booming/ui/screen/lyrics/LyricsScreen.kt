@@ -281,28 +281,36 @@ fun CoverLyricsScreen(
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
 
-    // 🌟 纯内存极速探测引擎 (拒绝任何本地文件 IO，使用双重防混淆策略)
+    // 🌟 纯内存极速探测引擎 (拒绝任何本地文件 IO，使用双重防混淆策略，并完美规避 LRC 零点陷阱)
     var hasTranslation by remember(uiState) { mutableStateOf(false) }
     
     LaunchedEffect(uiState) {
+        // 使用 Default 线程池处理 CPU 密集型正则和反射，不阻塞 UI 渲染，也不消耗 I/O
         withContext(Dispatchers.Default) {
             var found = false
             try {
                 when (uiState) {
                     is LyricsUiState.Plain -> {
                         val text = (uiState as LyricsUiState.Plain).lyrics
-                        if (text.contains("x-translation", ignoreCase = true) || text.contains("trans", ignoreCase = true)) {
+                        // 1. 严格匹配翻译专属 Tag，拒绝误杀 transition 等常规英文单词
+                        if (text.contains("x-translation", ignoreCase = true)) {
                             found = true
                         } else {
+                            // 2. 极速分析内存中文本，探测 LRC 同时间轴堆叠
                             var dupCount = 0
                             val tsSet = mutableSetOf<String>()
                             val regex = Regex("""^\[\d{2,}:\d{2}(?:\.\d+)?\]""")
                             for (line in text.split('\n')) {
                                 val match = regex.find(line.trim())
                                 if (match != null) {
-                                    if (!tsSet.add(match.value)) {
-                                        dupCount++
-                                        if (dupCount >= 2) { found = true; break }
+                                    val ts = match.value
+                                    // 🚨 防误杀核心：绝对忽略 [00:00.00] 及其变体，因为它们常常是作词/作曲元数据！
+                                    if (!ts.contains("00:00.0")) {
+                                        if (!tsSet.add(ts)) {
+                                            dupCount++
+                                            // 🚨 提升安全阈值：发现 4 次以上非 0 时间轴重复，才断定是真翻译！
+                                            if (dupCount >= 4) { found = true; break }
+                                        }
                                     }
                                 }
                             }
@@ -318,11 +326,13 @@ fun CoverLyricsScreen(
                         if (lines != null && lines.isNotEmpty()) {
                             val firstLine = lines.firstOrNull { it != null }
                             if (firstLine != null) {
+                                // 1. 探测对象内部 TTML 特有的 trans 属性
                                 val getTransMethod = firstLine.javaClass.methods.find { it.name.contains("trans", ignoreCase = true) || it.name.contains("getTrans", ignoreCase = true) }
                                 if (getTransMethod != null) {
                                     found = lines.any { !(getTransMethod.invoke(it) as? String).isNullOrBlank() }
                                 }
                                 
+                                // 2. 探测内存对象内部 LRC 重复时间戳特征
                                 if (!found) {
                                     val getTimeMethod = firstLine.javaClass.methods.find { it.name.contains("time", ignoreCase = true) || it.name.contains("getTime", ignoreCase = true) || it.name.contains("start", ignoreCase = true) }
                                     if (getTimeMethod != null) {
@@ -330,9 +340,12 @@ fun CoverLyricsScreen(
                                         val timeSet = mutableSetOf<Long>()
                                         for (line in lines) {
                                             val timeVal = (getTimeMethod.invoke(line) as? Number)?.toLong() ?: continue
-                                            if (!timeSet.add(timeVal)) {
-                                                dupCount++
-                                                if (dupCount >= 2) { found = true; break }
+                                            // 🚨 防误杀核心：时间戳必须大于 0！(排除 metadata)
+                                            if (timeVal > 0L) {
+                                                if (!timeSet.add(timeVal)) {
+                                                    dupCount++
+                                                    if (dupCount >= 4) { found = true; break }
+                                                }
                                             }
                                         }
                                     }
@@ -343,7 +356,7 @@ fun CoverLyricsScreen(
                         // 策略 B：对象序列化文本提取（如果被混淆，全靠这一步保底，万无一失）
                         if (!found) {
                             val stateStr = syncedLyrics.toString()
-                            if (stateStr.contains("trans=", ignoreCase = true) || stateStr.contains("translation", ignoreCase = true)) {
+                            if (stateStr.contains("trans=", ignoreCase = true)) {
                                 found = true
                             } else {
                                 val timeRegex = Regex("""(?:time|start)=([\d]+)""")
@@ -351,15 +364,19 @@ fun CoverLyricsScreen(
                                 val timeSet = mutableSetOf<String>()
                                 var dupCount = 0
                                 for (match in matches) {
-                                    if (!timeSet.add(match.groupValues[1])) {
-                                        dupCount++
-                                        if (dupCount >= 2) { found = true; break }
+                                    val tsStr = match.groupValues[1]
+                                    // 🚨 防误杀核心：时间戳必须不是 0
+                                    if (tsStr != "0") {
+                                        if (!timeSet.add(tsStr)) {
+                                            dupCount++
+                                            if (dupCount >= 4) { found = true; break }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    else -> {}
+                    else -> { found = false }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
