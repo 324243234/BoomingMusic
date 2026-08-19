@@ -10,7 +10,6 @@ import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.TagOptionSingleton
-import org.jaudiotagger.tag.images.AndroidArtwork
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -24,69 +23,83 @@ import javax.crypto.spec.SecretKeySpec
 
 object UniversalDownloadEngine {
     private const val TAG = "UniversalDownloadEngine"
-    private const val RENDER_API = "https://my-wangyi-api.onrender.com"
 
-    // 🌟 Znnu 终极密钥常量 (提取自你的逆向源码)
+    // 🌟 Znnu 终极密钥常量
     private const val ZNNU_HMAC_KEY = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0"
 
     data class NetSongItem(
         val id: Long, val title: String, val artist: String, val album: String,
         val durationMs: Long, val picUrl: String, val fileSizeStr: String, val format: String,
-        val year: String, val requestedLevel: String
+        val year: String, val requestedLevel: String,
+        val searchFallbackUrl: String // 🌟 兜底专用：保存搜索接口直接吐出来的直链
     )
 
-    // 🌟 1. 用 Render 获取完美元数据的搜索列表
+    // ==========================================
+    // ⚔️ 第 1 步：全盘接管 Znnu 搜索接口
+    // ==========================================
     suspend fun searchOrParse(input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
             val inputTrimmed = input.trim()
-            val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed)
-            val idsToFetch = mutableListOf<Long>()
+            // 如果是分享链接，提取 ID；否则直接作为关键字搜索
+            val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
+            val isLink = idMatch != null
+            val keywordOrLink = if (isLink) inputTrimmed else inputTrimmed
+
+            // 1. 握手：获取 IP 和 KeyToken
+            val auth = fetchZnnuAuth() ?: return@withContext emptyList()
+
+            // 2. 构造 Search Payload
+            val timestamp = System.currentTimeMillis() / 1000
+            val domain = "music.znnu.com"
             
-            if (idMatch != null) {
-                idsToFetch.add(idMatch.groupValues[1].toLong())
-            } else {
-                val limit = if (!inputTrimmed.contains(" ") && !inputTrimmed.contains("-")) 30 else 8
-                val encodedQuery = URLEncoder.encode(inputTrimmed, "UTF-8").replace("+", "%20")
-                val searchUrl = "$RENDER_API/search?keywords=$encodedQuery&type=1&limit=$limit"
-                
-                val res = httpGet(searchUrl) ?: return@withContext emptyList()
-                val songs = JSONObject(res).optJSONObject("result")?.optJSONArray("songs") ?: return@withContext emptyList()
-                
-                for (i in 0 until songs.length()) {
-                    idsToFetch.add(songs.getJSONObject(i).optLong("id"))
-                }
+            // 无论是查关键字还是查链接，Znnu 的 search 接口都支持 rawInput
+            val params = mapOf(
+                "act" to "search",
+                "keyword" to keywordOrLink,
+                "rawInput" to keywordOrLink,
+                "ip" to auth.ip
+            )
+
+            val signature = generateSignature(params, timestamp, domain)
+
+            val formBody = StringBuilder()
+            params.forEach { (k, v) ->
+                if (formBody.isNotEmpty()) formBody.append("&")
+                formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8").replace("+", "%20"))
             }
+            formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
 
-            if (idsToFetch.isEmpty()) return@withContext emptyList()
-
-            val idsParam = idsToFetch.joinToString(",")
-            val detailUrl = "$RENDER_API/song/detail?ids=$idsParam"
-            val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
-            val songArray = runCatching { JSONObject(detailRes).optJSONArray("songs") }.getOrNull() ?: return@withContext emptyList()
+            // 3. 发送请求并解密
+            val searchRes = httpPostForm("https://music.znnu.com/api/search", formBody.toString(), auth.keyToken) ?: return@withContext emptyList()
+            val decryptedStr = decryptZnnuResponse(searchRes, auth.aesKey) ?: return@withContext emptyList()
+            
+            val jsonArray = runCatching { JSONObject(decryptedStr).optJSONArray("data") }.getOrNull() ?: return@withContext emptyList()
 
             val resultList = mutableListOf<NetSongItem>()
-            for (i in 0 until songArray.length()) {
-                val songObj = songArray.getJSONObject(i)
-                val id = songObj.optLong("id")
-                val title = songObj.optString("name")
-                val artist = (0 until (songObj.optJSONArray("ar")?.length() ?: 0)).joinToString(" / ") { 
-                    songObj.optJSONArray("ar")?.getJSONObject(it)?.optString("name") ?: "" 
-                }
-                val album = songObj.optJSONObject("al")?.optString("name") ?: ""
-                val picUrl = songObj.optJSONObject("al")?.optString("picUrl") ?: ""
-                val duration = songObj.optLong("dt", 0L)
+            for (i in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(i)
                 
-                val publishTimeMs = songObj.optLong("publishTime", 0L)
-                val yearStr = if (publishTimeMs > 1000000000L) {
-                    java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).format(java.util.Date(publishTimeMs))
-                } else ""
+                val id = item.optLong("id")
+                val title = item.optString("name")
+                val artist = item.optString("artist")
+                val album = item.optString("album")
+                val picUrl = item.optString("pic")
+                
+                // 🌟 核心兜底：如果在搜索阶段它就吐出了 URL，我们直接存起来！
+                val fallbackUrl = item.optString("url")
+                
+                // 试着解析大小，Znnu 搜索结果通常会给出 size
+                val sizeBytes = item.optLong("size", 0L)
+                val sizeStr = if (sizeBytes > 0) String.format("%.1f MB", sizeBytes / 1048576.0f) else "未知大小"
+                
+                val format = if (targetLevel == "lossless" || fallbackUrl.contains(".flac")) "FLAC" else "MP3"
+                val publishTime = item.optLong("publishTime", 0L)
+                val yearStr = if (publishTime > 0) java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).format(java.util.Date(publishTime)) else ""
 
-                val format = if (targetLevel == "lossless") "FLAC" else "MP3"
-
-                resultList.add(NetSongItem(id, title, artist, album, duration, picUrl, "点击解密下载", format, yearStr, targetLevel))
+                resultList.add(NetSongItem(id, title, artist, album, 0L, picUrl, sizeStr, format, yearStr, targetLevel, fallbackUrl))
             }
             
-            return@withContext idsToFetch.mapNotNull { targetId -> resultList.find { it.id == targetId } }
+            return@withContext resultList
 
         } catch (e: Exception) {
             Log.e(TAG, "Search failed", e)
@@ -94,21 +107,25 @@ object UniversalDownloadEngine {
         }
     }
 
-    // 🌟 2. 彻底抛弃网易云，全盘走 Znnu 破盾下载！
+    // ==========================================
+    // ⚔️ 第 2 步：纯净下载与双重容错直链提取
+    // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
         var conn: HttpURLConnection? = null
         try {
-            // 🚀 核心战区：启动黑客引擎劫持真实下载直链！
-            var audioUrl = extractZnnuVipUrl(song.id, song.requestedLevel)
+            // 🚀 尝试 1：走正规的 POST /api/song 提取最高音质直链
+            var audioUrl = extractZnnuSongUrl(song.id.toString(), song.requestedLevel)
             
+            // 🚀 尝试 2 (兜底)：如果 /api/song 崩了或被封，直接用我们在搜索时劫持的备用直链
             if (audioUrl.isNullOrBlank()) {
-                Log.e(TAG, "Znnu 解析失败，可能是接口变动或受限")
-                return@withContext null
+                Log.w(TAG, "api/song 提取失败，启动 api/search 劫持兜底直链！")
+                audioUrl = song.searchFallbackUrl
             }
+            
+            if (audioUrl.isBlank()) return@withContext null
             audioUrl = audioUrl.replace("http://", "https://") 
             
-            // 根据实际获取的 URL 修正后缀 (防止选了 FLAC 但服务器只给了 MP3)
             val actualFormat = if (audioUrl.contains(".flac", ignoreCase = true)) "flac" else "mp3"
             
             val safeTitle = song.title.replace(Regex("""[\\/:*?"<>|]"""), "_")
@@ -120,7 +137,6 @@ object UniversalDownloadEngine {
             conn.connectTimeout = 15000 
             conn.readTimeout = 60000 
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            // 伪装防盗链
             conn.setRequestProperty("Referer", "https://music.znnu.com/")
             
             val fileSize = conn.contentLength
@@ -151,11 +167,13 @@ object UniversalDownloadEngine {
                 return@withContext null
             }
 
-            injectMetadata(targetFile, song)
+            // 🚀 下载完后，只打上最基础的文本标签，封面和 LRC 留给 App 本地的 MetadataFetcher 处理
+            injectBasicMetadata(targetFile, song)
             MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
             return@withContext targetFile
 
         } catch (e: Exception) {
+            Log.e(TAG, "Download crashed, destroying partial file...", e)
             targetFile?.takeIf { it.exists() }?.delete()
             return@withContext null
         } finally {
@@ -164,93 +182,84 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ⚔️ 终极 Znnu 破盾引擎 (完美还原 JS 算法)
+    // 🔐 Znnu 安全认证与解密核心库
     // ==========================================
-    private suspend fun extractZnnuVipUrl(songId: Long, level: String): String? {
-        try {
-            // 1. 获取动态 IP
-            val ipRes = httpGet("https://music.znnu.com/api/ip", mapOf("X-Referer" to "musicParser"))
-            val ipObj = JSONObject(ipRes ?: "")
-            val ip = ipObj.optString("ip").takeIf { it.isNotEmpty() } ?: ipObj.optJSONObject("data")?.optString("ip") ?: ""
-            if (ip.isBlank()) return null
+    private class ZnnuAuth(val ip: String, val keyToken: String, val aesKey: String)
 
-            // 2. 获取 AES 密钥和通行 Token
-            val keyRes = httpGet("https://music.znnu.com/api/key", mapOf("X-Referer" to "musicParser"))
-            val keyData = JSONObject(keyRes ?: "").optJSONObject("data") ?: return null
-            val aesKeyB64 = keyData.optString("key")
-            val keyToken = keyData.optString("keyToken")
+    private suspend fun fetchZnnuAuth(): ZnnuAuth? {
+        val ipRes = httpGet("https://music.znnu.com/api/ip")
+        val ipObj = runCatching { JSONObject(ipRes ?: "") }.getOrNull() ?: return null
+        val ip = ipObj.optString("ip").takeIf { it.isNotEmpty() } ?: ipObj.optJSONObject("data")?.optString("ip") ?: ""
 
-            // 3. 构建参数并使用 HMAC-SHA256 生成签名
-            val timestamp = System.currentTimeMillis() / 1000
-            val domain = "music.znnu.com"
-            val rawInput = "https://music.163.com/song?id=$songId"
+        val keyRes = httpGet("https://music.znnu.com/api/key")
+        val keyData = runCatching { JSONObject(keyRes ?: "").optJSONObject("data") }.getOrNull() ?: return null
+        val keyToken = keyData.optString("keyToken")
+        val aesKey = keyData.optString("key")
 
-            val params = mapOf(
-                "act" to "song",
-                "id" to songId.toString(),
-                "ip" to ip,
-                "level" to level,
-                "rawInput" to rawInput
-            )
-
-            // 精准复刻 JS 里的排序和拼接，不能有 & 符号
-            val sortedKeys = params.keys.sorted()
-            var signString = "${timestamp}${domain}"
-            for (k in sortedKeys) {
-                signString += "${k}=${params[k]}"
-            }
-            
-            // 核心：HMAC 签名
-            val mac = Mac.getInstance("HmacSHA256")
-            val secretKeySpec = SecretKeySpec(ZNNU_HMAC_KEY.toByteArray(Charsets.UTF_8), "HmacSHA256")
-            mac.init(secretKeySpec)
-            val hashBytes = mac.doFinal(signString.toByteArray(Charsets.UTF_8))
-            val signature = hashBytes.joinToString("") { "%02x".format(it) }
-
-            // 4. 发送 POST 表单请求获取密文
-            val formBody = StringBuilder()
-            params.forEach { (k, v) ->
-                if (formBody.isNotEmpty()) formBody.append("&")
-                formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8"))
-            }
-            formBody.append("&signature=$signature")
-            formBody.append("&timestamp=$timestamp")
-            formBody.append("&domain=$domain")
-
-            val songRes = httpPostForm(
-                "https://music.znnu.com/api/song",
-                formBody.toString(),
-                mapOf("X-Key-Token" to keyToken, "X-Referer" to "musicParser")
-            ) ?: return null
-
-            // 5. 破译 AES-256-GCM，直取核心！
-            val songObj = JSONObject(songRes)
-            if (songObj.optInt("code") == 200) {
-                val dataObj = songObj.optJSONObject("data") ?: return null
-                if (dataObj.optInt("enc") == 1) {
-                    val iv = dataObj.optString("iv")
-                    val ciphertext = dataObj.optString("ciphertext")
-                    val tag = dataObj.optString("tag")
-                    
-                    val decryptedJson = decryptAESGCM(aesKeyB64, iv, ciphertext, tag)
-                    if (decryptedJson != null) {
-                        return JSONObject(decryptedJson).optString("url")
-                    }
-                } else {
-                    return dataObj.optString("url")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Znnu crack failed", e)
-        }
-        return null
+        if (ip.isBlank() || keyToken.isBlank() || aesKey.isBlank()) return null
+        return ZnnuAuth(ip, keyToken, aesKey)
     }
 
-    private fun decryptAESGCM(aesKeyB64: String, ivB64: String, ciphertextB64: String, tagB64: String): String? {
+    private suspend fun extractZnnuSongUrl(songId: String, level: String): String? {
+        val auth = fetchZnnuAuth() ?: return null
+        val timestamp = System.currentTimeMillis() / 1000
+        val domain = "music.znnu.com"
+        val rawInput = "https://music.163.com/song?id=$songId"
+
+        val params = mapOf(
+            "act" to "song",
+            "id" to songId,
+            "ip" to auth.ip,
+            "level" to level,
+            "rawInput" to rawInput
+        )
+
+        val signature = generateSignature(params, timestamp, domain)
+
+        val formBody = StringBuilder()
+        params.forEach { (k, v) ->
+            if (formBody.isNotEmpty()) formBody.append("&")
+            formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8").replace("+", "%20"))
+        }
+        formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
+
+        val songRes = httpPostForm("https://music.znnu.com/api/song", formBody.toString(), auth.keyToken) ?: return null
+        val decryptedStr = decryptZnnuResponse(songRes, auth.aesKey) ?: return null
+        
+        return JSONObject(decryptedStr).optString("url")
+    }
+
+    private fun generateSignature(params: Map<String, String>, timestamp: Long, domain: String): String {
+        // 严格按照源码里的顺序：o = timestamp + domain，然后 append sort 后的参数
+        val sortedKeys = params.keys.sorted()
+        var signString = "${timestamp}${domain}"
+        for (k in sortedKeys) {
+            signString += "${k}=${params[k]}"
+        }
+        
+        val mac = Mac.getInstance("HmacSHA256")
+        val secretKeySpec = SecretKeySpec(ZNNU_HMAC_KEY.toByteArray(Charsets.UTF_8), "HmacSHA256")
+        mac.init(secretKeySpec)
+        val hashBytes = mac.doFinal(signString.toByteArray(Charsets.UTF_8))
+        return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun decryptZnnuResponse(responseJson: String, aesKeyB64: String): String? {
         return try {
+            val responseObj = JSONObject(responseJson)
+            if (responseObj.optInt("code") != 200) return null
+            
+            val dataObj = responseObj.optJSONObject("data") ?: return null
+            
+            // 如果它好心直接返回了明文数据，直接吐出
+            if (dataObj.optInt("enc") != 1) return dataObj.toString()
+
+            val ivB64 = dataObj.optString("iv")
+            val ciphertextB64 = dataObj.optString("ciphertext")
+            val tagB64 = dataObj.optString("tag")
+
             val keyBytes = Base64.decode(aesKeyB64, Base64.DEFAULT)
-            // 🌟 致命细节：JS 中的 Oc(t.iv) 也是 base64 解码，必须在这里解码！
-            val ivBytes = Base64.decode(ivB64, Base64.DEFAULT) 
+            val ivBytes = Base64.decode(ivB64, Base64.DEFAULT)
             val cipherBytes = Base64.decode(ciphertextB64, Base64.DEFAULT)
             val tagBytes = Base64.decode(tagB64, Base64.DEFAULT)
 
@@ -271,9 +280,9 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // 🎵 元数据注入模块 (封面/歌词/属性)
+    // 📝 极简基础标签注入 (不污染 MetadataFetcher)
     // ==========================================
-    private suspend fun injectMetadata(audioFile: File, song: NetSongItem) {
+    private fun injectBasicMetadata(audioFile: File, song: NetSongItem) {
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             val f = AudioFileIO.read(audioFile)
@@ -284,41 +293,29 @@ object UniversalDownloadEngine {
             tag.setField(FieldKey.ALBUM, song.album)
             if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
 
-            val metaResult = MetadataFetcher.fetchMetadataRaw(song.title, song.artist, song.album, song.durationMs, needLrc = true, needCover = true)
-
-            if (!metaResult.lrcWithTrans.isNullOrBlank()) {
-                tag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
-                File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc").writeText(metaResult.lrcWithTrans)
-            }
-
-            val finalCoverBytes = metaResult.coverBytes ?: if (song.picUrl.isNotBlank()) httpGetBytes(song.picUrl) else null
-
-            if (finalCoverBytes != null && finalCoverBytes.size > 5000) {
-                val artwork = AndroidArtwork().apply { binaryData = finalCoverBytes; mimeType = "image/jpeg" }
-                tag.deleteArtworkField()
-                tag.setField(artwork)
-            }
-
             f.commit()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Basic tag injection failed", e)
+        }
     }
 
     // ==========================================
-    // 🌐 底层网络通讯库
+    // 🌐 底层网络工具
     // ==========================================
-    private suspend fun httpGet(urlString: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
+    private suspend fun httpGet(urlString: String, extraHeaders: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
             conn = URL(urlString).openConnection() as HttpURLConnection
             conn.connectTimeout = 10000; conn.readTimeout = 10000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+            conn.setRequestProperty("X-Referer", "musicParser")
+            extraHeaders.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (conn.responseCode == 200) return@withContext conn.inputStream.bufferedReader().use { it.readText() }
         } catch (e: Exception) {} finally { conn?.disconnect() }
         null
     }
 
-    private suspend fun httpPostForm(urlString: String, formBody: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
+    private suspend fun httpPostForm(urlString: String, formBody: String, keyToken: String): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
             conn = URL(urlString).openConnection() as HttpURLConnection
@@ -326,7 +323,8 @@ object UniversalDownloadEngine {
             conn.connectTimeout = 10000; conn.readTimeout = 15000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+            conn.setRequestProperty("X-Referer", "musicParser")
+            if (keyToken.isNotBlank()) conn.setRequestProperty("X-Key-Token", keyToken)
             conn.doOutput = true
             
             conn.outputStream.use { os ->
@@ -334,17 +332,6 @@ object UniversalDownloadEngine {
                 os.write(input, 0, input.size)
             }
             if (conn.responseCode == 200) return@withContext conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (e: Exception) {} finally { conn?.disconnect() }
-        null
-    }
-
-    private suspend fun httpGetBytes(urlString: String): ByteArray? = withContext(Dispatchers.IO) {
-        var conn: HttpURLConnection? = null
-        try {
-            conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10000; conn.readTimeout = 15000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            if (conn.responseCode == 200) return@withContext conn.inputStream.use { it.readBytes() }
         } catch (e: Exception) {} finally { conn?.disconnect() }
         null
     }
