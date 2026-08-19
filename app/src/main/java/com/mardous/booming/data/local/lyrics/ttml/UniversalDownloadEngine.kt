@@ -36,20 +36,20 @@ object UniversalDownloadEngine {
     )
 
     // ==========================================
-    // 🌟 1. 用极其稳定的 Render 节点进行搜索（绝不出现搜不到结果的问题）
+    // 🚀 第 1 级火箭：稳定搜索与链接解析 (纯净 Render 方案)
     // ==========================================
     suspend fun searchOrParse(input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
             val inputTrimmed = input.trim()
+            // 自动判断是网易云链接还是搜索关键字
             val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
             val idsToFetch = mutableListOf<Long>()
             
             if (idMatch != null) {
+                // 如果是链接解析，直接拿到目标 ID
                 idsToFetch.add(idMatch.groupValues[1].toLong())
             } else {
-                // 🌟 智能动态限流策略：
-                // 如果包含空格或连字符（例如 "周杰伦 晴天" 或 "artist-title"），说明是精确搜索，限制为 30 首以追求极致速度；
-                // 如果只是单纯的单关键词（例如 "晴天"），则放开至 80 首以提供更丰富的候选。
+                // 🌟 智能动态限流：精确搜索（含空格）返回30首，广泛搜索返回80首
                 val limit = if (inputTrimmed.contains(" ") || inputTrimmed.contains("-")) 30 else 80
                 val encodedQuery = URLEncoder.encode(inputTrimmed, "UTF-8").replace("+", "%20")
                 val searchUrl = "$RENDER_API/search?keywords=$encodedQuery&type=1&limit=$limit"
@@ -64,11 +64,22 @@ object UniversalDownloadEngine {
 
             if (idsToFetch.isEmpty()) return@withContext emptyList()
 
+            // 批量拉取歌曲详细基础元数据（不查大小，防止网络超时）
             val idsParam = idsToFetch.joinToString(",")
             val detailUrl = "$RENDER_API/song/detail?ids=$idsParam"
             val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
             val songArray = runCatching { JSONObject(detailRes).optJSONArray("songs") }.getOrNull() ?: return@withContext emptyList()
 
+			
+			// 🌟 独家优化：支线任务！如果是单曲解析，偷偷去 Znnu 接口把真实的满血大小拿过来！
+            var singleSongSizeStr = "点击破盾下载"
+            if (idsToFetch.size == 1) {
+                val realSize = fetchZnnuSingleSongSize(idsToFetch[0].toString())
+                if (!realSize.isNullOrBlank()) {
+                    singleSongSizeStr = realSize
+                }
+            }
+			
             val resultList = mutableListOf<NetSongItem>()
             for (i in 0 until songArray.length()) {
                 val songObj = songArray.getJSONObject(i)
@@ -88,29 +99,30 @@ object UniversalDownloadEngine {
 
                 val format = if (targetLevel == "lossless") "FLAC" else "MP3"
 
-                resultList.add(NetSongItem(id, title, artist, album, duration, picUrl, "点击下载", format, yearStr, targetLevel))
+                resultList.add(NetSongItem(id, title, artist, album, duration, picUrl, "点击破盾下载", format, yearStr, targetLevel))
             }
             
             return@withContext idsToFetch.mapNotNull { targetId -> resultList.find { it.id == targetId } }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Search failed", e)
+            Log.e(TAG, "Search/Parse failed", e)
             return@withContext emptyList()
         }
     }
 
     // ==========================================
-    // 🌟 2. 彻底抛弃网易云下载，全盘走 Znnu 破盾下载！
+    // ⚔️ 第 2 级火箭：破盾下载流 (100% 走 Znnu 引擎)
     // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
         var conn: HttpURLConnection? = null
         try {
-            // 🚀 核心战区：启动黑客引擎劫持真实下载直链！
+            // 🚀 核心战区：无论是不是链接，这里全盘移交 Znnu 提取 VIP 直链！
             var audioUrl = extractZnnuVipUrl(song.id, song.requestedLevel)
             
+            // Render 兜底，防止极小概率下 Znnu 接口抽风
             if (audioUrl.isNullOrBlank()) {
-                Log.e(TAG, "Znnu 解析失败，启动 Render 降级兜底...")
+                Log.w(TAG, "Znnu 解析失败，启动 Render 降级兜底...")
                 val fallbackRes = httpGet("$RENDER_API/song/url/v1?id=${song.id}&level=${song.requestedLevel}")
                 audioUrl = runCatching { JSONObject(fallbackRes ?: "").optJSONArray("data")?.getJSONObject(0)?.optString("url") }.getOrNull()
             }
@@ -159,7 +171,8 @@ object UniversalDownloadEngine {
                 return@withContext null
             }
 
-            injectMetadata(targetFile, song)
+            // 🚀 文件安全落地！执行第 3 级火箭！
+            injectMetadataSafely(targetFile, song)
             MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
             return@withContext targetFile
 
@@ -173,7 +186,70 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ⚔️ 终极 Znnu 破盾引擎 (完美还原 JS 算法)
+    // 🎨 第 3 级火箭：安全隔离的元数据注入 (结合基础标签与 MetadataFetcher)
+    // ==========================================
+    private suspend fun injectMetadataSafely(audioFile: File, song: NetSongItem) {
+        try {
+            // 步骤 1：先保证最基础的 ID3 标签写入，确保文件合法，绝不抛出异常
+            TagOptionSingleton.getInstance().isAndroid = true
+            val f = AudioFileIO.read(audioFile)
+            val tag = f.tagOrCreateAndSetDefault
+            
+            tag.setField(FieldKey.TITLE, song.title)
+            tag.setField(FieldKey.ARTIST, song.artist)
+            tag.setField(FieldKey.ALBUM, song.album)
+            if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
+            
+            f.commit() // 基础标签保存完毕
+            Log.d(TAG, "基础 ID3 标签写入成功")
+
+            // 步骤 2：静默调用你强大的 MetadataFetcher 进行满血刮削（带隔离保护）
+            try {
+                val metaResult = MetadataFetcher.fetchMetadataRaw(
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    duration = song.durationMs,
+                    needLrc = true,
+                    needCover = true
+                )
+
+                val metaFile = AudioFileIO.read(audioFile)
+                val metaTag = metaFile.tagOrCreateAndSetDefault
+                var isModified = false
+
+                if (!metaResult.lrcWithTrans.isNullOrBlank()) {
+                    metaTag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
+                    File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc").writeText(metaResult.lrcWithTrans)
+                    isModified = true
+                }
+
+                // 优先使用 MetadataFetcher 抓取的最高清封面，其次使用列表中已有的 picUrl 兜底
+                val finalCoverBytes = metaResult.coverBytes ?: if (song.picUrl.isNotBlank()) httpGetBytes(song.picUrl) else null
+
+                if (finalCoverBytes != null && finalCoverBytes.size > 5000) {
+                    val artwork = AndroidArtwork().apply { binaryData = finalCoverBytes; mimeType = "image/jpeg" }
+                    metaTag.deleteArtworkField()
+                    metaTag.setField(artwork)
+                    isModified = true
+                }
+
+                if (isModified) {
+                    metaFile.commit()
+                    Log.d(TAG, "满血封面歌词元数据注入成功: ${song.title}")
+                }
+            } catch (e: Exception) {
+                // 如果双平台刮削因为网络抖动失败了，在这里被拦截，不会导致上层判定下载失败！
+                Log.w(TAG, "满血刮削失败，但音频已安全保存: ${e.message}")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Metadata injection critical failure", e)
+        }
+    }
+
+    // ==========================================
+    // 🔐 Znnu 核心破解黑客算法 (AES-GCM & HMAC)
     // ==========================================
     private suspend fun extractZnnuVipUrl(songId: Long, level: String): String? {
         try {
@@ -214,11 +290,9 @@ object UniversalDownloadEngine {
             val formBody = StringBuilder()
             params.forEach { (k, v) ->
                 if (formBody.isNotEmpty()) formBody.append("&")
-                formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8"))
+                formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8").replace("+", "%20"))
             }
-            formBody.append("&signature=$signature")
-            formBody.append("&timestamp=$timestamp")
-            formBody.append("&domain=$domain")
+            formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
 
             val songRes = httpPostForm(
                 "https://music.znnu.com/api/song",
@@ -272,40 +346,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // 🎵 元数据注入模块 (封面/歌词/属性)
-    // ==========================================
-    private suspend fun injectMetadata(audioFile: File, song: NetSongItem) {
-        try {
-            TagOptionSingleton.getInstance().isAndroid = true
-            val f = AudioFileIO.read(audioFile)
-            val tag = f.tagOrCreateAndSetDefault
-            
-            tag.setField(FieldKey.TITLE, song.title)
-            tag.setField(FieldKey.ARTIST, song.artist)
-            tag.setField(FieldKey.ALBUM, song.album)
-            if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
-
-            val metaResult = MetadataFetcher.fetchMetadataRaw(song.title, song.artist, song.album, song.durationMs, needLrc = true, needCover = true)
-
-            if (!metaResult.lrcWithTrans.isNullOrBlank()) {
-                tag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
-                File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc").writeText(metaResult.lrcWithTrans)
-            }
-
-            val finalCoverBytes = metaResult.coverBytes ?: if (song.picUrl.isNotBlank()) httpGetBytes(song.picUrl) else null
-
-            if (finalCoverBytes != null && finalCoverBytes.size > 5000) {
-                val artwork = AndroidArtwork().apply { binaryData = finalCoverBytes; mimeType = "image/jpeg" }
-                tag.deleteArtworkField()
-                tag.setField(artwork)
-            }
-
-            f.commit()
-        } catch (e: Exception) {}
-    }
-
-    // ==========================================
-    // 🌐 底层网络通讯库
+    // 🌐 底层基础网络通讯库
     // ==========================================
     private suspend fun httpGet(urlString: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
@@ -348,5 +389,64 @@ object UniversalDownloadEngine {
             if (conn.responseCode == 200) return@withContext conn.inputStream.use { it.readBytes() }
         } catch (e: Exception) {} finally { conn?.disconnect() }
         null
+    }
+	
+	// ==========================================
+    // 🕵️ 支线任务：Znnu 单曲真实大小安全探测器
+    // ==========================================
+    private suspend fun fetchZnnuSingleSongSize(songId: String): String? {
+        try {
+            val auth = fetchZnnuAuth() ?: return null
+            val timestamp = System.currentTimeMillis() / 1000
+            val domain = "music.znnu.com"
+            val rawInput = "https://music.163.com/song?id=$songId"
+
+            val params = mapOf(
+                "act" to "search",
+                "keyword" to rawInput,
+                "rawInput" to rawInput,
+                "ip" to auth.ip
+            )
+
+            val signature = generateSignature(params, timestamp, domain)
+
+            val formBody = StringBuilder()
+            params.forEach { (k, v) ->
+                if (formBody.isNotEmpty()) formBody.append("&")
+                formBody.append(k).append("=").append(URLEncoder.encode(v, "UTF-8").replace("+", "%20"))
+            }
+            formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
+
+            val searchRes = httpPostForm(
+                "https://music.znnu.com/api/search", 
+                formBody.toString(), 
+                auth.keyToken
+            ) ?: return null
+            
+            val decryptedStr = decryptZnnuResponse(searchRes, auth.aesKey) ?: return null
+            
+            val responseObj = JSONObject(decryptedStr)
+            val jsonArray = responseObj.optJSONArray("data") 
+                ?: responseObj.optJSONObject("data")?.optJSONArray("list") 
+                ?: responseObj.optJSONArray("list") 
+                ?: return null
+
+            // 在返回的精准结果中匹配我们的 ID，提取真实大小
+            for (i in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(i)
+                if (item.optLong("id").toString() == songId) {
+                    var sizeStr = item.optString("size")
+                    if (sizeStr.isNotBlank() && sizeStr.all { it.isDigit() }) {
+                        val bytes = sizeStr.toLongOrNull() ?: 0L
+                        return if (bytes > 0) String.format("%.1f MB", bytes / 1048576.0f) else null
+                    }
+                    return sizeStr.takeIf { it.isNotBlank() && it != "null" }
+                }
+            }
+        } catch (e: Exception) {
+            // 🌟 绝对隔离：如果 Znnu 接口拦截了我们，悄悄报错，主线完全不受影响
+            Log.w(TAG, "Znnu 支线探测大小失败: ${e.message}")
+        }
+        return null
     }
 }
