@@ -266,10 +266,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                // 🌟 强制清理 Coil 内存及磁盘缓存
-                                coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
-                                coil.Coil.imageLoader(requireContext()).diskCache?.clear()
-                                
                                 // 🌟 局部刷新当前列表项
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
                                 if (index != -1) {
@@ -364,13 +360,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
-                            
-                            // 🌟 批量强制清理 Coil 内存及磁盘缓存
-                            coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
-                            coil.Coil.imageLoader(requireContext()).diskCache?.clear()
-                            
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            
                             // 通知整个列表刷新
                             songAdapter.notifyDataSetChanged()
                         }

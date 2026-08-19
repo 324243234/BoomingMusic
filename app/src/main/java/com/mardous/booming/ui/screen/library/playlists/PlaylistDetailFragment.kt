@@ -237,8 +237,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         menu.findItem(R.id.action_lock)?.setIcon(if (playlistSongAdapter?.isLockDrag == true) R.drawable.ic_lock_24dp else R.drawable.ic_lock_open_24dp)
         if (!isLandscape()) menu.removeItem(R.id.action_search)
     }
-
-    // ================== 🌟 核心权限修复：双通道沙盒穿透与 Inode 永生 ==================
     
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
@@ -398,11 +396,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
                                 
-                                // 🌟 强制清理 Coil 内存及磁盘缓存
-                                coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
-                                coil.Coil.imageLoader(requireContext()).diskCache?.clear()
-                                
-                                // 🌟 局部刷新当前列表项
+                                // 🌟 利用 Coil 文件修改时间戳刷新机制，直接通知 UI 重绘即可
                                 val index = playlistSongAdapter?.dataSet?.indexOfFirst { it.id == song.id } ?: -1
                                 if (index != -1) {
                                     playlistSongAdapter?.notifyItemChanged(index)
@@ -475,11 +469,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
-                            
-                            // 🌟 批量强制清理 Coil 内存及磁盘缓存
-                            coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
-                            coil.Coil.imageLoader(requireContext()).diskCache?.clear()
-                            
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
                             // 通知整个列表刷新
                             playlistSongAdapter?.notifyDataSetChanged()
