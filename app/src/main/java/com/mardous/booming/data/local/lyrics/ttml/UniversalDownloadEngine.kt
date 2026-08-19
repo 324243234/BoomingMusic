@@ -1,3 +1,20 @@
+/*
+ * Copyright (c) 2025 Christians Martínez Alvarado
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 package com.mardous.booming.data.local.lyrics.ttml
 
 import android.content.Context
@@ -66,10 +83,10 @@ object UniversalDownloadEngine {
             val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
             val songArray = runCatching { JSONObject(detailRes).optJSONArray("songs") }.getOrNull() ?: return@withContext emptyList()
 
-            // 🌟 独家优化：支线任务！如果是单曲解析，偷偷去 Znnu 接口把真实的满血大小拿过来！
+            // 🌟 独家优化：支线任务！动态传入 targetLevel，查出对应音质的真实大小！
             var singleSongSizeStr = "点击破盾下载"
             if (idsToFetch.size == 1) {
-                val realSize = fetchZnnuSingleSongSize(idsToFetch[0].toString())
+                val realSize = fetchZnnuSingleSongSize(idsToFetch[0].toString(), targetLevel)
                 if (!realSize.isNullOrBlank()) {
                     singleSongSizeStr = realSize
                 }
@@ -329,7 +346,6 @@ object UniversalDownloadEngine {
                 mapOf("X-Key-Token" to auth.keyToken, "X-Referer" to "musicParser")
             ) ?: return null
 
-            // 🌟 大一统：复用通用的 decryptZnnuResponse，一行代码搞定解密！
             val decryptedJson = decryptZnnuResponse(songRes, auth.aesKey) ?: return null
             return JSONObject(decryptedJson).optString("url")
 
@@ -340,21 +356,21 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // 🕵️ 支线任务：Znnu 单曲真实大小安全探测器 (模拟直接提取接口)
+    // 🕵️ 支线任务：Znnu 单曲真实大小安全探测器 (动态匹配音质)
     // ==========================================
-    private suspend fun fetchZnnuSingleSongSize(songId: String): String? {
+    private suspend fun fetchZnnuSingleSongSize(songId: String, level: String): String? {
         try {
             val auth = fetchZnnuAuth() ?: return null
             val timestamp = System.currentTimeMillis() / 1000
             val domain = "music.znnu.com"
             val rawInput = "https://music.163.com/song?id=$songId"
 
-            // 🌟 核心突破：直接调用 act=song 模拟破盾请求，原站必定返回包含 size 的直链数据！
+            // 🌟 修复：不再硬编码 "lossless"，而是使用传入的真实 targetLevel！
             val params = mapOf(
                 "act" to "song",
                 "id" to songId,
                 "ip" to auth.ip,
-                "level" to "lossless",
+                "level" to level,
                 "rawInput" to rawInput
             )
 
@@ -373,11 +389,9 @@ object UniversalDownloadEngine {
                 mapOf("X-Key-Token" to auth.keyToken, "X-Referer" to "musicParser")
             ) ?: return null
             
-            // 解密服务器返回的真实数据
             val decryptedStr = decryptZnnuResponse(songRes, auth.aesKey) ?: return null
             val responseObj = JSONObject(decryptedStr)
             
-            // 直接从解密后的 JSON 中抠出精准的 size 字段
             var sizeStr = responseObj.optString("size")
             if (sizeStr.isNotBlank() && sizeStr.all { it.isDigit() }) {
                 val bytes = sizeStr.toLongOrNull() ?: 0L

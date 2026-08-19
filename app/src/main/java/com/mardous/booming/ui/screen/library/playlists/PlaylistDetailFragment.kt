@@ -23,6 +23,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import coil.imageLoader
 import com.google.android.material.transition.MaterialArcMotion
 import com.google.android.material.transition.MaterialContainerTransform
 import com.h6ah4i.android.widget.advrecyclerview.animator.RefactoredDefaultItemAnimator
@@ -396,7 +397,10 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
                                 
-                                // 🌟 单曲刷新保障
+                                // 🌟 强制清空 Coil 内存缓存，迫使读取新写入的封面
+                                requireContext().imageLoader.memoryCache?.clear()
+                                requireContext().imageLoader.diskCache?.clear()
+                                
                                 playlistSongAdapter?.let { adapter ->
                                     val currentList = adapter.dataSet.toMutableList()
                                     val index = currentList.indexOfFirst { it.id == song.id }
@@ -476,7 +480,10 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
                             
-                            // 🌟 核心即时刷新：强制重置 dataSet 引用并全局重绘，彻底解决多选/批量获取后缩略图不显示的新图 Bug
+                            // 🌟 强制清空 Coil 内存缓存，迫使读取新写入的封面
+                            requireContext().imageLoader.memoryCache?.clear()
+                            requireContext().imageLoader.diskCache?.clear()
+                            
                             playlistSongAdapter?.let { adapter ->
                                 adapter.dataSet = adapter.dataSet.toList()
                                 adapter.notifyDataSetChanged()
