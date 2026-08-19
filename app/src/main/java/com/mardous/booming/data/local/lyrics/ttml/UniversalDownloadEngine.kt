@@ -116,7 +116,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ⚔️ 第 2 步：纯净下载与满血元数据注入
+    // ⚔️ 第 2 步：纯净下载与安全元数据注入
     // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
@@ -173,8 +173,16 @@ object UniversalDownloadEngine {
                 return@withContext null
             }
 
-            // 🚀 下载完后，立刻调用满血注入逻辑！
-            injectFullMetadata(targetFile, song)
+            // 🚀 1. 首先写入 Znnu 自带的基础标签（歌名、歌手、专辑、年份）确保文件 100% 成功落地
+            injectBasicMetadata(targetFile, song)
+
+            // 🚀 2. 文件存入后再尝试自动调用 MetadataFetcher 刮削封面和歌词（加一层安全隔离，防网络波动导致下载失败）
+            try {
+                injectFullMetadata(targetFile, song)
+            } catch (e: Exception) {
+                Log.w(TAG, "后台自动刮削封面/歌词失败，但不影响已下载的音频: ${e.message}")
+            }
+
             MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
             return@withContext targetFile
 
@@ -188,47 +196,64 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // 📝 满血元数据注入：结合 MetadataFetcher 与 Znnu 年份
+    // 📝 基础元数据写入 (歌名、歌手、专辑、年份)
     // ==========================================
-    private suspend fun injectFullMetadata(audioFile: File, song: NetSongItem) {
+    private fun injectBasicMetadata(audioFile: File, song: NetSongItem) {
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             val f = AudioFileIO.read(audioFile)
             val tag = f.tagOrCreateAndSetDefault
             
-            // 写入基础信息与 Znnu 提取的年份
             tag.setField(FieldKey.TITLE, song.title)
             tag.setField(FieldKey.ARTIST, song.artist)
             tag.setField(FieldKey.ALBUM, song.album)
             if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
 
-            // 🚀 直接调用你完美的 MetadataFetcher 抓取封面和双语歌词
-            val metaResult = MetadataFetcher.fetchMetadataRaw(
-                title = song.title,
-                artist = song.artist,
-                album = song.album,
-                duration = song.durationMs,
-                needLrc = true,
-                needCover = true
-            )
+            f.commit()
+            Log.d(TAG, "基础元数据写入成功: ${song.title}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Basic tag injection failed", e)
+        }
+    }
 
-            // 写入歌词，并生成同名 .lrc 文件
-            if (!metaResult.lrcWithTrans.isNullOrBlank()) {
-                tag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
+    // ==========================================
+    // 📝 自动调用 MetadataFetcher 注入封面与歌词
+    // ==========================================
+    private suspend fun injectFullMetadata(audioFile: File, song: NetSongItem) {
+        val metaResult = MetadataFetcher.fetchMetadataRaw(
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            duration = song.durationMs,
+            needLrc = true,
+            needCover = true
+        )
+
+        val f = AudioFileIO.read(audioFile)
+        val tag = f.tagOrCreateAndSetDefault
+        var modified = false
+
+        if (!metaResult.lrcWithTrans.isNullOrBlank()) {
+            tag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
+            if (audioFile.parentFile != null && audioFile.parentFile!!.exists()) {
                 File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc").writeText(metaResult.lrcWithTrans)
             }
+            modified = true
+        }
 
-            // 写入高清封面
-            if (metaResult.coverBytes != null && metaResult.coverBytes.size > 5000) {
-                val artwork = AndroidArtwork().apply { binaryData = metaResult.coverBytes; mimeType = "image/jpeg" }
-                tag.deleteArtworkField()
-                tag.setField(artwork)
+        if (metaResult.coverBytes != null && metaResult.coverBytes.size > 5000) {
+            val artwork = AndroidArtwork().apply { 
+                binaryData = metaResult.coverBytes 
+                mimeType = "image/jpeg" 
             }
+            tag.deleteArtworkField()
+            tag.setField(artwork)
+            modified = true
+        }
 
+        if (modified) {
             f.commit()
-            Log.d(TAG, "满血元数据注入成功: ${song.title}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Full tag injection failed", e)
+            Log.d(TAG, "自动刮削并注入封面歌词成功: ${song.title}")
         }
     }
 
