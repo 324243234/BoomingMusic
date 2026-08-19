@@ -130,7 +130,21 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         
         detailViewModel.getSongs().observe(viewLifecycleOwner) { songsEntity ->
             binding.progressIndicator.hide()
-            playlistSongAdapter?.dataSet = songsEntity.toSongs()
+            
+            val newSongs = songsEntity.toSongs()
+            
+            // 🌟 细节保护：维持现有的“置顶”顺序，防止刷新后置顶歌曲掉下去
+            val pinnedIds = getPinnedSongIds()
+            if (pinnedIds.isNotEmpty()) {
+                val pinnedSongs = newSongs.filter { it.id.toString() in pinnedIds }
+                val unpinnedSongs = newSongs.filter { it.id.toString() !in pinnedIds }
+                playlistSongAdapter?.dataSet = pinnedSongs + unpinnedSongs
+            } else {
+                playlistSongAdapter?.dataSet = newSongs
+            }
+            
+            // 🌟 核心修复：数据重新赋值后，必须强制通知包裹的 Adapter 刷新 UI！
+            binding.recyclerView.adapter?.notifyDataSetChanged()
         }
         
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
@@ -226,28 +240,72 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         if (!isLandscape()) menu.removeItem(R.id.action_search)
     }
 
-    // ================== 🌟 核心权限修复：将临时文件写入专属缓存区，杜绝 Permission Denied ==================
+   // ================== 🌟 核心权限修复：双通道沙盒穿透与 Inode 永生 ==================
+    
+    // 辅助方法：将绝对路径反向解析为合法的系统媒体库 Uri
+    private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
+        try {
+            val cursor = context.contentResolver.query(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(android.provider.MediaStore.Audio.Media._ID),
+                "${android.provider.MediaStore.Audio.Media.DATA} = ?",
+                arrayOf(path), null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID))
+                    return android.content.ContentUris.withAppendedId(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "解析媒体库 Uri 失败", e)
+        }
+        return null
+    }
+
     private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
-        // 🌟 放在专属的 cacheDir，无论外部权限如何，App 在这里拥有绝对读写权
-        val tempFile = File(requireContext().cacheDir, "${songFile.nameWithoutExtension}_tmp.audio")
+        // 🌟 致命错误修复 1：必须严格保留原有的后缀名（如 .mp3 或 .flac），否则 Jaudiotagger 无法挂载解码器！
+        val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             songFile.copyTo(tempFile, overwrite = true)
+            
+            // 此时后缀正确，AudioFileIO 能够完美识别并读取
             val f = AudioFileIO.read(tempFile)
             val tag = f.tagOrCreateAndSetDefault
             updateTag(tag)
             f.commit() // 内部安全修改完毕
             
-            // 将加工好的数据流，硬灌回原文件，确保物理 Inode 不变
-            tempFile.inputStream().use { input ->
-                FileOutputStream(songFile).use { output ->
-                    input.copyTo(output)
+            // 🌟 致命错误修复 2：沙盒穿透。先尝试普通水流覆写，如果被 Android 11+ 拦截，改用 MediaStore Uri 强行注入！
+            try {
+                tempFile.inputStream().use { input ->
+                    FileOutputStream(songFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "常规 FileOutputStream 被拦截，启动 ContentResolver 穿透注入...")
+                val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                if (uri != null) {
+                    requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
+                        tempFile.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
+                    }
+                } else {
+                    throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
                 }
             }
+            Log.d(TAG, "元数据物理注入成功: ${songFile.name}")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "安全覆写操作严重崩溃", e)
+            throw e // 抛出异常让上层捕获，避免假成功
         } finally {
-            if (tempFile.exists()) tempFile.delete()
+            if (tempFile.exists()) tempFile.delete() // 阅后即焚，绝不留存垃圾
         }
-        // 同步通知媒体库
+        
+        // 强制通知系统媒体库重新扫描该文件，刷新外部显示
         MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
     }
 
