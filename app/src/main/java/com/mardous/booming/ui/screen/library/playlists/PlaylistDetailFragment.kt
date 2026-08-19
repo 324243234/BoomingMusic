@@ -60,6 +60,7 @@ import com.mardous.booming.ui.component.menu.onSongsMenu
 import com.mardous.booming.ui.dialogs.playlists.RemoveFromPlaylistDialog
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
@@ -147,6 +148,23 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
             if (!it) findNavController().navigateUp()
+        }
+    }
+
+    // 🌟 通过反射清空内存死锁，完全避免导入异常
+    private fun clearCoilCacheSafely() {
+        try {
+            val coilClass = Class.forName("coil.Coil")
+            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
+            val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
+            memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
+        } catch (e: Exception) {
+            try {
+                val contextsKt = Class.forName("coil.ContextsKt")
+                val imageLoader = contextsKt.getMethod("getImageLoader", Context::class.java).invoke(null, requireContext())
+                val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
+                memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
+            } catch (e2: Exception) { }
         }
     }
 
@@ -276,7 +294,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "常规 FileOutputStream 被拦截，启动 ContentResolver 穿透注入...")
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
                     requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
@@ -288,10 +305,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
                 }
             }
-            Log.d(TAG, "元数据物理注入成功: ${songFile.name}")
-            
         } catch (e: Exception) {
-            Log.e(TAG, "安全覆写操作严重崩溃", e)
             throw e 
         } finally {
             if (tempFile.exists()) tempFile.delete() 
@@ -396,6 +410,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
                                 
+                                clearCoilCacheSafely()
+                                delay(150)
+                                
                                 playlistSongAdapter?.let { adapter ->
                                     val currentList = adapter.dataSet.toMutableList()
                                     val index = currentList.indexOfFirst { it.id == song.id }
@@ -474,6 +491,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            
+                            clearCoilCacheSafely()
+                            delay(150)
                             
                             playlistSongAdapter?.let { adapter ->
                                 adapter.dataSet = adapter.dataSet.toList()

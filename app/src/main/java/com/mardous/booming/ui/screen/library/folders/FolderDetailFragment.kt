@@ -1,18 +1,5 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.folders
@@ -52,6 +39,7 @@ import com.mardous.booming.ui.component.base.AbsMainActivityFragment
 import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
@@ -102,6 +90,23 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         }
     }
 
+    // 🌟 强行释放运行内存中的旧图片，绝不耗费额外性能去重载整个列表
+    private fun clearCoilCacheSafely() {
+        try {
+            val coilClass = Class.forName("coil.Coil")
+            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
+            val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
+            memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
+        } catch (e: Exception) {
+            try {
+                val contextsKt = Class.forName("coil.ContextsKt")
+                val imageLoader = contextsKt.getMethod("getImageLoader", Context::class.java).invoke(null, requireContext())
+                val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
+                memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
+            } catch (e2: Exception) { }
+        }
+    }
+
     private fun setupButtons() {
         binding.playAction.setOnClickListener {
             playerViewModel.openQueue(songAdapter.dataSet, shuffleMode = OpenShuffleMode.Off)
@@ -136,7 +141,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         songAdapter.dataSet = songs
     }
     
-    // ================== ?? 沙盒穿透与 Inode 永生 ==================
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
@@ -175,7 +179,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "常规 FileOutputStream 被拦截，启动 ContentResolver 穿透注入...")
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
                     requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
@@ -188,7 +191,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "安全覆写操作严重崩溃", e)
             throw e 
         } finally {
             if (tempFile.exists()) tempFile.delete() 
@@ -266,6 +268,10 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
+                                clearCoilCacheSafely()
+                                delay(150) // 给底层 IO 操作一丢丢时间落盘
+                                
+                                // 🌟 性能护城河：移除 loadDetail，绝对不重新扫描整个文件夹，只精准通知这一行 UI 重新渲染！
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
                                 if (index != -1) {
                                     songAdapter.notifyItemChanged(index)
@@ -360,6 +366,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            
+                            clearCoilCacheSafely()
+                            delay(150)
                             songAdapter.notifyDataSetChanged()
                         }
                     }
