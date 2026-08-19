@@ -31,7 +31,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
-import coil.imageLoader
 import com.mardous.booming.R
 import com.mardous.booming.core.sort.SongSortMode
 import com.mardous.booming.data.mapper.searchFilter
@@ -267,11 +266,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                
-                                // ?? 强制清空 Coil 内存缓存，迫使读取新写入的封面
-                                requireContext().imageLoader.memoryCache?.clear()
-                                requireContext().imageLoader.diskCache?.clear()
-                                
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
                                 if (index != -1) {
                                     songAdapter.notifyItemChanged(index)
@@ -366,11 +360,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            
-                            // ?? 强制清空 Coil 内存缓存，迫使读取新写入的封面
-                            requireContext().imageLoader.memoryCache?.clear()
-                            requireContext().imageLoader.diskCache?.clear()
-                            
                             songAdapter.notifyDataSetChanged()
                         }
                     }
