@@ -41,15 +41,12 @@ object UniversalDownloadEngine {
     suspend fun searchOrParse(input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
             val inputTrimmed = input.trim()
-            // 自动判断是网易云链接还是搜索关键字
             val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
             val idsToFetch = mutableListOf<Long>()
             
             if (idMatch != null) {
-                // 如果是链接解析，直接拿到目标 ID
                 idsToFetch.add(idMatch.groupValues[1].toLong())
             } else {
-                // 🌟 智能动态限流：精确搜索（含空格）返回30首，广泛搜索返回80首
                 val limit = if (inputTrimmed.contains(" ") || inputTrimmed.contains("-")) 30 else 80
                 val encodedQuery = URLEncoder.encode(inputTrimmed, "UTF-8").replace("+", "%20")
                 val searchUrl = "$RENDER_API/search?keywords=$encodedQuery&type=1&limit=$limit"
@@ -64,7 +61,6 @@ object UniversalDownloadEngine {
 
             if (idsToFetch.isEmpty()) return@withContext emptyList()
 
-            // 批量拉取歌曲详细基础元数据（不查大小，防止网络超时）
             val idsParam = idsToFetch.joinToString(",")
             val detailUrl = "$RENDER_API/song/detail?ids=$idsParam"
             val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
@@ -117,10 +113,8 @@ object UniversalDownloadEngine {
         var targetFile: File? = null
         var conn: HttpURLConnection? = null
         try {
-            // 🚀 核心战区：无论是不是链接，这里全盘移交 Znnu 提取 VIP 直链！
             var audioUrl = extractZnnuVipUrl(song.id, song.requestedLevel)
             
-            // Render 兜底，防止极小概率下 Znnu 接口抽风
             if (audioUrl.isNullOrBlank()) {
                 Log.w(TAG, "Znnu 解析失败，启动 Render 降级兜底...")
                 val fallbackRes = httpGet("$RENDER_API/song/url/v1?id=${song.id}&level=${song.requestedLevel}")
@@ -171,7 +165,6 @@ object UniversalDownloadEngine {
                 return@withContext null
             }
 
-            // 🚀 文件安全落地！执行第 3 级火箭！
             injectMetadataSafely(targetFile, song)
             MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
             return@withContext targetFile
@@ -190,7 +183,6 @@ object UniversalDownloadEngine {
     // ==========================================
     private suspend fun injectMetadataSafely(audioFile: File, song: NetSongItem) {
         try {
-            // 步骤 1：先保证最基础的 ID3 标签写入，确保文件合法，绝不抛出异常
             TagOptionSingleton.getInstance().isAndroid = true
             val f = AudioFileIO.read(audioFile)
             val tag = f.tagOrCreateAndSetDefault
@@ -200,9 +192,8 @@ object UniversalDownloadEngine {
             tag.setField(FieldKey.ALBUM, song.album)
             if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
             
-            f.commit() // 基础标签保存完毕
+            f.commit()
 
-            // 步骤 2：静默调用强大的 MetadataFetcher 进行满血刮削
             try {
                 val metaResult = MetadataFetcher.fetchMetadataRaw(
                     title = song.title,
@@ -238,7 +229,6 @@ object UniversalDownloadEngine {
             } catch (e: Exception) {
                 Log.w(TAG, "满血刮削失败，但音频已安全保存: ${e.message}")
             }
-            
         } catch (e: Exception) {
             Log.e(TAG, "Metadata injection critical failure", e)
         }
@@ -339,49 +329,14 @@ object UniversalDownloadEngine {
                 mapOf("X-Key-Token" to auth.keyToken, "X-Referer" to "musicParser")
             ) ?: return null
 
-            val songObj = JSONObject(songRes)
-            if (songObj.optInt("code") == 200) {
-                val dataObj = songObj.optJSONObject("data") ?: return null
-                if (dataObj.optInt("enc") == 1) {
-                    val iv = dataObj.optString("iv")
-                    val ciphertext = dataObj.optString("ciphertext")
-                    val tag = dataObj.optString("tag")
-                    
-                    val decryptedJson = decryptAESGCM(aesKeyB64, iv, ciphertext, tag)
-                    if (decryptedJson != null) {
-                        return JSONObject(decryptedJson).optString("url")
-                    }
-                } else {
-                    return dataObj.optString("url")
-                }
-            }
+            // 🌟 大一统：复用通用的 decryptZnnuResponse，一行代码搞定解密！
+            val decryptedJson = decryptZnnuResponse(songRes, auth.aesKey) ?: return null
+            return JSONObject(decryptedJson).optString("url")
+
         } catch (e: Exception) {
             Log.e(TAG, "Znnu crack failed", e)
         }
         return null
-    }
-
-    private fun decryptAESGCM(aesKeyB64: String, ivB64: String, ciphertextB64: String, tagB64: String): String? {
-        return try {
-            val keyBytes = Base64.decode(aesKeyB64, Base64.DEFAULT)
-            val ivBytes = Base64.decode(ivB64, Base64.DEFAULT) 
-            val cipherBytes = Base64.decode(ciphertextB64, Base64.DEFAULT)
-            val tagBytes = Base64.decode(tagB64, Base64.DEFAULT)
-
-            val combined = ByteArray(cipherBytes.size + tagBytes.size)
-            System.arraycopy(cipherBytes, 0, combined, 0, cipherBytes.size)
-            System.arraycopy(tagBytes, 0, combined, cipherBytes.size, tagBytes.size)
-
-            val secretKey = SecretKeySpec(keyBytes, "AES")
-            val gcmSpec = GCMParameterSpec(128, ivBytes)
-
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, gcmSpec)
-            
-            String(cipher.doFinal(combined), Charsets.UTF_8)
-        } catch (e: Exception) {
-            null
-        }
     }
 
     // ==========================================
