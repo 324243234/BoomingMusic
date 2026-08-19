@@ -388,20 +388,14 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             safeWriteMetadataInPlace(File(song.data)) { tag ->
                                 val artwork = AndroidArtwork()
                                 artwork.binaryData = result.coverBytes
-								
-								// 🌟 智能适配：根据字节头自动识别格式，防止强制指定 jpeg 导致解析崩溃
                                 artwork.mimeType = if (result.coverBytes.size > 3 && result.coverBytes[0] == 0x89.toByte()) "image/png" else "image/jpeg"
                                 tag.deleteArtworkField()
                                 tag.setField(artwork)
                             }
-                            // 🌟 核心双保险：顺手把当前播放列表/数据库里的这首歌实体对象也强制刷一遍
-                            // 这样列表下次加载时，能直接读到最新的内存映射
-                            val updatedSong = song.copy(hasCover = true)
-							
+                            
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
                                 
-                                // 🌟 利用 Coil 文件修改时间戳刷新机制，直接通知 UI 重绘即可
                                 val index = playlistSongAdapter?.dataSet?.indexOfFirst { it.id == song.id } ?: -1
                                 if (index != -1) {
                                     playlistSongAdapter?.notifyItemChanged(index)
@@ -464,33 +458,17 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                     safeWriteMetadataInPlace(File(song.data)) { tag ->
                                         val artwork = AndroidArtwork()
                                         artwork.binaryData = result.coverBytes
-										
-                                        // 🌟 智能适配：根据字节头自动识别格式，防止强制指定 jpeg 导致解析崩溃
-                                       artwork.mimeType = if (result.coverBytes.size > 3 && result.coverBytes[0] == 0x89.toByte()) "image/png" else "image/jpeg"
+                                        artwork.mimeType = if (result.coverBytes.size > 3 && result.coverBytes[0] == 0x89.toByte()) "image/png" else "image/jpeg"
                                         tag.deleteArtworkField()
-                                tag.setField(artwork)
-                            }
-                            
-                            // 🌟 核心双保险：顺手把当前播放列表/数据库里的这首歌实体对象也强制刷一遍
-                            // 这样列表下次加载时，能直接读到最新的内存映射
-                            val updatedSong = song.copy(hasCover = true) 
-                            
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
-                                
-                                // 强制刷新列表中的这一行，触发 UI 重新绑定
-                                val index = playlistSongAdapter?.dataSet?.indexOfFirst { it.id == song.id } ?: -1
-                                if (index != -1) {
-                                    playlistSongAdapter?.notifyItemChanged(index)
-                                }
-                            }
+                                        tag.setField(artwork)
+                                    }
+                                    successCount++
                                 } catch (e: Exception) { Log.e(TAG, "Cover 写入失败: ${song.title}", e) }
                             }
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            // 通知整个列表刷新
                             playlistSongAdapter?.notifyDataSetChanged()
                         }
                     }
