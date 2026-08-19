@@ -31,7 +31,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
-import coil.imageLoader // 🌟 引入 Coil
 import com.mardous.booming.R
 import com.mardous.booming.core.sort.SongSortMode
 import com.mardous.booming.data.mapper.searchFilter
@@ -47,7 +46,6 @@ import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.utilities.buildInfoString
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.repository.LyricsRepository
-import com.mardous.booming.data.repository.Repository // 🌟 引入 Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.SongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
@@ -77,7 +75,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     private val binding get() = _binding!!
     
     private val lyricsRepository: LyricsRepository by inject()
-    private val repository: Repository by inject() // 🌟 注入 Repository 以便刷新数据库状态
 
     private lateinit var songAdapter: SongAdapter
 
@@ -204,7 +201,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
     ): Boolean {
-        // 🌟 修复：补充被遗漏的单选菜单拦截！
         return when (menuItem.itemId) {
             R.id.action_fetch_ttml -> {
                 val toast = Toast.makeText(requireContext(), "正在获取: ${song.title} 的TTML...", Toast.LENGTH_LONG)
@@ -268,14 +264,11 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                 tag.setField(artwork)
                             }
                             
-                            // 🌟 核心升级：通知仓库更新数据库状态
-                            runCatching { repository.updateSong(song) }
-                            
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
                                 // 🌟 强制清理 Coil 内存及磁盘缓存
-                                requireContext().imageLoader.memoryCache?.clear()
-                                requireContext().imageLoader.diskCache?.clear()
+                                coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
+                                coil.Coil.imageLoader(requireContext()).diskCache?.clear()
                                 
                                 // 🌟 局部刷新当前列表项
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
@@ -365,9 +358,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                         tag.deleteArtworkField()
                                         tag.setField(artwork)
                                     }
-                                    
-                                    // 🌟 批量更新数据库状态
-                                    runCatching { repository.updateSong(song) }
                                     successCount++
                                 } catch (e: Exception) { Log.e(TAG, "Cover 写入失败", e) }
                             }
@@ -376,8 +366,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             toast.cancel()
                             
                             // 🌟 批量强制清理 Coil 内存及磁盘缓存
-                            requireContext().imageLoader.memoryCache?.clear()
-                            requireContext().imageLoader.diskCache?.clear()
+                            coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
+                            coil.Coil.imageLoader(requireContext()).diskCache?.clear()
                             
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
                             

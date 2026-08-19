@@ -23,7 +23,6 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import coil.imageLoader // 🌟 引入 coil.imageLoader
 import com.google.android.material.transition.MaterialArcMotion
 import com.google.android.material.transition.MaterialContainerTransform
 import com.h6ah4i.android.widget.advrecyclerview.animator.RefactoredDefaultItemAnimator
@@ -52,7 +51,6 @@ import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.repository.LyricsRepository
-import com.mardous.booming.data.repository.Repository // 🌟 引入 Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.PlaylistSongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
@@ -80,7 +78,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private val arguments by navArgs<PlaylistDetailFragmentArgs>()
     private val detailViewModel by viewModel<PlaylistDetailViewModel> { parametersOf(arguments.playlistId) }
     private val lyricsRepository: LyricsRepository by inject()
-    private val repository: Repository by inject() // 🌟 注入 Repository 以便刷新数据库状态
 
     private var _binding: FragmentPlaylistDetailBinding? = null
     private val binding get() = _binding!!
@@ -398,15 +395,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                 tag.setField(artwork)
                             }
                             
-                            // 🌟 核心升级：通知仓库更新该歌曲的状态
-                            runCatching { repository.updateSong(song) }
-                            
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
                                 
                                 // 🌟 强制清理 Coil 内存及磁盘缓存
-                                requireContext().imageLoader.memoryCache?.clear()
-                                requireContext().imageLoader.diskCache?.clear()
+                                coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
+                                coil.Coil.imageLoader(requireContext()).diskCache?.clear()
                                 
                                 // 🌟 局部刷新当前列表项
                                 val index = playlistSongAdapter?.dataSet?.indexOfFirst { it.id == song.id } ?: -1
@@ -475,9 +469,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                         tag.deleteArtworkField()
                                         tag.setField(artwork)
                                     }
-                                    
-                                    // 🌟 批量更新数据库状态
-                                    runCatching { repository.updateSong(song) }
                                     successCount++
                                 } catch (e: Exception) { Log.e(TAG, "Cover 写入失败: ${song.title}", e) }
                             }
@@ -486,8 +477,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             toast.cancel()
                             
                             // 🌟 批量强制清理 Coil 内存及磁盘缓存
-                            requireContext().imageLoader.memoryCache?.clear()
-                            requireContext().imageLoader.diskCache?.clear()
+                            coil.Coil.imageLoader(requireContext()).memoryCache?.clear()
+                            coil.Coil.imageLoader(requireContext()).diskCache?.clear()
                             
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
                             // 通知整个列表刷新
