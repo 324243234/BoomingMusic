@@ -340,7 +340,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // 🕵️ 支线任务：Znnu 单曲真实大小安全探测器
+    // 🕵️ 支线任务：Znnu 单曲真实大小安全探测器 (模拟直接提取接口)
     // ==========================================
     private suspend fun fetchZnnuSingleSongSize(songId: String): String? {
         try {
@@ -349,11 +349,13 @@ object UniversalDownloadEngine {
             val domain = "music.znnu.com"
             val rawInput = "https://music.163.com/song?id=$songId"
 
+            // 🌟 核心突破：直接调用 act=song 模拟破盾请求，原站必定返回包含 size 的直链数据！
             val params = mapOf(
-                "act" to "search",
-                "keyword" to rawInput,
-                "rawInput" to rawInput,
-                "ip" to auth.ip
+                "act" to "song",
+                "id" to songId,
+                "ip" to auth.ip,
+                "level" to "lossless",
+                "rawInput" to rawInput
             )
 
             val signature = generateSignature(params, timestamp, domain)
@@ -365,31 +367,24 @@ object UniversalDownloadEngine {
             }
             formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
 
-            val searchRes = httpPostForm(
-                "https://music.znnu.com/api/search", 
+            val songRes = httpPostForm(
+                "https://music.znnu.com/api/song", 
                 formBody.toString(), 
                 mapOf("X-Key-Token" to auth.keyToken, "X-Referer" to "musicParser")
             ) ?: return null
             
-            val decryptedStr = decryptZnnuResponse(searchRes, auth.aesKey) ?: return null
-            
+            // 解密服务器返回的真实数据
+            val decryptedStr = decryptZnnuResponse(songRes, auth.aesKey) ?: return null
             val responseObj = JSONObject(decryptedStr)
-            val jsonArray = responseObj.optJSONArray("data") 
-                ?: responseObj.optJSONObject("data")?.optJSONArray("list") 
-                ?: responseObj.optJSONArray("list") 
-                ?: return null
-
-            for (i in 0 until jsonArray.length()) {
-                val item = jsonArray.getJSONObject(i)
-                if (item.optLong("id").toString() == songId) {
-                    var sizeStr = item.optString("size")
-                    if (sizeStr.isNotBlank() && sizeStr.all { it.isDigit() }) {
-                        val bytes = sizeStr.toLongOrNull() ?: 0L
-                        return if (bytes > 0) String.format("%.1f MB", bytes / 1048576.0f) else null
-                    }
-                    return sizeStr.takeIf { it.isNotBlank() && it != "null" }
-                }
+            
+            // 直接从解密后的 JSON 中抠出精准的 size 字段
+            var sizeStr = responseObj.optString("size")
+            if (sizeStr.isNotBlank() && sizeStr.all { it.isDigit() }) {
+                val bytes = sizeStr.toLongOrNull() ?: 0L
+                return if (bytes > 0) String.format("%.1f MB", bytes / 1048576.0f) else null
             }
+            return sizeStr.takeIf { it.isNotBlank() && it != "null" }
+
         } catch (e: Exception) {
             Log.w(TAG, "Znnu 支线探测大小失败: ${e.message}")
         }

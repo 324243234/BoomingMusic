@@ -17,15 +17,21 @@
 
 package com.mardous.booming.ui.screen.library.folders
 
+import android.content.Context
+import android.media.MediaScannerConnection
 import android.os.Bundle
+import android.util.Log
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
+import android.widget.Toast
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
+import coil.imageLoader // 🌟 引入 Coil
 import com.mardous.booming.R
 import com.mardous.booming.core.sort.SongSortMode
 import com.mardous.booming.data.mapper.searchFilter
@@ -40,14 +46,25 @@ import com.mardous.booming.extensions.navigation.searchArgs
 import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.utilities.buildInfoString
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
+import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository // 🌟 引入 Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.SongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
 import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagOptionSingleton
+import org.jaudiotagger.tag.images.AndroidArtwork
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.core.parameter.parametersOf
-import java.io.File // 🌟 修复：导入 File 包
+import java.io.File
+import java.io.FileOutputStream
 
 class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_list), ISongCallback {
 
@@ -58,6 +75,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
     private var _binding: FragmentDetailListBinding? = null
     private val binding get() = _binding!!
+    
+    private val lyricsRepository: LyricsRepository by inject()
+    private val repository: Repository by inject() // 🌟 注入 Repository 以便刷新数据库状态
 
     private lateinit var songAdapter: SongAdapter
 
@@ -118,15 +138,260 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             buildInfoString(songs.songCountStr(requireContext()), songs.songsDurationStr())
         songAdapter.dataSet = songs
     }
+    
+    // ================== 🌟 沙盒穿透与 Inode 永生 ==================
+    private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
+        try {
+            val cursor = context.contentResolver.query(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(android.provider.MediaStore.Audio.Media._ID),
+                "${android.provider.MediaStore.Audio.Media.DATA} = ?",
+                arrayOf(path), null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID))
+                    return android.content.ContentUris.withAppendedId(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "解析媒体库 Uri 失败", e)
+        }
+        return null
+    }
+
+    private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
+        val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
+        try {
+            TagOptionSingleton.getInstance().isAndroid = true
+            songFile.copyTo(tempFile, overwrite = true)
+            
+            val f = AudioFileIO.read(tempFile)
+            val tag = f.tagOrCreateAndSetDefault
+            updateTag(tag)
+            f.commit() 
+            
+            try {
+                tempFile.inputStream().use { input ->
+                    FileOutputStream(songFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "常规 FileOutputStream 被拦截，启动 ContentResolver 穿透注入...")
+                val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                if (uri != null) {
+                    requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
+                        tempFile.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
+                    }
+                } else {
+                    throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "安全覆写操作严重崩溃", e)
+            throw e 
+        } finally {
+            if (tempFile.exists()) tempFile.delete() 
+        }
+        MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
+    }
 
     override fun songMenuItemClick(
         song: Song,
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
-    ): Boolean = song.onSongMenu(this, menuItem)
+    ): Boolean {
+        // 🌟 修复：补充被遗漏的单选菜单拦截！
+        return when (menuItem.itemId) {
+            R.id.action_fetch_ttml -> {
+                val toast = Toast.makeText(requireContext(), "正在获取: ${song.title} 的TTML...", Toast.LENGTH_LONG)
+                toast.show()
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
+                    withContext(Dispatchers.Main) {
+                        toast.cancel()
+                        if (!ttmlContent.isNullOrBlank()) {
+                            try {
+                                val songFile = File(song.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                    Toast.makeText(requireContext(), "TTML 获取成功！", Toast.LENGTH_SHORT).show()
+                                    lyricsRepository.clearMemoryCache()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(requireContext(), "保存失败：请检查读写权限", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(requireContext(), "未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                true
+            }
+
+            R.id.action_fetch_lrc -> {
+                val toast = Toast.makeText(requireContext(), "正在获取 LRC: ${song.title}...", Toast.LENGTH_LONG)
+                toast.show()
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
+                    withContext(Dispatchers.Main) { toast.cancel() }
+                    if (!result.lrcWithTrans.isNullOrBlank()) {
+                        try {
+                            val songFile = File(song.data)
+                            if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
+                                File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
+                                lyricsRepository.clearMemoryCache()
+                                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
+                            }
+                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
+                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() } }
+                }
+                true
+            }
+
+            R.id.action_fetch_cover -> {
+                val toast = Toast.makeText(requireContext(), "正在获取封面: ${song.title}...", Toast.LENGTH_LONG)
+                toast.show()
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
+                    withContext(Dispatchers.Main) { toast.cancel() }
+                    if (result.coverBytes != null) {
+                        try {
+                            safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                                tag.deleteArtworkField()
+                                tag.setField(artwork)
+                            }
+                            
+                            // 🌟 核心升级：通知仓库更新数据库状态
+                            runCatching { repository.updateSong(song) }
+                            
+                            withContext(Dispatchers.Main) { 
+                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
+                                // 🌟 强制清理 Coil 内存及磁盘缓存
+                                requireContext().imageLoader.memoryCache?.clear()
+                                requireContext().imageLoader.diskCache?.clear()
+                                
+                                // 🌟 局部刷新当前列表项
+                                val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
+                                if (index != -1) {
+                                    songAdapter.notifyItemChanged(index)
+                                }
+                            }
+                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
+                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
+                }
+                true
+            }
+            else -> song.onSongMenu(this, menuItem)
+        }
+    }
 
     override fun songsMenuItemClick(songs: List<Song>, menuItem: MenuItem) {
-        songs.onSongsMenu(this, menuItem)
+        when (menuItem.itemId) {
+            R.id.action_fetch_ttml -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在后台为 ${songs.size} 首歌曲获取 TTML...", Toast.LENGTH_LONG)
+                    toast.show()
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
+                            if (!ttmlContent.isNullOrBlank()) {
+                                try {
+                                    val songFile = File(song.data)
+                                    val parentDir = songFile.parentFile
+                                    if (parentDir != null && parentDir.exists()) {
+                                        File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                        successCount++
+                                    }
+                                } catch (e: Exception) { e.printStackTrace() }
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            lyricsRepository.clearMemoryCache()
+                            Toast.makeText(requireContext(), "批量获取 TTML 完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
+            R.id.action_fetch_lrc -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取 LRC 歌词...", Toast.LENGTH_LONG)
+                    toast.show()
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
+                            if (!result.lrcWithTrans.isNullOrBlank()) {
+                                try {
+                                    val songFile = File(song.data)
+                                    if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
+                                        File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                        safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
+                                        successCount++
+                                    }
+                                } catch (e: Exception) { Log.e(TAG, "LRC 写入失败", e) }
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            lyricsRepository.clearMemoryCache()
+                            Toast.makeText(requireContext(), "LRC 批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
+            R.id.action_fetch_cover -> {
+                if (songs.isNotEmpty()) {
+                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取高清封面...", Toast.LENGTH_LONG)
+                    toast.show()
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        var successCount = 0
+                        for (song in songs) {
+                            val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
+                            if (result.coverBytes != null) {
+                                try {
+                                    safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                        val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                                        tag.deleteArtworkField()
+                                        tag.setField(artwork)
+                                    }
+                                    
+                                    // 🌟 批量更新数据库状态
+                                    runCatching { repository.updateSong(song) }
+                                    successCount++
+                                } catch (e: Exception) { Log.e(TAG, "Cover 写入失败", e) }
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            toast.cancel()
+                            
+                            // 🌟 批量强制清理 Coil 内存及磁盘缓存
+                            requireContext().imageLoader.memoryCache?.clear()
+                            requireContext().imageLoader.diskCache?.clear()
+                            
+                            Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            
+                            // 通知整个列表刷新
+                            songAdapter.notifyDataSetChanged()
+                        }
+                    }
+                }
+            }
+
+            else -> {
+                songs.onSongsMenu(this, menuItem)
+            }
+        }
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
@@ -141,7 +406,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 true
             }
             
-            // 🌟 修复：补全 item.itemId == 并且使用 arguments.extraFolderPath
             item.itemId == R.id.action_download_music -> {
                 val targetDir = File(arguments.extraFolderPath)
                 com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
@@ -168,5 +432,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+    }
+
+    companion object {
+        const val TAG = "FolderDetailFragment"
     }
 }

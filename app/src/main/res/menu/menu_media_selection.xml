@@ -19,6 +19,19 @@
         android:icon="@drawable/ic_queue_music_24dp"
         android:title="@string/action_add_to_playing_queue"
         app:showAsAction="ifRoom" />
+		
+	<item
+    android:id="@+id/action_fetch_cover"
+    android:title="获取封面"
+    app:showAsAction="never" />
+    <item
+    android:id="@+id/action_fetch_lrc"
+    android:title="获取 LRC"
+    app:showAsAction="never" />
+    <item
+    android:id="@+id/action_fetch_ttml"
+    android:title="获取 TTML"
+    app:showAsAction="never"	/>
 
     <item
         android:id="@+id/action_share"

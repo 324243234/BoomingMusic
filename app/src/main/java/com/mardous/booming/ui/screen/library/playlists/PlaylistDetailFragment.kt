@@ -23,6 +23,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import coil.imageLoader // 🌟 引入 coil.imageLoader
 import com.google.android.material.transition.MaterialArcMotion
 import com.google.android.material.transition.MaterialContainerTransform
 import com.h6ah4i.android.widget.advrecyclerview.animator.RefactoredDefaultItemAnimator
@@ -51,6 +52,7 @@ import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository // 🌟 引入 Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.PlaylistSongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
@@ -78,6 +80,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private val arguments by navArgs<PlaylistDetailFragmentArgs>()
     private val detailViewModel by viewModel<PlaylistDetailViewModel> { parametersOf(arguments.playlistId) }
     private val lyricsRepository: LyricsRepository by inject()
+    private val repository: Repository by inject() // 🌟 注入 Repository 以便刷新数据库状态
 
     private var _binding: FragmentPlaylistDetailBinding? = null
     private val binding get() = _binding!!
@@ -133,7 +136,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             
             val newSongs = songsEntity.toSongs()
             
-            // 🌟 细节保护：维持现有的“置顶”顺序，防止刷新后置顶歌曲掉下去
             val pinnedIds = getPinnedSongIds()
             if (pinnedIds.isNotEmpty()) {
                 val pinnedSongs = newSongs.filter { it.id.toString() in pinnedIds }
@@ -143,7 +145,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 playlistSongAdapter?.dataSet = newSongs
             }
             
-            // 🌟 核心修复：数据重新赋值后，必须强制通知包裹的 Adapter 刷新 UI！
             binding.recyclerView.adapter?.notifyDataSetChanged()
         }
         
@@ -240,9 +241,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         if (!isLandscape()) menu.removeItem(R.id.action_search)
     }
 
-   // ================== 🌟 核心权限修复：双通道沙盒穿透与 Inode 永生 ==================
+    // ================== 🌟 核心权限修复：双通道沙盒穿透与 Inode 永生 ==================
     
-    // 辅助方法：将绝对路径反向解析为合法的系统媒体库 Uri
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
@@ -264,19 +264,16 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
-        // 🌟 致命错误修复 1：必须严格保留原有的后缀名（如 .mp3 或 .flac），否则 Jaudiotagger 无法挂载解码器！
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             songFile.copyTo(tempFile, overwrite = true)
             
-            // 此时后缀正确，AudioFileIO 能够完美识别并读取
             val f = AudioFileIO.read(tempFile)
             val tag = f.tagOrCreateAndSetDefault
             updateTag(tag)
-            f.commit() // 内部安全修改完毕
+            f.commit() 
             
-            // 🌟 致命错误修复 2：沙盒穿透。先尝试普通水流覆写，如果被 Android 11+ 拦截，改用 MediaStore Uri 强行注入！
             try {
                 tempFile.inputStream().use { input ->
                     FileOutputStream(songFile).use { output ->
@@ -300,12 +297,11 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             
         } catch (e: Exception) {
             Log.e(TAG, "安全覆写操作严重崩溃", e)
-            throw e // 抛出异常让上层捕获，避免假成功
+            throw e 
         } finally {
-            if (tempFile.exists()) tempFile.delete() // 阅后即焚，绝不留存垃圾
+            if (tempFile.exists()) tempFile.delete() 
         }
         
-        // 强制通知系统媒体库重新扫描该文件，刷新外部显示
         MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
     }
 
@@ -401,7 +397,23 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                 tag.deleteArtworkField()
                                 tag.setField(artwork)
                             }
-                            withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() }
+                            
+                            // 🌟 核心升级：通知仓库更新该歌曲的状态
+                            runCatching { repository.updateSong(song) }
+                            
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
+                                
+                                // 🌟 强制清理 Coil 内存及磁盘缓存
+                                requireContext().imageLoader.memoryCache?.clear()
+                                requireContext().imageLoader.diskCache?.clear()
+                                
+                                // 🌟 局部刷新当前列表项
+                                val index = playlistSongAdapter?.dataSet?.indexOfFirst { it.id == song.id } ?: -1
+                                if (index != -1) {
+                                    playlistSongAdapter?.notifyItemChanged(index)
+                                }
+                            }
                         } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
                     } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
                 }
@@ -463,13 +475,23 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                                         tag.deleteArtworkField()
                                         tag.setField(artwork)
                                     }
+                                    
+                                    // 🌟 批量更新数据库状态
+                                    runCatching { repository.updateSong(song) }
                                     successCount++
                                 } catch (e: Exception) { Log.e(TAG, "Cover 写入失败: ${song.title}", e) }
                             }
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
+                            
+                            // 🌟 批量强制清理 Coil 内存及磁盘缓存
+                            requireContext().imageLoader.memoryCache?.clear()
+                            requireContext().imageLoader.diskCache?.clear()
+                            
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            // 通知整个列表刷新
+                            playlistSongAdapter?.notifyDataSetChanged()
                         }
                     }
                 }
