@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.TagOptionSingleton
+import org.jaudiotagger.tag.images.AndroidArtwork
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -27,32 +28,28 @@ object UniversalDownloadEngine {
     // 🌟 Znnu 终极密钥常量
     private const val ZNNU_HMAC_KEY = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0"
 
+    // 🌟 恢复 year 字段，用于保存从 Znnu 提取的发行年份
     data class NetSongItem(
         val id: Long, val title: String, val artist: String, val album: String,
-        val durationMs: Long, val picUrl: String, val fileSizeStr: String, val format: String,
-        val year: String, val requestedLevel: String,
-        val searchFallbackUrl: String // 🌟 兜底专用：保存搜索接口直接吐出来的直链
+        val durationMs: Long, val format: String, val fileSizeStr: String,
+        val year: String, val requestedLevel: String, val searchFallbackUrl: String
     )
 
     // ==========================================
-    // ⚔️ 第 1 步：全盘接管 Znnu 搜索接口
+    // 🚀 第 1 步：全盘接管 Znnu 搜索接口
     // ==========================================
     suspend fun searchOrParse(input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
             val inputTrimmed = input.trim()
-            // 如果是分享链接，提取 ID；否则直接作为关键字搜索
             val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
             val isLink = idMatch != null
             val keywordOrLink = if (isLink) inputTrimmed else inputTrimmed
 
-            // 1. 握手：获取 IP 和 KeyToken
             val auth = fetchZnnuAuth() ?: return@withContext emptyList()
 
-            // 2. 构造 Search Payload
             val timestamp = System.currentTimeMillis() / 1000
             val domain = "music.znnu.com"
             
-            // 无论是查关键字还是查链接，Znnu 的 search 接口都支持 rawInput
             val params = mapOf(
                 "act" to "search",
                 "keyword" to keywordOrLink,
@@ -69,34 +66,45 @@ object UniversalDownloadEngine {
             }
             formBody.append("&signature=$signature&timestamp=$timestamp&domain=$domain")
 
-            // 3. 发送请求并解密
             val searchRes = httpPostForm("https://music.znnu.com/api/search", formBody.toString(), auth.keyToken) ?: return@withContext emptyList()
             val decryptedStr = decryptZnnuResponse(searchRes, auth.aesKey) ?: return@withContext emptyList()
             
-            val jsonArray = runCatching { JSONObject(decryptedStr).optJSONArray("data") }.getOrNull() ?: return@withContext emptyList()
+            val responseObj = JSONObject(decryptedStr)
+            val jsonArray = responseObj.optJSONArray("data") ?: responseObj.optJSONObject("data")?.optJSONArray("list") ?: return@withContext emptyList()
 
             val resultList = mutableListOf<NetSongItem>()
-            for (i in 0 until jsonArray.length()) {
+            val maxResults = minOf(jsonArray.length(), 80)
+            
+            for (i in 0 until maxResults) {
                 val item = jsonArray.getJSONObject(i)
                 
                 val id = item.optLong("id")
-                val title = item.optString("name")
-                val artist = item.optString("artist")
-                val album = item.optString("album")
-                val picUrl = item.optString("pic")
-                
-                // 🌟 核心兜底：如果在搜索阶段它就吐出了 URL，我们直接存起来！
-                val fallbackUrl = item.optString("url")
-                
-                // 试着解析大小，Znnu 搜索结果通常会给出 size
-                val sizeBytes = item.optLong("size", 0L)
-                val sizeStr = if (sizeBytes > 0) String.format("%.1f MB", sizeBytes / 1048576.0f) else "未知大小"
-                
-                val format = if (targetLevel == "lossless" || fallbackUrl.contains(".flac")) "FLAC" else "MP3"
-                val publishTime = item.optLong("publishTime", 0L)
-                val yearStr = if (publishTime > 0) java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).format(java.util.Date(publishTime)) else ""
+                if (id == 0L) continue
 
-                resultList.add(NetSongItem(id, title, artist, album, 0L, picUrl, sizeStr, format, yearStr, targetLevel, fallbackUrl))
+                val title = item.optString("name", item.optString("songname", "未知歌曲"))
+                val artist = item.optString("artist", item.optString("singer", "未知歌手"))
+                val album = item.optString("album", item.optString("albumname", "未知专辑"))
+                
+                var sizeStr = item.optString("size")
+                if (sizeStr.isNotBlank() && sizeStr.all { it.isDigit() }) {
+                    val bytes = sizeStr.toLongOrNull() ?: 0L
+                    sizeStr = if (bytes > 0) String.format("%.1f MB", bytes / 1048576.0f) else "未知大小"
+                } else if (sizeStr.isBlank() || sizeStr == "null") {
+                    sizeStr = "未知大小"
+                }
+
+                val durationMs = item.optLong("duration", item.optLong("dt", item.optLong("interval", 0L) * 1000L))
+                
+                // 🌟 提取年份：Znnu 的搜索结果通常带 publishTime（毫秒时间戳）
+                val publishTime = item.optLong("publishTime", 0L)
+                val yearStr = if (publishTime > 1000000000L) {
+                    java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).format(java.util.Date(publishTime))
+                } else ""
+
+                val fallbackUrl = item.optString("url")
+                val format = if (targetLevel == "lossless" || fallbackUrl.contains(".flac", ignoreCase = true)) "FLAC" else "MP3"
+
+                resultList.add(NetSongItem(id, title, artist, album, durationMs, format, sizeStr, yearStr, targetLevel, fallbackUrl))
             }
             
             return@withContext resultList
@@ -108,16 +116,14 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ⚔️ 第 2 步：纯净下载与双重容错直链提取
+    // ⚔️ 第 2 步：纯净下载与满血元数据注入
     // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
         var conn: HttpURLConnection? = null
         try {
-            // 🚀 尝试 1：走正规的 POST /api/song 提取最高音质直链
             var audioUrl = extractZnnuSongUrl(song.id.toString(), song.requestedLevel)
             
-            // 🚀 尝试 2 (兜底)：如果 /api/song 崩了或被封，直接用我们在搜索时劫持的备用直链
             if (audioUrl.isNullOrBlank()) {
                 Log.w(TAG, "api/song 提取失败，启动 api/search 劫持兜底直链！")
                 audioUrl = song.searchFallbackUrl
@@ -167,8 +173,8 @@ object UniversalDownloadEngine {
                 return@withContext null
             }
 
-            // 🚀 下载完后，只打上最基础的文本标签，封面和 LRC 留给 App 本地的 MetadataFetcher 处理
-            injectBasicMetadata(targetFile, song)
+            // 🚀 下载完后，立刻调用满血注入逻辑！
+            injectFullMetadata(targetFile, song)
             MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
             return@withContext targetFile
 
@@ -178,6 +184,51 @@ object UniversalDownloadEngine {
             return@withContext null
         } finally {
             conn?.disconnect()
+        }
+    }
+
+    // ==========================================
+    // 📝 满血元数据注入：结合 MetadataFetcher 与 Znnu 年份
+    // ==========================================
+    private suspend fun injectFullMetadata(audioFile: File, song: NetSongItem) {
+        try {
+            TagOptionSingleton.getInstance().isAndroid = true
+            val f = AudioFileIO.read(audioFile)
+            val tag = f.tagOrCreateAndSetDefault
+            
+            // 写入基础信息与 Znnu 提取的年份
+            tag.setField(FieldKey.TITLE, song.title)
+            tag.setField(FieldKey.ARTIST, song.artist)
+            tag.setField(FieldKey.ALBUM, song.album)
+            if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
+
+            // 🚀 直接调用你完美的 MetadataFetcher 抓取封面和双语歌词
+            val metaResult = MetadataFetcher.fetchMetadataRaw(
+                title = song.title,
+                artist = song.artist,
+                album = song.album,
+                duration = song.durationMs,
+                needLrc = true,
+                needCover = true
+            )
+
+            // 写入歌词，并生成同名 .lrc 文件
+            if (!metaResult.lrcWithTrans.isNullOrBlank()) {
+                tag.setField(FieldKey.LYRICS, metaResult.lrcWithTrans)
+                File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc").writeText(metaResult.lrcWithTrans)
+            }
+
+            // 写入高清封面
+            if (metaResult.coverBytes != null && metaResult.coverBytes.size > 5000) {
+                val artwork = AndroidArtwork().apply { binaryData = metaResult.coverBytes; mimeType = "image/jpeg" }
+                tag.deleteArtworkField()
+                tag.setField(artwork)
+            }
+
+            f.commit()
+            Log.d(TAG, "满血元数据注入成功: ${song.title}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Full tag injection failed", e)
         }
     }
 
@@ -230,7 +281,6 @@ object UniversalDownloadEngine {
     }
 
     private fun generateSignature(params: Map<String, String>, timestamp: Long, domain: String): String {
-        // 严格按照源码里的顺序：o = timestamp + domain，然后 append sort 后的参数
         val sortedKeys = params.keys.sorted()
         var signString = "${timestamp}${domain}"
         for (k in sortedKeys) {
@@ -250,8 +300,6 @@ object UniversalDownloadEngine {
             if (responseObj.optInt("code") != 200) return null
             
             val dataObj = responseObj.optJSONObject("data") ?: return null
-            
-            // 如果它好心直接返回了明文数据，直接吐出
             if (dataObj.optInt("enc") != 1) return dataObj.toString()
 
             val ivB64 = dataObj.optString("iv")
@@ -259,7 +307,7 @@ object UniversalDownloadEngine {
             val tagB64 = dataObj.optString("tag")
 
             val keyBytes = Base64.decode(aesKeyB64, Base64.DEFAULT)
-            val ivBytes = Base64.decode(ivB64, Base64.DEFAULT)
+            val ivBytes = Base64.decode(ivB64, Base64.DEFAULT) 
             val cipherBytes = Base64.decode(ciphertextB64, Base64.DEFAULT)
             val tagBytes = Base64.decode(tagB64, Base64.DEFAULT)
 
@@ -276,26 +324,6 @@ object UniversalDownloadEngine {
             String(cipher.doFinal(combined), Charsets.UTF_8)
         } catch (e: Exception) {
             null
-        }
-    }
-
-    // ==========================================
-    // 📝 极简基础标签注入 (不污染 MetadataFetcher)
-    // ==========================================
-    private fun injectBasicMetadata(audioFile: File, song: NetSongItem) {
-        try {
-            TagOptionSingleton.getInstance().isAndroid = true
-            val f = AudioFileIO.read(audioFile)
-            val tag = f.tagOrCreateAndSetDefault
-            
-            tag.setField(FieldKey.TITLE, song.title)
-            tag.setField(FieldKey.ARTIST, song.artist)
-            tag.setField(FieldKey.ALBUM, song.album)
-            if (song.year.isNotBlank()) tag.setField(FieldKey.YEAR, song.year)
-
-            f.commit()
-        } catch (e: Exception) {
-            Log.e(TAG, "Basic tag injection failed", e)
         }
     }
 
