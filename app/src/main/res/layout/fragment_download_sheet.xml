@@ -14,10 +14,35 @@
         android:textSize="18sp"
         android:textColor="?android:attr/textColorPrimary"/>
 
+    <!-- 🌟 新增：音质选择器 -->
+    <RadioGroup
+        android:id="@+id/rgQuality"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="12dp">
+        
+        <RadioButton
+            android:id="@+id/rbFlac"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="FLAC (无损)"
+            android:checked="true"
+            android:textColor="?android:attr/textColorPrimary"/>
+            
+        <RadioButton
+            android:id="@+id/rbMp3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MP3 (320k)"
+            android:layout_marginStart="16dp"
+            android:textColor="?android:attr/textColorPrimary"/>
+    </RadioGroup>
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="8dp"
         android:orientation="horizontal">
         
         <EditText

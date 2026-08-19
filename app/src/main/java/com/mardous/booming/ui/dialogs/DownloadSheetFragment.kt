@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
@@ -23,6 +24,7 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
     private lateinit var btnSearch: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var recyclerView: RecyclerView
+    private lateinit var rgQuality: RadioGroup // 🌟 新增
     private val resultList = mutableListOf<UniversalDownloadEngine.NetSongItem>()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -35,9 +37,10 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
         btnSearch = view.findViewById(R.id.btnSearch)
         progressBar = view.findViewById(R.id.progressBar)
         recyclerView = view.findViewById(R.id.recyclerView)
+        rgQuality = view.findViewById(R.id.rgQuality) // 🌟 绑定选项
+        
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
 
-        // 极简内部 Adapter 显示 5 首歌曲详情
         recyclerView.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
                 val tv = TextView(parent.context).apply { 
@@ -48,7 +51,6 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
             }
             override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
                 val item = resultList[position]
-                // 🌟 这里按照你要求，展示了 歌名、专辑、文件大小、和是否是FLAC
                 (holder.itemView as TextView).text = "🎵 ${item.title} - ${item.artist}\n💿 专辑: ${item.album} | 💾 [${item.format}] ${item.fileSizeStr}"
                 holder.itemView.setOnClickListener { startDownload(item) }
             }
@@ -58,10 +60,14 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
         btnSearch.setOnClickListener {
             val input = etInput.text.toString()
             if (input.isNotBlank()) {
+                // 🌟 获取用户选择的音质：FLAC 传 lossless，MP3 传 exhigh
+                val targetLevel = if (rgQuality.checkedRadioButtonId == R.id.rbFlac) "lossless" else "exhigh"
+
                 recyclerView.visibility = View.GONE
                 progressBar.visibility = View.VISIBLE
                 lifecycleScope.launch {
-                    val results = UniversalDownloadEngine.searchOrParse(input)
+                    // 🌟 把音质参数传给搜索引擎
+                    val results = UniversalDownloadEngine.searchOrParse(input, targetLevel)
                     progressBar.visibility = View.GONE
                     if (results.isEmpty()) {
                         Toast.makeText(context, "未找到结果，请更换关键词", Toast.LENGTH_SHORT).show()
@@ -78,23 +84,19 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
     private fun startDownload(song: UniversalDownloadEngine.NetSongItem) {
         btnSearch.isEnabled = false
         progressBar.visibility = View.VISIBLE
-        
-        // 🌟 防误触：在下载途中强制锁定对话框，禁止用户点击外部或下滑关闭
         isCancelable = false 
-        
         Toast.makeText(context, "正在下载 [${song.format}]...", Toast.LENGTH_SHORT).show()
         
         lifecycleScope.launch {
-            val file = UniversalDownloadEngine.downloadSong(song, targetDir) { /* 可选更新进度条 */ }
+            val file = UniversalDownloadEngine.downloadSong(requireContext(), song, targetDir) { }
             
-            // 🌟 释放锁
             isCancelable = true 
             btnSearch.isEnabled = true
             progressBar.visibility = View.GONE
             
             if (file != null) {
                 Toast.makeText(context, "✅ 下载成功！已存至此文件夹并注入无损标签", Toast.LENGTH_LONG).show()
-                dismiss() // 成功后自动优雅收起抽屉
+                dismiss() 
             } else {
                 Toast.makeText(context, "❌ 下载失败", Toast.LENGTH_SHORT).show()
             }
