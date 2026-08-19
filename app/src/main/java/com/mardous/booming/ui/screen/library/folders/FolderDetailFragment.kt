@@ -139,6 +139,11 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 detailViewModel.loadDetail()
                 true
             }
+			R.id.action_download_music -> {
+            val targetDir = File(folder.path)
+           com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
+             true
+            }
 
             item.itemId == R.id.action_search -> {
                 findNavController().navigate(

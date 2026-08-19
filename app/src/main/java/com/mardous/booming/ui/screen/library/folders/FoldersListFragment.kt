@@ -154,6 +154,13 @@ class FoldersListFragment : AbsRecyclerViewCustomGridSizeFragment<FileAdapter, G
                         Preferences.startDirectory = startDirectory
                         showToast(getString(R.string.start_directory_set, startDirectory.name))
                     }
+					
+					R.id.action_download_music -> {
+                   val targetDir = File(file.filePath)
+                   // 弹出底部抽屉，目标指向该文件夹
+                  com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
+                   true
+                     }
 
                     R.id.action_scan -> {
                         libraryViewModel.scanPaths(requireContext(), arrayOf(file.filePath))

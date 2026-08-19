@@ -14,4 +14,10 @@
         android:id="@+id/action_go_to_start_directory"
         android:title="@string/action_go_to_start_directory"
         app:showAsAction="never" />
+        
+    <!-- 🌟 新增：全网音乐下载入口 -->
+    <item
+        android:id="@+id/action_download_music"
+        android:title="下载高品质音乐"
+        app:showAsAction="never" />
 </menu>

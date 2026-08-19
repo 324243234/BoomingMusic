@@ -10,6 +10,14 @@
         android:id="@+id/action_play_next"
         android:title="@string/action_queue_next"
         app:showAsAction="never"/>
+        
+    <!-- 🌟 新增：全网音乐下载入口 -->
+    <item
+        android:id="@+id/action_download_music"
+        android:icon="@drawable/ic_download_24dp"
+        android:title="下载高品质音乐"
+        app:showAsAction="never"/>
+
     <item
         android:id="@+id/menu_add_to"
         android:title="@string/add_to_label"
