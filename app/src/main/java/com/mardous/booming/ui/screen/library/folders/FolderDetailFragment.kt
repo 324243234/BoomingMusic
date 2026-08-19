@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Christians Mart¨ªnez Alvarado
+ * Copyright (c) 2025 Christians MartÃ­nez Alvarado
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -136,7 +136,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         songAdapter.dataSet = songs
     }
     
-    // ================== ?? É³ºĞ´©Í¸Óë Inode ÓÀÉú ==================
+    // ================== ?? æ²™ç›’ç©¿é€ä¸ Inode æ°¸ç”Ÿ ==================
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
@@ -152,7 +152,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "½âÎöÃ½Ìå¿â Uri Ê§°Ü", e)
+            Log.e(TAG, "è§£æåª’ä½“åº“ Uri å¤±è´¥", e)
         }
         return null
     }
@@ -175,7 +175,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "³£¹æ FileOutputStream ±»À¹½Ø£¬Æô¶¯ ContentResolver ´©Í¸×¢Èë...")
+                Log.w(TAG, "å¸¸è§„ FileOutputStream è¢«æ‹¦æˆªï¼Œå¯åŠ¨ ContentResolver ç©¿é€æ³¨å…¥...")
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
                     requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
@@ -184,11 +184,11 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         }
                     }
                 } else {
-                    throw Exception("ÎŞ·¨»ñÈ¡ÏµÍ³ÊÚÈ¨µÄ Uri£¬µ×²ãĞ´ÈëÊ§°Ü: ${e.message}")
+                    throw Exception("æ— æ³•è·å–ç³»ç»Ÿæˆæƒçš„ Uriï¼Œåº•å±‚å†™å…¥å¤±è´¥: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "°²È«¸²Ğ´²Ù×÷ÑÏÖØ±ÀÀ£", e)
+            Log.e(TAG, "å®‰å…¨è¦†å†™æ“ä½œä¸¥é‡å´©æºƒ", e)
             throw e 
         } finally {
             if (tempFile.exists()) tempFile.delete() 
@@ -203,7 +203,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     ): Boolean {
         return when (menuItem.itemId) {
             R.id.action_fetch_ttml -> {
-                val toast = Toast.makeText(requireContext(), "ÕıÔÚ»ñÈ¡: ${song.title} µÄTTML...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "æ­£åœ¨è·å–: ${song.title} çš„TTML...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
@@ -215,14 +215,14 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                 val parentDir = songFile.parentFile
                                 if (parentDir != null && parentDir.exists()) {
                                     File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                    Toast.makeText(requireContext(), "TTML »ñÈ¡³É¹¦£¡", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(requireContext(), "TTML è·å–æˆåŠŸï¼", Toast.LENGTH_SHORT).show()
                                     lyricsRepository.clearMemoryCache()
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(requireContext(), "±£´æÊ§°Ü£ºÇë¼ì²é¶ÁĞ´È¨ÏŞ", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "ä¿å­˜å¤±è´¥ï¼šè¯·æ£€æŸ¥è¯»å†™æƒé™", Toast.LENGTH_SHORT).show()
                             }
                         } else {
-                            Toast.makeText(requireContext(), "Î´ÕÒµ½¸Ã¸èÇúµÄÖğ×Ö¸è´Ê", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "æœªæ‰¾åˆ°è¯¥æ­Œæ›²çš„é€å­—æ­Œè¯", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -230,7 +230,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
 
             R.id.action_fetch_lrc -> {
-                val toast = Toast.makeText(requireContext(), "ÕıÔÚ»ñÈ¡ LRC: ${song.title}...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "æ­£åœ¨è·å– LRC: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
@@ -242,16 +242,16 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                 File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
                                 safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
                                 lyricsRepository.clearMemoryCache()
-                                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC »ñÈ¡³É¹¦£¡", Toast.LENGTH_SHORT).show() }
+                                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC è·å–æˆåŠŸï¼", Toast.LENGTH_SHORT).show() }
                             }
-                        } catch (e: Exception) { Log.e(TAG, "Ğ´ÈëÊ§°Ü", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "Î´ÕÒµ½¶ÔÓ¦¸è´Ê", Toast.LENGTH_SHORT).show() } }
+                        } catch (e: Exception) { Log.e(TAG, "å†™å…¥å¤±è´¥", e) }
+                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "æœªæ‰¾åˆ°å¯¹åº”æ­Œè¯", Toast.LENGTH_SHORT).show() } }
                 }
                 true
             }
 
             R.id.action_fetch_cover -> {
-                val toast = Toast.makeText(requireContext(), "ÕıÔÚ»ñÈ¡·âÃæ: ${song.title}...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "æ­£åœ¨è·å–å°é¢: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
@@ -265,14 +265,14 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             }
                             
                             withContext(Dispatchers.Main) { 
-                                Toast.makeText(requireContext(), "·âÃæ»ñÈ¡³É¹¦£¡", Toast.LENGTH_SHORT).show() 
+                                Toast.makeText(requireContext(), "å°é¢è·å–æˆåŠŸï¼", Toast.LENGTH_SHORT).show() 
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
                                 if (index != -1) {
                                     songAdapter.notifyItemChanged(index)
                                 }
                             }
-                        } catch (e: Exception) { Log.e(TAG, "Ğ´ÈëÊ§°Ü", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "Î´ÕÒµ½¶ÔÓ¦·âÃæ", Toast.LENGTH_SHORT).show() } }
+                        } catch (e: Exception) { Log.e(TAG, "å†™å…¥å¤±è´¥", e) }
+                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "æœªæ‰¾åˆ°å¯¹åº”å°é¢", Toast.LENGTH_SHORT).show() } }
                 }
                 true
             }
@@ -284,7 +284,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         when (menuItem.itemId) {
             R.id.action_fetch_ttml -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "ÕıÔÚºóÌ¨Îª ${songs.size} Ê×¸èÇú»ñÈ¡ TTML...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "æ­£åœ¨åå°ä¸º ${songs.size} é¦–æ­Œæ›²è·å– TTML...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -304,7 +304,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             lyricsRepository.clearMemoryCache()
-                            Toast.makeText(requireContext(), "ÅúÁ¿»ñÈ¡ TTML Íê³É: ³É¹¦ $successCount/${songs.size} Ê×", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "æ‰¹é‡è·å– TTML å®Œæˆ: æˆåŠŸ $successCount/${songs.size} é¦–", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -312,7 +312,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
             R.id.action_fetch_lrc -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "ÕıÔÚÎª ${songs.size} Ê×¸è»ñÈ¡ LRC ¸è´Ê...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "æ­£åœ¨ä¸º ${songs.size} é¦–æ­Œè·å– LRC æ­Œè¯...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -326,13 +326,13 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                         safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
                                         successCount++
                                     }
-                                } catch (e: Exception) { Log.e(TAG, "LRC Ğ´ÈëÊ§°Ü", e) }
+                                } catch (e: Exception) { Log.e(TAG, "LRC å†™å…¥å¤±è´¥", e) }
                             }
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             lyricsRepository.clearMemoryCache()
-                            Toast.makeText(requireContext(), "LRC ÅúÁ¿»ñÈ¡Íê³É: ³É¹¦ $successCount/${songs.size} Ê×", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "LRC æ‰¹é‡è·å–å®Œæˆ: æˆåŠŸ $successCount/${songs.size} é¦–", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -340,7 +340,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
             R.id.action_fetch_cover -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "ÕıÔÚÎª ${songs.size} Ê×¸è»ñÈ¡¸ßÇå·âÃæ...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "æ­£åœ¨ä¸º ${songs.size} é¦–æ­Œè·å–é«˜æ¸…å°é¢...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -354,12 +354,12 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                         tag.setField(artwork)
                                     }
                                     successCount++
-                                } catch (e: Exception) { Log.e(TAG, "Cover Ğ´ÈëÊ§°Ü", e) }
+                                } catch (e: Exception) { Log.e(TAG, "Cover å†™å…¥å¤±è´¥", e) }
                             }
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
-                            Toast.makeText(requireContext(), "¾²Ì¬·âÃæÅúÁ¿»ñÈ¡Íê³É: ³É¹¦ $successCount/${songs.size} Ê×", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "é™æ€å°é¢æ‰¹é‡è·å–å®Œæˆ: æˆåŠŸ $successCount/${songs.size} é¦–", Toast.LENGTH_SHORT).show()
                             songAdapter.notifyDataSetChanged()
                         }
                     }
