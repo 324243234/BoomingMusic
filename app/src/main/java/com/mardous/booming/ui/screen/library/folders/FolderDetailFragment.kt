@@ -415,6 +415,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     }
 
     companion object {
-        const val TAG = "FolderDetailFragment"
+        const_val TAG = "FolderDetailFragment"
     }
 }

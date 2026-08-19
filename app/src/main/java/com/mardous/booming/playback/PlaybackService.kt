@@ -1,5 +1,6 @@
 package com.mardous.booming.playback
 
+import android.support.v4.media.session.PlaybackStateCompat
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
