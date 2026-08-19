@@ -30,13 +30,11 @@ object MetadataFetcher {
         return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
     }
 
-    // 🌟 兼容老方法：供现有的播放界面单曲/批量更新时调用
     suspend fun fetchMetadata(song: Song, needLrc: Boolean, needCover: Boolean): FetchResult {
         val artist = if (song.isArtistNameUnknown()) "" else song.artistName
         return fetchMetadataRaw(song.title, artist, song.albumName ?: "", song.duration, needLrc, needCover)
     }
 
-    // 🌟 新增解耦核心：直接接收文字参数，供下载引擎等第三方调用
     suspend fun fetchMetadataRaw(title: String, artist: String, album: String, duration: Long, needLrc: Boolean, needCover: Boolean): FetchResult = withContext(Dispatchers.IO) {
         val cleanTitle = title.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "").replace(Regex("""\(.*?\)|\[.*?\]|【.*?】"""), "").trim()
         val primaryArtist = artist.split(Regex("""[/,&、;+]|\band\b""")).firstOrNull()?.trim() ?: ""
@@ -122,12 +120,9 @@ object MetadataFetcher {
         val normLt = normalizeStr(localTitle)
         val normRt = normalizeStr(rTitle)
         if (normLt.isEmpty() || normRt.isEmpty()) return -1
-        
         val titleIntersect = normLt.contains(normRt) || normRt.contains(normLt)
-
         val localArtists = localArtist.split(Regex("""[/,&、;+]|\band\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b""")).map { normalizeStr(it) }.filter { it.isNotEmpty() }
         val normRa = normalizeStr(rArtist)
-
         var artistMatch = false
         if (localArtists.isEmpty()) {
             artistMatch = true
@@ -136,29 +131,23 @@ object MetadataFetcher {
             if (normRa.contains(primary) || primary.contains(normRa)) artistMatch = true
             else if (localArtists.any { normRa.contains(it) || it.contains(normRa) }) artistMatch = true
         }
-
         val durDiff = if (localDur > 0L && rDurMs > 0L) abs(localDur - rDurMs) else 999999L
         val durMatch = localDur > 0L && rDurMs > 0L && durDiff <= 5000L
-
         if (durMatch && titleIntersect && artistMatch) return 350
         if (!titleIntersect || !artistMatch) return -1
-
         var score = 100
         if (normLt == normRt) score += 400 else score += 50
-
         val mixKws = Regex("remix|mix|dj|版|extended|club|edit|live|现场", RegexOption.IGNORE_CASE)
         val ltFull = "$localTitle $localAlbum"
         val lRemix = mixKws.containsMatchIn(ltFull)
         val rRemix = mixKws.containsMatchIn(rTitle)
         if (lRemix != rRemix) return -1
-
         if (localDur > 0L && rDurMs > 0L) {
             if (durDiff <= 3500L) score += (1000L - durDiff).toInt()
             else if (durDiff <= 8000L) score += (400L - durDiff).toInt()
             else if (durDiff <= 15000L) score -= 200
             else return -1
         }
-
         val normLaAlb = normalizeStr(localAlbum)
         val normRaAlb = normalizeStr(rAlbum)
         if (normLaAlb.isNotEmpty() && normRaAlb.isNotEmpty()) {
@@ -221,7 +210,6 @@ object MetadataFetcher {
                 headerLines.add(trim)
             }
         }
-
         origLines.sortBy { it.first }
         
         val transMap = mutableMapOf<Long, String>()
@@ -263,25 +251,42 @@ object MetadataFetcher {
         }.getOrDefault(-1L)
     }
 
+    // 🌟 核心防泄漏补丁：彻底添加 use{} 和 disconnect()
     private suspend fun httpGet(urlString: String): String? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
-            val conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.readTimeout = 3000
+            conn = URL(urlString).openConnection() as HttpURLConnection
+            conn.readTimeout = 10000
+            conn.connectTimeout = 5000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             if (urlString.contains("163.com")) conn.setRequestProperty("Referer", "https://music.163.com/")
             else if (urlString.contains("qq.com")) conn.setRequestProperty("Referer", "https://y.qq.com/")
-            if (conn.responseCode == 200) return@withContext conn.inputStream.bufferedReader().readText()
-        } catch (e: Exception) {}
+            if (conn.responseCode == 200) {
+                return@withContext conn.inputStream.bufferedReader().use { it.readText() }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "httpGet error", e)
+        } finally {
+            conn?.disconnect()
+        }
         null
     }
 
     private suspend fun httpGetBytes(urlString: String): ByteArray? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
-            val conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.readTimeout = 3000
+            conn = URL(urlString).openConnection() as HttpURLConnection
+            conn.readTimeout = 10000
+            conn.connectTimeout = 5000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            if (conn.responseCode == 200) return@withContext conn.inputStream.readBytes()
-        } catch (e: Exception) {}
+            if (conn.responseCode == 200) {
+                return@withContext conn.inputStream.use { it.readBytes() }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "httpGetBytes error", e)
+        } finally {
+            conn?.disconnect()
+        }
         null
     }
 }

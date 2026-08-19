@@ -138,7 +138,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    // ================== 🌟 核心引擎：本地置顶特权系统 ==================
     private fun getPinnedSongIds(): Set<String> {
         val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
         return prefs.getStringSet("pinned_${playlist.playlistEntity.playListId}", emptySet()) ?: emptySet()
@@ -227,18 +226,19 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         if (!isLandscape()) menu.removeItem(R.id.action_search)
     }
 
-    // ================== 🌟 护航方法：原子级原地复写，死保 MediaStore ID 不变！ ==================
+    // ================== 🌟 核心权限修复：将临时文件写入专属缓存区，杜绝 Permission Denied ==================
     private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
-        val tempFile = File(songFile.parentFile, "${songFile.name}.tmp")
+        // 🌟 放在专属的 cacheDir，无论外部权限如何，App 在这里拥有绝对读写权
+        val tempFile = File(requireContext().cacheDir, "${songFile.nameWithoutExtension}_tmp.audio")
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             songFile.copyTo(tempFile, overwrite = true)
             val f = AudioFileIO.read(tempFile)
             val tag = f.tagOrCreateAndSetDefault
             updateTag(tag)
-            f.commit()
+            f.commit() // 内部安全修改完毕
             
-            // 将新数据化为水流，强制灌入原文件物理地址，不删除原文件 inode！
+            // 将加工好的数据流，硬灌回原文件，确保物理 Inode 不变
             tempFile.inputStream().use { input ->
                 FileOutputStream(songFile).use { output ->
                     input.copyTo(output)
@@ -247,7 +247,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         } finally {
             if (tempFile.exists()) tempFile.delete()
         }
-        // 立刻告诉 Android 系统重新扫描，让数据库同步新数据！
+        // 同步通知媒体库
         MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
     }
 
@@ -307,7 +307,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         return when (menuItem.itemId) {
             R.id.action_remove_from_playlist -> { RemoveFromPlaylistDialog.create(song.toSongEntity(playlist.playlistEntity.playListId)).show(childFragmentManager, "REMOVE_FROM_PLAYLIST"); true }
             
-            // 单曲获取 LRC
             R.id.action_fetch_lrc -> {
                 val toast = Toast.makeText(requireContext(), "正在获取 LRC: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
@@ -329,7 +328,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 true
             }
 
-            // 单曲获取封面
             R.id.action_fetch_cover -> {
                 val toast = Toast.makeText(requireContext(), "正在获取封面: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
@@ -362,7 +360,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         when (menuItem.itemId) {
             R.id.action_remove_from_playlist -> { RemoveFromPlaylistDialog.create(songs.toSongsEntity(playlist.playlistEntity)).show(childFragmentManager, "REMOVE_FROM_PLAYLIST") }
             
-            // 批量获取 LRC
             R.id.action_fetch_lrc -> {
                 if (songs.isNotEmpty()) {
                     val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取 LRC 歌词...", Toast.LENGTH_LONG)
@@ -391,7 +388,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 }
             }
 
-            // 批量获取封面
             R.id.action_fetch_cover -> {
                 if (songs.isNotEmpty()) {
                     val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取高清静态封面...", Toast.LENGTH_LONG)
