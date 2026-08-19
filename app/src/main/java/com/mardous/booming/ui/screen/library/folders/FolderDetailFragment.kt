@@ -47,6 +47,7 @@ import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.core.parameter.parametersOf
+import java.io.File // 🌟 修复：导入 File 包
 
 class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_list), ISongCallback {
 
@@ -139,10 +140,12 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 detailViewModel.loadDetail()
                 true
             }
-			R.id.action_download_music -> {
-            val targetDir = File(folder.path)
-           com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
-             true
+            
+            // 🌟 修复：补全 item.itemId == 并且使用 arguments.extraFolderPath
+            item.itemId == R.id.action_download_music -> {
+                val targetDir = File(arguments.extraFolderPath)
+                com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
+                true
             }
 
             item.itemId == R.id.action_search -> {

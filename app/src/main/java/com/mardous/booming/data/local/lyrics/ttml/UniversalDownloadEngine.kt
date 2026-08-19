@@ -111,7 +111,7 @@ object UniversalDownloadEngine {
                     val buffer = ByteArray(8192)
                     var downloaded = 0L
                     var lastProgress = 0
-                    var bytesRead: Int
+                    var bytesRead = 0
                     // 🌟 协程存活检测 (isActive)：如果用户强退界面，立马中断循环！
                     while (isActive && input.read(buffer).also { bytesRead = it } != -1) {
                         output.write(buffer, 0, bytesRead)
