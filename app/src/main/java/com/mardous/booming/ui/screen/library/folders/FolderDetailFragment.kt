@@ -90,6 +90,26 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         }
     }
 
+    // 🔥 纯反射杀手锏：彻底清空 Coil 的内存和磁盘缓存，无需任何 import，绝对不报错！
+    private fun clearCoilCacheSafely() {
+        try {
+            val coilClass = Class.forName("coil.Coil")
+            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
+            if (imageLoader != null) {
+                try {
+                    val memCache = imageLoader.javaClass.getMethod("getMemoryCache").invoke(imageLoader)
+                    memCache?.javaClass?.getMethod("clear")?.invoke(memCache)
+                } catch (e: Exception) {}
+                try {
+                    val diskCache = imageLoader.javaClass.getMethod("getDiskCache").invoke(imageLoader)
+                    diskCache?.javaClass?.getMethod("clear")?.invoke(diskCache)
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Reflection clear cache failed", e)
+        }
+    }
+
     private fun setupButtons() {
         binding.playAction.setOnClickListener {
             playerViewModel.openQueue(songAdapter.dataSet, shuffleMode = OpenShuffleMode.Off)
@@ -178,8 +198,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
 
             if (success) {
-                // 🌟 核心突破口：完美复刻原生标签编辑器的行为，强刷底层媒体库时间戳！
-                // 这将促使 App 数据库在几百毫秒内自动同步，从而让图片组件认为这是一张新图片并抛弃旧缓存！
+                // 🔥 强制同步更新 Android 底层数据库修改时间，彻底解决缓存死锁！
                 try {
                     val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                     if (uri != null) {
@@ -271,8 +290,16 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                delay(300) // 给予 App 底层数据库同步时间戳的短暂时间
-                                detailViewModel.loadDetail() // 触发文件夹内容的重新加载，获取带有新时间戳的数据模型
+                                
+                                // 🔥 斩草除根：强行清理 Coil 旧图记忆
+                                clearCoilCacheSafely()
+                                delay(300) 
+                                
+                                // 🔥 性能保护：绝不全扫，只精确定位这一行的 UI 进行物理强制重绘
+                                val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
+                                if (index != -1) {
+                                    songAdapter.notifyItemChanged(index, "FORCE_COVER_UPDATE")
+                                }
                             }
                         } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
                     } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
@@ -363,8 +390,10 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            
+                            clearCoilCacheSafely()
                             delay(300)
-                            detailViewModel.loadDetail()
+                            songAdapter.notifyDataSetChanged()
                         }
                     }
                 }

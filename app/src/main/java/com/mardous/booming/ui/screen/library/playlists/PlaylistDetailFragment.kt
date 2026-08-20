@@ -151,6 +151,26 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
+    // 🔥 纯反射杀手锏：彻底清空 Coil 的内存和磁盘缓存，无需任何 import，绝对不报错！
+    private fun clearCoilCacheSafely() {
+        try {
+            val coilClass = Class.forName("coil.Coil")
+            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
+            if (imageLoader != null) {
+                try {
+                    val memCache = imageLoader.javaClass.getMethod("getMemoryCache").invoke(imageLoader)
+                    memCache?.javaClass?.getMethod("clear")?.invoke(memCache)
+                } catch (e: Exception) {}
+                try {
+                    val diskCache = imageLoader.javaClass.getMethod("getDiskCache").invoke(imageLoader)
+                    diskCache?.javaClass?.getMethod("clear")?.invoke(diskCache)
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Reflection clear cache failed", e)
+        }
+    }
+
     private fun getPinnedSongIds(): Set<String> {
         val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
         return prefs.getStringSet("pinned_${playlist.playlistEntity.playListId}", emptySet()) ?: emptySet()
@@ -293,7 +313,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             }
 
             if (success) {
-                // 🌟 完美复刻：修改媒体库的 DATE_MODIFIED 时间戳
+                // 🔥 强制同步更新 Android 底层数据库修改时间，彻底解决缓存死锁！
                 try {
                     val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                     if (uri != null) {
@@ -401,21 +421,23 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     if (result.coverBytes != null) {
                         try {
                             safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                val artwork = AndroidArtwork()
-                                artwork.binaryData = result.coverBytes
-                                artwork.mimeType = if (result.coverBytes.size > 3 && result.coverBytes[0] == 0x89.toByte()) "image/png" else "image/jpeg"
+                                val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
                                 tag.deleteArtworkField()
                                 tag.setField(artwork)
                             }
                             
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
-                                delay(300) // 给予系统数据库极其短暂的同步时间
                                 
+                                // 🔥 斩草除根：强行清理 Coil 旧图记忆
+                                clearCoilCacheSafely()
+                                delay(300) 
+                                
+                                // 🔥 性能保护：绝不全扫，只精确定位这一行的 UI 进行物理强制重绘
                                 playlistSongAdapter?.let { adapter ->
                                     val index = adapter.dataSet.indexOfFirst { it.id == song.id }
                                     if (index != -1) {
-                                        adapter.notifyItemChanged(index)
+                                        adapter.notifyItemChanged(index, "FORCE_COVER_UPDATE")
                                     }
                                 }
                             }
@@ -474,9 +496,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             if (result.coverBytes != null) {
                                 try {
                                     safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                        val artwork = AndroidArtwork()
-                                        artwork.binaryData = result.coverBytes
-                                        artwork.mimeType = if (result.coverBytes.size > 3 && result.coverBytes[0] == 0x89.toByte()) "image/png" else "image/jpeg"
+                                        val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
                                         tag.deleteArtworkField()
                                         tag.setField(artwork)
                                     }
@@ -487,6 +507,8 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            
+                            clearCoilCacheSafely()
                             delay(300)
                             
                             playlistSongAdapter?.notifyDataSetChanged()
