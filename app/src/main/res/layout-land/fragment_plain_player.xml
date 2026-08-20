@@ -32,6 +32,20 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         tools:layout="@layout/fragment_album_cover_default"/>
+		
+	<androidx.media3.ui.PlayerView
+        android:id="@+id/canvasPlayerView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:alpha="0"
+        app:use_controller="false"
+        app:surface_type="texture_view"
+        android:clickable="false"
+        android:focusable="false"
+        app:layout_constraintTop_toTopOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintBottom_toBottomOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintStart_toStartOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintEnd_toEndOf="@+id/playerAlbumCoverFragment" />
 
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/title"
@@ -88,5 +102,84 @@
         app:layout_constraintStart_toStartOf="@+id/playbackControlsFragment"
         app:layout_constraintEnd_toEndOf="@+id/playbackControlsFragment"
         tools:menu="@menu/menu_now_playing"/>
+		
+	<!-- 2. 在文件最底部加入右侧的全新歌词覆盖层 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/rightLyricsContainer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="invisible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/playerAlbumCoverFragment"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/lyricsTopHeader"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="4dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsSongTitleText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:textColor="?android:attr/textColorPrimary"
+                app:layout_constrainedWidth="true"
+                app:layout_constraintHorizontal_bias="0"
+                app:layout_constraintHorizontal_chainStyle="packed"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@+id/lyricsFavoriteButton"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <ImageView
+                android:id="@+id/lyricsFavoriteButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="12dp"
+                android:padding="4dp"
+                android:src="@drawable/ic_favorite_outline_24dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                app:layout_constraintStart_toEndOf="@+id/lyricsSongTitleText"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@+id/lyricsSongTitleText"
+                app:layout_constraintBottom_toBottomOf="@+id/lyricsSongTitleText" />
+
+            <!-- 歌手：只显示歌手，不显示专辑 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/lyricsSongArtistText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textSize="15sp"
+                android:textColor="?android:attr/textColorSecondary"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/lyricsSongTitleText" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- 歌词主视图 -->
+        <androidx.fragment.app.FragmentContainerView
+            android:id="@+id/rightLyricsFragment"
+            android:name="com.mardous.booming.ui.screen.player.cover.CoverLyricsFragment"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginTop="10dp"
+            app:layout_constraintTop_toBottomOf="@+id/lyricsTopHeader"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
