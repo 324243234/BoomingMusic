@@ -4,6 +4,8 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+
+import com.mardous.booming.data.model.Song
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
@@ -215,7 +217,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             if (menu.findItem(R.id.action_go_to_album) == null) menu.add(Menu.NONE, R.id.action_go_to_album, 2, "专辑").setIcon(R.drawable.ic_album_24dp)
             if (menu.findItem(R.id.action_toggle_lyrics_format) == null) menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式").setIcon(R.drawable.ic_lyrics_24dp)
             if (menu.findItem(R.id.action_equalizer) == null) menu.add(Menu.NONE, R.id.action_equalizer, 4, "均衡器").setIcon(R.drawable.ic_equalizer_24dp)
-            if (menu.findItem(R.id.action_toggle_video_cover) == null) menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关").setIcon(R.drawable.ic_movie_24dp)
+            if (menu.findItem(R.id.action_toggle_video_cover) == null) menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关").setIcon(R.drawable.ic_album_24dp)
             if (menu.findItem(R.id.action_sound_settings) == null) menu.add(Menu.NONE, R.id.action_sound_settings, 6, "声音设置").setIcon(R.drawable.ic_volume_up_24dp)
 
             // 其余核心扩展逻辑全部丢入三点溢出菜单
