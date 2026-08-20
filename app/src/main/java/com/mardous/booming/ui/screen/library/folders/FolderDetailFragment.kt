@@ -1,5 +1,18 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.folders
@@ -18,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
+import coil3.SingletonImageLoader
 import com.mardous.booming.R
 import com.mardous.booming.core.sort.SongSortMode
 import com.mardous.booming.data.mapper.searchFilter
@@ -61,7 +75,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
     private var _binding: FragmentDetailListBinding? = null
     private val binding get() = _binding!!
-    
+
     private val lyricsRepository: LyricsRepository by inject()
 
     private lateinit var songAdapter: SongAdapter
@@ -90,40 +104,17 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         }
     }
 
-    private fun setupButtons() {
-        binding.playAction.setOnClickListener {
-            playerViewModel.openQueue(songAdapter.dataSet, shuffleMode = OpenShuffleMode.Off)
-        }
-        binding.shuffleAction.setOnClickListener {
-            playerViewModel.openAndShuffleQueue(songAdapter.dataSet)
-        }
-    }
-
-    private fun setupRecyclerView() {
-        songAdapter = SongAdapter(
-            activity = requireActivity(),
-            dataSet = ArrayList(),
-            itemLayoutRes = R.layout.item_list,
-            sortMode = SongSortMode.FolderSongs,
-            callback = this
-        )
-        binding.recyclerView.apply {
-            layoutManager = LinearLayoutManager(requireContext())
-            adapter = songAdapter
+    // 🔥 官方级缓存清理：直接调用 Coil 3 原生接口，毫无报错风险
+    private fun clearCoilCaches(context: Context) {
+        try {
+            val imageLoader = SingletonImageLoader.get(context)
+            imageLoader.memoryCache?.clear()
+            imageLoader.diskCache?.clear()
+        } catch (e: Exception) {
+            Log.e("FolderDetailFragment", "Failed to clear Coil caches", e)
         }
     }
 
-    fun songs(songs: List<Song>) {
-        if (songs.isEmpty()) {
-            findNavController().popBackStack()
-            return
-        }
-        binding.progressIndicator.hide()
-        binding.subtitle.text =
-            buildInfoString(songs.songCountStr(requireContext()), songs.songsDurationStr())
-        songAdapter.dataSet = songs
-    }
-    
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
@@ -178,11 +169,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
 
             if (success) {
-                // 🌟 核心破局点：jaudiotagger 默认会保留旧的时间戳，导致图片加载库以为文件没变！
-                // 我们必须强行刷新物理文件的修改时间，让图片加载库强制抛弃旧缓存！
+                // 🔥 核心命脉：完美复刻作者的时间戳通知逻辑
                 songFile.setLastModified(System.currentTimeMillis())
-
-                // 🌟 同时强刷 Android 系统的 MediaStore 时间戳，瞬间唤醒 App 底层的数据库监听器！
                 try {
                     val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                     if (uri != null) {
@@ -190,7 +178,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             put(android.provider.MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
                         }
                         requireContext().contentResolver.update(uri, values, null, null)
-                        requireContext().contentResolver.notifyChange(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, null)
+                        requireContext().contentResolver.notifyChange(uri, null)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "更新 MediaStore 时间戳失败", e)
@@ -202,6 +190,40 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             if (tempFile.exists()) tempFile.delete() 
         }
         MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
+    }
+
+    private fun setupButtons() {
+        binding.playAction.setOnClickListener {
+            playerViewModel.openQueue(songAdapter.dataSet, shuffleMode = OpenShuffleMode.Off)
+        }
+        binding.shuffleAction.setOnClickListener {
+            playerViewModel.openAndShuffleQueue(songAdapter.dataSet)
+        }
+    }
+
+    private fun setupRecyclerView() {
+        songAdapter = SongAdapter(
+            activity = requireActivity(),
+            dataSet = ArrayList(),
+            itemLayoutRes = R.layout.item_list,
+            sortMode = SongSortMode.FolderSongs,
+            callback = this
+        )
+        binding.recyclerView.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = songAdapter
+        }
+    }
+
+    fun songs(songs: List<Song>) {
+        if (songs.isEmpty()) {
+            findNavController().popBackStack()
+            return
+        }
+        binding.progressIndicator.hide()
+        binding.subtitle.text =
+            buildInfoString(songs.songCountStr(requireContext()), songs.songsDurationStr())
+        songAdapter.dataSet = songs
     }
 
     override fun songMenuItemClick(
@@ -274,9 +296,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                // 延时 100 毫秒，确保底层的修改事件已经成功发散
-                                delay(100)
-                                // 🌟 局部精准刷新，不浪费任何多余性能！
+                                clearCoilCaches(requireContext())
+                                delay(150)
                                 val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
                                 if (index != -1) {
                                     songAdapter.notifyItemChanged(index)
@@ -371,7 +392,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            delay(100)
+                            clearCoilCaches(requireContext())
+                            delay(150)
                             songAdapter.notifyDataSetChanged()
                         }
                     }
@@ -393,12 +415,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         return when {
             SongSortMode.FolderSongs.sortItemSelected(item) -> {
                 detailViewModel.loadDetail()
-                true
-            }
-            
-            item.itemId == R.id.action_download_music -> {
-                val targetDir = File(arguments.extraFolderPath)
-                com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
                 true
             }
 
@@ -423,7 +439,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         super.onDestroyView()
         _binding = null
     }
-
+    
     companion object {
         const val TAG = "FolderDetailFragment"
     }
