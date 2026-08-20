@@ -1,27 +1,16 @@
 /*
  * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.playlists
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Color
 import android.media.MediaScannerConnection
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.view.Menu
 import android.view.MenuInflater
@@ -65,6 +54,7 @@ import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.PlaylistSongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
@@ -72,9 +62,9 @@ import com.mardous.booming.ui.component.menu.onPlaylistMenu
 import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import com.mardous.booming.ui.dialogs.playlists.RemoveFromPlaylistDialog
+import com.mardous.booming.ui.screen.library.ReloadType
 import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
@@ -86,10 +76,8 @@ import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.core.parameter.parametersOf
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.StringBuilder
 
-/**
- * @author Christians M. A. (mardous)
- */
 class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlist_detail),
     ISongCallback {
 
@@ -97,7 +85,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private val detailViewModel by viewModel<PlaylistDetailViewModel> {
         parametersOf(arguments.playlistId)
     }
-    
+
+    // 🌟 注入官方的 Repository，让修改后能直接通知数据库！
+    private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
     private var _binding: FragmentPlaylistDetailBinding? = null
@@ -119,29 +109,18 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    // 🔥 官方级缓存清理：直接调用 Coil 3 原生接口，毫无报错风险
-    private fun clearCoilCaches(context: Context) {
-        try {
-            val imageLoader = SingletonImageLoader.get(context)
-            imageLoader.memoryCache?.clear()
-            imageLoader.diskCache?.clear()
-        } catch (e: Exception) {
-            Log.e("PlaylistDetail", "Failed to clear Coil caches", e)
-        }
-    }
-
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
-                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(android.provider.MediaStore.Audio.Media._ID),
-                "${android.provider.MediaStore.Audio.Media.DATA} = ?",
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media._ID),
+                "${MediaStore.Audio.Media.DATA} = ?",
                 arrayOf(path), null
             )
             cursor?.use {
                 if (it.moveToFirst()) {
-                    val id = it.getLong(it.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID))
-                    return android.content.ContentUris.withAppendedId(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                    val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID))
+                    return android.content.ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
                 }
             }
         } catch (e: Exception) {
@@ -150,8 +129,10 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         return null
     }
 
-    private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
+    // 🔥 完美复刻：只负责底层物理写入和更新系统时间戳，返回成功状态
+    private suspend fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit): Boolean = withContext(Dispatchers.IO) {
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
+        var success = false
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             songFile.copyTo(tempFile, overwrite = true)
@@ -161,50 +142,40 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             updateTag(tag)
             f.commit() 
             
-            var success = false
             try {
                 tempFile.inputStream().use { input ->
-                    FileOutputStream(songFile).use { output ->
-                        input.copyTo(output)
-                    }
+                    FileOutputStream(songFile).use { output -> input.copyTo(output) }
                 }
                 success = true
             } catch (e: Exception) {
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
                     requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
-                        tempFile.inputStream().use { input ->
-                            input.copyTo(output)
-                        }
+                        tempFile.inputStream().use { input -> input.copyTo(output) }
                     }
                     success = true
-                } else {
-                    throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
                 }
             }
 
             if (success) {
-                // 🔥 核心命脉：完美复刻作者的时间戳通知逻辑
+                // 更新底层物理时间和 MediaStore，强行打破缓存一致性
                 songFile.setLastModified(System.currentTimeMillis())
-                try {
-                    val uri = getUriFromPath(requireContext(), songFile.absolutePath)
-                    if (uri != null) {
-                        val values = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                        }
-                        requireContext().contentResolver.update(uri, values, null, null)
-                        requireContext().contentResolver.notifyChange(uri, null)
+                val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                if (uri != null) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "更新 MediaStore 时间戳失败", e)
+                    requireContext().contentResolver.update(uri, values, null, null)
+                    requireContext().contentResolver.notifyChange(uri, null)
                 }
+                MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
             }
         } catch (e: Exception) {
-            throw e 
+            Log.e(TAG, "写入崩溃", e)
         } finally {
             if (tempFile.exists()) tempFile.delete() 
         }
-        MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
+        return@withContext success
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -240,14 +211,75 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             binding.header.subtitle.text = playlist.songs.toSongs().playlistInfo(requireContext())
             binding.header.image.playlistImage(playlist)
         }
-        detailViewModel.getSongs().observe(viewLifecycleOwner) {
+        detailViewModel.getSongs().observe(viewLifecycleOwner) { songsEntity ->
             binding.progressIndicator.hide()
-            playlistSongAdapter?.dataSet = it.toSongs()
+            val newSongs = songsEntity.toSongs()
+            
+            val pinnedIds = getPinnedSongIds()
+            if (pinnedIds.isNotEmpty()) {
+                val pinnedSongs = newSongs.filter { it.id.toString() in pinnedIds }
+                val unpinnedSongs = newSongs.filter { it.id.toString() !in pinnedIds }
+                playlistSongAdapter?.dataSet = pinnedSongs + unpinnedSongs
+            } else {
+                playlistSongAdapter?.dataSet = newSongs
+            }
+            binding.recyclerView.adapter?.notifyDataSetChanged()
         }
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
             if (!it) {
                 findNavController().navigateUp()
             }
+        }
+    }
+
+    private fun getPinnedSongIds(): Set<String> {
+        val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
+        return prefs.getStringSet("pinned_${playlist.playlistEntity.playListId}", emptySet()) ?: emptySet()
+    }
+
+    private fun setPinnedSongIds(ids: Set<String>) {
+        val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
+        prefs.edit().putStringSet("pinned_${playlist.playlistEntity.playListId}", ids).apply()
+    }
+
+    private fun pinSongsToTop(songsToPin: List<Song>) {
+        val currentSongs = playlistSongAdapter?.dataSet?.toMutableList() ?: return
+        val currentPinnedIds = getPinnedSongIds().toMutableSet()
+        val newlyPinnedSongs = songsToPin.filter { it.id.toString() !in currentPinnedIds }
+        if (newlyPinnedSongs.isEmpty()) {
+            Toast.makeText(requireContext(), "选中的歌曲已在置顶列中", Toast.LENGTH_SHORT).show()
+            return
+        }
+        newlyPinnedSongs.forEach { song -> currentPinnedIds.add(song.id.toString()); currentSongs.remove(song) }
+        currentSongs.addAll(0, newlyPinnedSongs)
+        setPinnedSongIds(currentPinnedIds)
+        recyclerViewDragDropManager?.cancelDrag()
+        playlistSongAdapter?.dataSet = currentSongs
+        binding.recyclerView.adapter?.notifyDataSetChanged()
+        binding.recyclerView.scrollToPosition(0)
+        playlistSongAdapter?.saveSongs(playlist.playlistEntity)
+        Toast.makeText(requireContext(), "已置顶 ${newlyPinnedSongs.size} 首歌曲", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun unpinSongs(songsToUnpin: List<Song>) {
+        val currentSongs = playlistSongAdapter?.dataSet?.toMutableList() ?: return
+        val currentPinnedIds = getPinnedSongIds().toMutableSet()
+        val actualUnpinned = mutableListOf<Song>()
+        songsToUnpin.forEach { song ->
+            if (currentPinnedIds.remove(song.id.toString())) {
+                actualUnpinned.add(song)
+                currentSongs.remove(song)
+            }
+        }
+        if (actualUnpinned.isNotEmpty()) {
+            setPinnedSongIds(currentPinnedIds)
+            val remainingPinnedCount = currentSongs.count { it.id.toString() in currentPinnedIds }
+            currentSongs.addAll(remainingPinnedCount, actualUnpinned)
+            recyclerViewDragDropManager?.cancelDrag()
+            playlistSongAdapter?.dataSet = currentSongs
+            binding.recyclerView.adapter?.notifyDataSetChanged()
+            playlistSongAdapter?.saveSongs(playlist.playlistEntity)
+            Toast.makeText(requireContext(), "已取消置顶", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -322,6 +354,45 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+        if (menuItem.itemId == R.id.action_export_playlist) {
+            val currentSongs = playlistSongAdapter?.dataSet
+            val playlistName = playlist.playlistEntity.playlistName
+            if (!currentSongs.isNullOrEmpty() && playlistName.isNotEmpty()) {
+                syncPlaylistToLocalM3u(playlistName, currentSongs, isManualExport = true)
+            } else {
+                Toast.makeText(requireContext(), "播放列表为空或名称无效，无法导出", Toast.LENGTH_SHORT).show()
+            }
+            return true
+        }
+
+        val currentSongs = playlistSongAdapter?.dataSet
+        if (!currentSongs.isNullOrEmpty()) {
+            val pinnedIds = getPinnedSongIds()
+            val pinnedSongs = currentSongs.filter { it.id.toString() in pinnedIds }
+            val unpinnedSongs = currentSongs.filter { it.id.toString() !in pinnedIds }
+            val sortedUnpinnedList = when (menuItem.itemId) {
+                R.id.action_sort_by_title_asc -> unpinnedSongs.sortedBy { it.title }
+                R.id.action_sort_by_title_desc -> unpinnedSongs.sortedByDescending { it.title }
+                R.id.action_sort_by_artist_asc -> unpinnedSongs.sortedBy { it.artistName }
+                R.id.action_sort_by_artist_desc -> unpinnedSongs.sortedByDescending { it.artistName }
+                R.id.action_sort_by_album_asc -> unpinnedSongs.sortedBy { it.albumName }
+                R.id.action_sort_by_album_desc -> unpinnedSongs.sortedByDescending { it.albumName }
+                R.id.action_sort_by_duration_asc -> unpinnedSongs.sortedBy { it.duration }
+                R.id.action_sort_by_duration_desc -> unpinnedSongs.sortedByDescending { it.duration }
+                R.id.action_sort_by_date_asc -> unpinnedSongs.sortedBy { it.dateAdded }
+                R.id.action_sort_by_date_desc -> unpinnedSongs.sortedByDescending { it.dateAdded }
+                else -> null
+            }
+            if (sortedUnpinnedList != null) {
+                recyclerViewDragDropManager?.cancelDrag()
+                playlistSongAdapter?.dataSet = pinnedSongs + sortedUnpinnedList
+                binding.recyclerView.adapter?.notifyDataSetChanged()
+                binding.recyclerView.scrollToPosition(0)
+                playlistSongAdapter?.saveSongs(playlist.playlistEntity)
+                return true
+            }
+        }
+
         return when (menuItem.itemId) {
             android.R.id.home -> {
                 findNavController().navigateUp()
@@ -365,6 +436,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     .show(childFragmentManager, "REMOVE_FROM_PLAYLIST")
                 true
             }
+
             R.id.action_fetch_ttml -> {
                 val toast = Toast.makeText(requireContext(), "正在获取: ${song.title} 的TTML...", Toast.LENGTH_LONG)
                 toast.show()
@@ -399,16 +471,26 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
                     withContext(Dispatchers.Main) { toast.cancel() }
                     if (!result.lrcWithTrans.isNullOrBlank()) {
-                        try {
-                            val songFile = File(song.data)
-                            if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
-                                File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
-                                safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
-                                lyricsRepository.clearMemoryCache()
-                                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
-                            }
-                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() } }
+                        val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                            tag.setField(FieldKey.LYRICS, result.lrcWithTrans)
+                        }
+                        if (success) {
+                            try {
+                                val songFile = File(song.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    File(parentDir, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                }
+                            } catch (e: Exception) {}
+                            
+                            // 更新数据库
+                            try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
+                            lyricsRepository.clearMemoryCache()
+                            withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() }
+                    }
                 }
                 true
             }
@@ -419,30 +501,44 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
                     withContext(Dispatchers.Main) { toast.cancel() }
+                    
                     if (result.coverBytes != null) {
-                        try {
-                            safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
-                                tag.deleteArtworkField()
-                                tag.setField(artwork)
-                            }
+                        val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                            val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                            tag.deleteArtworkField()
+                            tag.setField(artwork)
+                        }
+                        
+                        if (success) {
+                            // 🌟 1. 彻底复刻官方核心逻辑：通知数据库同步！
+                            try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            withContext(Dispatchers.Main) { 
-                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                clearCoilCaches(requireContext())
-                                delay(150)
-                                playlistSongAdapter?.let { adapter ->
-                                    val index = adapter.dataSet.indexOfFirst { it.id == song.id }
-                                    if (index != -1) {
-                                        adapter.notifyItemChanged(index)
-                                    }
-                                }
+                            // 🌟 2. 清理官方原生双层缓存
+                            try {
+                                val imageLoader = SingletonImageLoader.get(requireContext())
+                                imageLoader.memoryCache?.clear()
+                                imageLoader.diskCache?.clear()
+                            } catch (e: Exception) {}
+                            
+                            // 🌟 3. 发送全局重载通知，直接让播放器及全库重新载入
+                            libraryViewModel.forceReload(ReloadType.Songs)
+                            libraryViewModel.forceReload(ReloadType.Playlists)
+                            
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
+                                // Room DB 的 LiveData 会自己发射新数据，这里属于双保险：
+                                playlistSongAdapter?.notifyDataSetChanged()
                             }
-                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
+                        }
+                    } else { 
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } 
+                    }
                 }
                 true
             }
+
+            R.id.action_pin_to_top -> { pinSongsToTop(listOf(song)); true }
+            R.id.action_unpin -> { unpinSongs(listOf(song)); true }
             else -> song.onSongMenu(this, menuItem)
         }
     }
@@ -487,18 +583,29 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
+                        val successIds = mutableListOf<Long>()
                         for (song in songs) {
                             val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
                             if (!result.lrcWithTrans.isNullOrBlank()) {
-                                try {
-                                    val songFile = File(song.data)
-                                    if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
-                                        File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
-                                        safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
-                                        successCount++
-                                    }
-                                } catch (e: Exception) { Log.e(TAG, "LRC 写入失败", e) }
+                                val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                    tag.setField(FieldKey.LYRICS, result.lrcWithTrans)
+                                }
+                                if (success) {
+                                    try {
+                                        val songFile = File(song.data)
+                                        val parentDir = songFile.parentFile
+                                        if (parentDir != null && parentDir.exists()) {
+                                            File(parentDir, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                        }
+                                    } catch (e: Exception) {}
+                                    successIds.add(song.id)
+                                    successCount++
+                                }
                             }
+                        }
+                        if (successIds.isNotEmpty()) {
+                            try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
+                            libraryViewModel.forceReload(ReloadType.Songs)
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
@@ -515,30 +622,86 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
+                        val successIds = mutableListOf<Long>()
                         for (song in songs) {
                             val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
                             if (result.coverBytes != null) {
-                                try {
-                                    safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                        val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
-                                        tag.deleteArtworkField()
-                                        tag.setField(artwork)
-                                    }
+                                val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                    val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                                    tag.deleteArtworkField()
+                                    tag.setField(artwork)
+                                }
+                                if (success) {
+                                    successIds.add(song.id)
                                     successCount++
-                                } catch (e: Exception) { Log.e(TAG, "Cover 写入失败", e) }
+                                }
                             }
                         }
+                        
+                        if (successIds.isNotEmpty()) {
+                            // 🌟 批量同步 App 数据库
+                            try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
+                            
+                            try {
+                                val imageLoader = SingletonImageLoader.get(requireContext())
+                                imageLoader.memoryCache?.clear()
+                                imageLoader.diskCache?.clear()
+                            } catch (e: Exception) {}
+                            
+                            libraryViewModel.forceReload(ReloadType.Songs)
+                            libraryViewModel.forceReload(ReloadType.Playlists)
+                        }
+                        
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            clearCoilCaches(requireContext())
-                            delay(150)
-                            playlistSongAdapter?.notifyDataSetChanged()
                         }
                     }
                 }
             }
+
             else -> songs.onSongsMenu(this, menuItem)
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
+        if (playlistName.isBlank() || songs.isEmpty()) return
+        val appContext = requireContext().applicationContext
+        val safeSongs = songs.toList()
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val m3uContent = java.lang.StringBuilder()
+                m3uContent.append("#EXTM3U\r\n")
+                for (song in safeSongs) {
+                    val durationSec = song.duration / 1000
+                    m3uContent.append("#EXTINF:$durationSec,${song.artistName} - ${song.title}\r\n")
+                    m3uContent.append("${song.data}\r\n")
+                }
+                val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+                val playlistDir = File(musicDir, "Playlists")
+                if (!playlistDir.exists()) playlistDir.mkdirs()
+
+                val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val m3uFile = File(playlistDir, "$safeFileName.m3u")
+                
+                FileOutputStream(m3uFile, false).use { fos ->
+                    fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+                    fos.flush()
+                    fos.fd.sync()
+                }
+
+                MediaScannerConnection.scanFile(appContext, arrayOf(m3uFile.absolutePath), arrayOf("audio/mpegurl", "audio/x-mpegurl"), null)
+
+                if (isManualExport) {
+                    withContext(Dispatchers.Main) { Toast.makeText(appContext, "播放列表已物理覆盖至:\n${m3uFile.absolutePath}", Toast.LENGTH_LONG).show() }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                if (isManualExport) {
+                    withContext(Dispatchers.Main) { Toast.makeText(appContext, "导出失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                }
+            }
         }
     }
 

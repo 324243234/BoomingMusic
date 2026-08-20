@@ -1,25 +1,14 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.folders
 
+import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import android.view.Menu
 import android.view.MenuInflater
@@ -47,13 +36,14 @@ import com.mardous.booming.extensions.setSupportActionBar
 import com.mardous.booming.extensions.utilities.buildInfoString
 import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.ui.ISongCallback
 import com.mardous.booming.ui.adapters.song.SongAdapter
 import com.mardous.booming.ui.component.base.AbsMainActivityFragment
 import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
+import com.mardous.booming.ui.screen.library.ReloadType
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
@@ -76,6 +66,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     private var _binding: FragmentDetailListBinding? = null
     private val binding get() = _binding!!
 
+    // 🌟 注入官方的 Repository，用来通知数据库刷新！
+    private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
     private lateinit var songAdapter: SongAdapter
@@ -104,29 +96,18 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         }
     }
 
-    // 🔥 官方级缓存清理：直接调用 Coil 3 原生接口，毫无报错风险
-    private fun clearCoilCaches(context: Context) {
-        try {
-            val imageLoader = SingletonImageLoader.get(context)
-            imageLoader.memoryCache?.clear()
-            imageLoader.diskCache?.clear()
-        } catch (e: Exception) {
-            Log.e("FolderDetailFragment", "Failed to clear Coil caches", e)
-        }
-    }
-
     private fun getUriFromPath(context: Context, path: String): android.net.Uri? {
         try {
             val cursor = context.contentResolver.query(
-                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(android.provider.MediaStore.Audio.Media._ID),
-                "${android.provider.MediaStore.Audio.Media.DATA} = ?",
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media._ID),
+                "${MediaStore.Audio.Media.DATA} = ?",
                 arrayOf(path), null
             )
             cursor?.use {
                 if (it.moveToFirst()) {
-                    val id = it.getLong(it.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID))
-                    return android.content.ContentUris.withAppendedId(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                    val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID))
+                    return android.content.ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
                 }
             }
         } catch (e: Exception) {
@@ -135,8 +116,10 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         return null
     }
 
-    private fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit) {
+    // 🔥 完美复刻：只负责底层物理写入和更新系统时间戳，返回成功状态
+    private suspend fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit): Boolean = withContext(Dispatchers.IO) {
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
+        var success = false
         try {
             TagOptionSingleton.getInstance().isAndroid = true
             songFile.copyTo(tempFile, overwrite = true)
@@ -146,50 +129,40 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             updateTag(tag)
             f.commit() 
             
-            var success = false
             try {
                 tempFile.inputStream().use { input ->
-                    FileOutputStream(songFile).use { output ->
-                        input.copyTo(output)
-                    }
+                    FileOutputStream(songFile).use { output -> input.copyTo(output) }
                 }
                 success = true
             } catch (e: Exception) {
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
                     requireContext().contentResolver.openOutputStream(uri, "w")?.use { output ->
-                        tempFile.inputStream().use { input ->
-                            input.copyTo(output)
-                        }
+                        tempFile.inputStream().use { input -> input.copyTo(output) }
                     }
                     success = true
-                } else {
-                    throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
                 }
             }
 
             if (success) {
-                // 🔥 核心命脉：完美复刻作者的时间戳通知逻辑
+                // 更新底层物理时间和 MediaStore，强行打破缓存一致性
                 songFile.setLastModified(System.currentTimeMillis())
-                try {
-                    val uri = getUriFromPath(requireContext(), songFile.absolutePath)
-                    if (uri != null) {
-                        val values = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                        }
-                        requireContext().contentResolver.update(uri, values, null, null)
-                        requireContext().contentResolver.notifyChange(uri, null)
+                val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                if (uri != null) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "更新 MediaStore 时间戳失败", e)
+                    requireContext().contentResolver.update(uri, values, null, null)
+                    requireContext().contentResolver.notifyChange(uri, null)
                 }
+                MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
             }
         } catch (e: Exception) {
-            throw e 
+            Log.e(TAG, "写入崩溃", e)
         } finally {
             if (tempFile.exists()) tempFile.delete() 
         }
-        MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
+        return@withContext success
     }
 
     private fun setupButtons() {
@@ -266,16 +239,26 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
                     withContext(Dispatchers.Main) { toast.cancel() }
                     if (!result.lrcWithTrans.isNullOrBlank()) {
-                        try {
-                            val songFile = File(song.data)
-                            if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
-                                File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
-                                safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
-                                lyricsRepository.clearMemoryCache()
-                                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
-                            }
-                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() } }
+                        val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                            tag.setField(FieldKey.LYRICS, result.lrcWithTrans)
+                        }
+                        if (success) {
+                            try {
+                                val songFile = File(song.data)
+                                val parentDir = songFile.parentFile
+                                if (parentDir != null && parentDir.exists()) {
+                                    File(parentDir, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                }
+                            } catch (e: Exception) {}
+                            
+                            // 通知数据库变更
+                            try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
+                            lyricsRepository.clearMemoryCache()
+                            withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
+                        }
+                    } else { 
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() } 
+                    }
                 }
                 true
             }
@@ -286,28 +269,41 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
                     withContext(Dispatchers.Main) { toast.cancel() }
+                    
                     if (result.coverBytes != null) {
-                        try {
-                            safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
-                                tag.deleteArtworkField()
-                                tag.setField(artwork)
-                            }
+                        val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                            val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                            tag.deleteArtworkField()
+                            tag.setField(artwork)
+                        }
+                        
+                        if (success) {
+                            // 🌟 1. 彻底复刻官方核心逻辑：通知数据库刷新！
+                            try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            withContext(Dispatchers.Main) { 
-                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                clearCoilCaches(requireContext())
-                                delay(150)
-                                val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
-                                if (index != -1) {
-                                    songAdapter.notifyItemChanged(index)
-                                }
+                            // 🌟 2. 官方级清缓存
+                            try {
+                                val imageLoader = SingletonImageLoader.get(requireContext())
+                                imageLoader.memoryCache?.clear()
+                                imageLoader.diskCache?.clear()
+                            } catch (e: Exception) {}
+                            
+                            // 🌟 3. 全局强刷：通知全局库和底层播放器更新
+                            libraryViewModel.forceReload(ReloadType.Songs)
+                            libraryViewModel.forceReload(ReloadType.Playlists)
+                            
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
+                                detailViewModel.loadDetail() // 触发当前文件夹列表重新拉取数据库
                             }
-                        } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
-                    } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
+                        }
+                    } else { 
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } 
+                    }
                 }
                 true
             }
+
             else -> song.onSongMenu(this, menuItem)
         }
     }
@@ -348,18 +344,29 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
+                        val successIds = mutableListOf<Long>()
                         for (song in songs) {
                             val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
                             if (!result.lrcWithTrans.isNullOrBlank()) {
-                                try {
-                                    val songFile = File(song.data)
-                                    if (songFile.parentFile != null && songFile.parentFile!!.exists()) {
-                                        File(songFile.parentFile, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
-                                        safeWriteMetadataInPlace(songFile) { tag -> tag.setField(FieldKey.LYRICS, result.lrcWithTrans) }
-                                        successCount++
-                                    }
-                                } catch (e: Exception) { Log.e(TAG, "LRC 写入失败", e) }
+                                val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                    tag.setField(FieldKey.LYRICS, result.lrcWithTrans)
+                                }
+                                if (success) {
+                                    try {
+                                        val songFile = File(song.data)
+                                        val parentDir = songFile.parentFile
+                                        if (parentDir != null && parentDir.exists()) {
+                                            File(parentDir, "${songFile.nameWithoutExtension}.lrc").writeText(result.lrcWithTrans)
+                                        }
+                                    } catch (e: Exception) {}
+                                    successIds.add(song.id)
+                                    successCount++
+                                }
                             }
+                        }
+                        if (successIds.isNotEmpty()) {
+                            try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
+                            libraryViewModel.forceReload(ReloadType.Songs)
                         }
                         withContext(Dispatchers.Main) {
                             toast.cancel()
@@ -376,25 +383,41 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
+                        val successIds = mutableListOf<Long>()
                         for (song in songs) {
                             val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
                             if (result.coverBytes != null) {
-                                try {
-                                    safeWriteMetadataInPlace(File(song.data)) { tag ->
-                                        val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
-                                        tag.deleteArtworkField()
-                                        tag.setField(artwork)
-                                    }
+                                val success = safeWriteMetadataInPlace(File(song.data)) { tag ->
+                                    val artwork = AndroidArtwork().apply { binaryData = result.coverBytes; mimeType = "image/jpeg" }
+                                    tag.deleteArtworkField()
+                                    tag.setField(artwork)
+                                }
+                                if (success) {
+                                    successIds.add(song.id)
                                     successCount++
-                                } catch (e: Exception) { Log.e(TAG, "Cover 写入失败", e) }
+                                }
                             }
                         }
+                        if (successIds.isNotEmpty()) {
+                            // 🌟 批量同步 App 数据库
+                            try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
+                            
+                            try {
+                                val imageLoader = SingletonImageLoader.get(requireContext())
+                                imageLoader.memoryCache?.clear()
+                                imageLoader.diskCache?.clear()
+                            } catch (e: Exception) {}
+                            
+                            libraryViewModel.forceReload(ReloadType.Songs)
+                            libraryViewModel.forceReload(ReloadType.Playlists)
+                        }
+                        
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            clearCoilCaches(requireContext())
-                            delay(150)
-                            songAdapter.notifyDataSetChanged()
+                            if (successIds.isNotEmpty()) {
+                                detailViewModel.loadDetail()
+                            }
                         }
                     }
                 }
@@ -415,6 +438,12 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         return when {
             SongSortMode.FolderSongs.sortItemSelected(item) -> {
                 detailViewModel.loadDetail()
+                true
+            }
+            
+            item.itemId == R.id.action_download_music -> {
+                val targetDir = File(arguments.extraFolderPath)
+                com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
                 true
             }
 
@@ -439,7 +468,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         super.onDestroyView()
         _binding = null
     }
-    
+
     companion object {
         const val TAG = "FolderDetailFragment"
     }
