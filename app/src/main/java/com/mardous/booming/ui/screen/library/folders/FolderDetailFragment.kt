@@ -90,23 +90,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         }
     }
 
-    // 🌟 强行释放运行内存中的旧图片，绝不耗费额外性能去重载整个列表
-    private fun clearCoilCacheSafely() {
-        try {
-            val coilClass = Class.forName("coil.Coil")
-            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
-            val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
-            memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
-        } catch (e: Exception) {
-            try {
-                val contextsKt = Class.forName("coil.ContextsKt")
-                val imageLoader = contextsKt.getMethod("getImageLoader", Context::class.java).invoke(null, requireContext())
-                val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
-                memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
-            } catch (e2: Exception) { }
-        }
-    }
-
     private fun setupButtons() {
         binding.playAction.setOnClickListener {
             playerViewModel.openQueue(songAdapter.dataSet, shuffleMode = OpenShuffleMode.Off)
@@ -172,12 +155,14 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             updateTag(tag)
             f.commit() 
             
+            var success = false
             try {
                 tempFile.inputStream().use { input ->
                     FileOutputStream(songFile).use { output ->
                         input.copyTo(output)
                     }
                 }
+                success = true
             } catch (e: Exception) {
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
@@ -186,8 +171,26 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             input.copyTo(output)
                         }
                     }
+                    success = true
                 } else {
                     throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
+                }
+            }
+
+            if (success) {
+                // 🌟 核心突破口：完美复刻原生标签编辑器的行为，强刷底层媒体库时间戳！
+                // 这将促使 App 数据库在几百毫秒内自动同步，从而让图片组件认为这是一张新图片并抛弃旧缓存！
+                try {
+                    val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                    if (uri != null) {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                        }
+                        requireContext().contentResolver.update(uri, values, null, null)
+                        requireContext().contentResolver.notifyChange(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, null)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "更新 MediaStore 时间戳失败", e)
                 }
             }
         } catch (e: Exception) {
@@ -268,14 +271,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             withContext(Dispatchers.Main) { 
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show() 
-                                clearCoilCacheSafely()
-                                delay(150) // 给底层 IO 操作一丢丢时间落盘
-                                
-                                // 🌟 性能护城河：移除 loadDetail，绝对不重新扫描整个文件夹，只精准通知这一行 UI 重新渲染！
-                                val index = songAdapter.dataSet.indexOfFirst { it.id == song.id }
-                                if (index != -1) {
-                                    songAdapter.notifyItemChanged(index)
-                                }
+                                delay(300) // 给予 App 底层数据库同步时间戳的短暂时间
+                                detailViewModel.loadDetail() // 触发文件夹内容的重新加载，获取带有新时间戳的数据模型
                             }
                         } catch (e: Exception) { Log.e(TAG, "写入失败", e) }
                     } else { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } }
@@ -366,10 +363,8 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
-                            
-                            clearCoilCacheSafely()
-                            delay(150)
-                            songAdapter.notifyDataSetChanged()
+                            delay(300)
+                            detailViewModel.loadDetail()
                         }
                     }
                 }

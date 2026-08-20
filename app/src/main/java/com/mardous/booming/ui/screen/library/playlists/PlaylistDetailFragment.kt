@@ -151,23 +151,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    // 🌟 通过反射清空内存死锁，完全避免导入异常
-    private fun clearCoilCacheSafely() {
-        try {
-            val coilClass = Class.forName("coil.Coil")
-            val imageLoader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, requireContext())
-            val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
-            memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
-        } catch (e: Exception) {
-            try {
-                val contextsKt = Class.forName("coil.ContextsKt")
-                val imageLoader = contextsKt.getMethod("getImageLoader", Context::class.java).invoke(null, requireContext())
-                val memoryCache = imageLoader?.javaClass?.getMethod("getMemoryCache")?.invoke(imageLoader)
-                memoryCache?.javaClass?.getMethod("clear")?.invoke(memoryCache)
-            } catch (e2: Exception) { }
-        }
-    }
-
     private fun getPinnedSongIds(): Set<String> {
         val prefs = requireContext().getSharedPreferences("playlist_pins", Context.MODE_PRIVATE)
         return prefs.getStringSet("pinned_${playlist.playlistEntity.playListId}", emptySet()) ?: emptySet()
@@ -287,12 +270,14 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             updateTag(tag)
             f.commit() 
             
+            var success = false
             try {
                 tempFile.inputStream().use { input ->
                     FileOutputStream(songFile).use { output ->
                         input.copyTo(output)
                     }
                 }
+                success = true
             } catch (e: Exception) {
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
@@ -301,8 +286,25 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             input.copyTo(output)
                         }
                     }
+                    success = true
                 } else {
                     throw Exception("无法获取系统授权的 Uri，底层写入失败: ${e.message}")
+                }
+            }
+
+            if (success) {
+                // 🌟 完美复刻：修改媒体库的 DATE_MODIFIED 时间戳
+                try {
+                    val uri = getUriFromPath(requireContext(), songFile.absolutePath)
+                    if (uri != null) {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                        }
+                        requireContext().contentResolver.update(uri, values, null, null)
+                        requireContext().contentResolver.notifyChange(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, null)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "更新 MediaStore 时间戳失败", e)
                 }
             }
         } catch (e: Exception) {
@@ -310,7 +312,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         } finally {
             if (tempFile.exists()) tempFile.delete() 
         }
-        
         MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
     }
 
@@ -409,16 +410,11 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                             
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
-                                
-                                clearCoilCacheSafely()
-                                delay(150)
+                                delay(300) // 给予系统数据库极其短暂的同步时间
                                 
                                 playlistSongAdapter?.let { adapter ->
-                                    val currentList = adapter.dataSet.toMutableList()
-                                    val index = currentList.indexOfFirst { it.id == song.id }
+                                    val index = adapter.dataSet.indexOfFirst { it.id == song.id }
                                     if (index != -1) {
-                                        currentList[index] = currentList[index]
-                                        adapter.dataSet = currentList
                                         adapter.notifyItemChanged(index)
                                     }
                                 }
@@ -491,14 +487,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            delay(300)
                             
-                            clearCoilCacheSafely()
-                            delay(150)
-                            
-                            playlistSongAdapter?.let { adapter ->
-                                adapter.dataSet = adapter.dataSet.toList()
-                                adapter.notifyDataSetChanged()
-                            }
+                            playlistSongAdapter?.notifyDataSetChanged()
                         }
                     }
                 }
