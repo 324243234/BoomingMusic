@@ -1,5 +1,18 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.folders
@@ -44,6 +57,7 @@ import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import com.mardous.booming.ui.screen.library.ReloadType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
@@ -66,7 +80,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     private var _binding: FragmentDetailListBinding? = null
     private val binding get() = _binding!!
 
-    // 🌟 注入官方的 Repository，用来通知数据库刷新！
     private val repository: Repository by inject()
     private val lyricsRepository: LyricsRepository by inject()
 
@@ -116,7 +129,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         return null
     }
 
-    // 🔥 完美复刻：只负责底层物理写入和更新系统时间戳，返回成功状态
+    // 🔥 终极防抖写入：强刷物理硬盘，防系统缓存欺骗
     private suspend fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit): Boolean = withContext(Dispatchers.IO) {
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
         var success = false
@@ -131,7 +144,11 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             
             try {
                 tempFile.inputStream().use { input ->
-                    FileOutputStream(songFile).use { output -> input.copyTo(output) }
+                    FileOutputStream(songFile).use { output -> 
+                        input.copyTo(output)
+                        // 💥 终极杀招：强迫操作系统物理落盘，绝不留在内存缓冲区！
+                        output.fd.sync() 
+                    }
                 }
                 success = true
             } catch (e: Exception) {
@@ -145,7 +162,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
 
             if (success) {
-                // 更新底层物理时间和 MediaStore，强行打破缓存一致性
                 songFile.setLastModified(System.currentTimeMillis())
                 val uri = getUriFromPath(requireContext(), songFile.absolutePath)
                 if (uri != null) {
@@ -153,7 +169,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         put(MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
                     }
                     requireContext().contentResolver.update(uri, values, null, null)
-                    requireContext().contentResolver.notifyChange(uri, null)
                 }
                 MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
             }
@@ -251,7 +266,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                 }
                             } catch (e: Exception) {}
                             
-                            // 通知数据库变更
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             lyricsRepository.clearMemoryCache()
                             withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
@@ -278,23 +292,24 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         }
                         
                         if (success) {
-                            // 🌟 1. 彻底复刻官方核心逻辑：通知数据库刷新！
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            // 🌟 2. 官方级清缓存
+                            // 💥 终极防竞争等待：确保底层 IO 操作 100% 结束且所有旧图读取任务超时
+                            delay(500)
+                            
                             try {
                                 val imageLoader = SingletonImageLoader.get(requireContext())
                                 imageLoader.memoryCache?.clear()
                                 imageLoader.diskCache?.clear()
                             } catch (e: Exception) {}
                             
-                            // 🌟 3. 全局强刷：通知全局库和底层播放器更新
                             libraryViewModel.forceReload(ReloadType.Songs)
                             libraryViewModel.forceReload(ReloadType.Playlists)
                             
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
-                                detailViewModel.loadDetail() // 触发当前文件夹列表重新拉取数据库
+                                detailViewModel.loadDetail()
+                                songAdapter.notifyDataSetChanged()
                             }
                         }
                     } else { 
@@ -399,8 +414,10 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             }
                         }
                         if (successIds.isNotEmpty()) {
-                            // 🌟 批量同步 App 数据库
                             try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
+                            
+                            // 💥 防竞争阻断期
+                            delay(600)
                             
                             try {
                                 val imageLoader = SingletonImageLoader.get(requireContext())
@@ -417,6 +434,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
                             if (successIds.isNotEmpty()) {
                                 detailViewModel.loadDetail()
+                                songAdapter.notifyDataSetChanged()
                             }
                         }
                     }
