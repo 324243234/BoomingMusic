@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -49,7 +50,6 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
     override val songTotalTime: TextView get() = binding.songTotalTime
     override val songInfoView: TextView? get() = binding.songInfo
 
-    // 🌟 移植的音量控制器
     private lateinit var audioManager: AudioManager
     private val volumeReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: android.content.Intent?) {
@@ -110,6 +110,8 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
         val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+        
+        // 获取 XML 原始色，如果为空则兜底为旧文本色
         val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
@@ -119,11 +121,16 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: oldControlColor
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) scheme.onSurfaceColor else scheme.primaryColor
 
+        // 🌟 深度强制音量条主题变色：连同半透明底轨一起处理！
         volumeSlider?.let { slider ->
             val activeList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            val backgroundAlphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceVariantColor, 76) // ~30% 透明度底轨
+            val backgroundList = android.content.res.ColorStateList.valueOf(backgroundAlphaColor)
+            
             if (slider.progressTintList?.defaultColor != scheme.onSurfaceVariantColor) {
                 slider.progressTintList = activeList
                 slider.thumbTintList = activeList
+                slider.progressBackgroundTintList = backgroundList
             }
         }
 

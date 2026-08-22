@@ -32,7 +32,6 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.mardous.booming.R
-import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
 import com.mardous.booming.core.model.player.PlayerTintTarget
@@ -236,61 +235,59 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         return null
     }
 
-    // 🌟 修复按钮失效的终极杀招：取消全局监听，精准投喂局部点击事件！
+    // 🌟 终极修复：绝对放行底层原生事件！只一对一挂载自定义按钮监听器
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
-            // 隐藏无关的纵向图标
+            // 清理无用的旧项
             menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
 
-            // 将原生的菜单强行暴露在面上（这些会自动被 AbsPlayerFragment 响应处理）
-            listOf(R.id.action_go_to_artist, R.id.action_go_to_album, R.id.action_equalizer).forEach {
-                menu.findItem(it)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            // 放出系统底层的原生按钮（系统会自动处理它们的点击事件！）
+            menu.findItem(R.id.action_go_to_artist)?.apply {
+                setIcon(R.drawable.ic_person_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
+            menu.findItem(R.id.action_go_to_album)?.apply {
+                setIcon(R.drawable.ic_album_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
+            menu.findItem(R.id.action_equalizer)?.apply {
+                setIcon(R.drawable.ic_equalizer_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
+            menu.findItem(R.id.action_sound_settings)?.apply {
+                setIcon(R.drawable.ic_volume_up_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
 
-            // 动态加入我们的特有菜单，并【精准绑定单个按钮的监听器】
-            if (menu.findItem(R.id.action_toggle_lyrics_format) == null) {
-                menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式").apply {
-                    setIcon(R.drawable.ic_lyrics_24dp)
-                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                    setOnMenuItemClickListener {
-                        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
-                        val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
-                        lyricsRepository.clearMemoryCache()
-                        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
-                        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC" else "已切换为 TTML", Toast.LENGTH_SHORT).show() }
-                        updateFormatIcon(this)
-                        playerViewModel.currentSongFlow.value?.let { s -> lyricsViewModel.updateSong(s) }
-                        true
-                    }
-                }
-            }
-            if (menu.findItem(R.id.action_toggle_video_cover) == null) {
-                menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关").apply {
-                    setIcon(R.drawable.ic_album_24dp)
-                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                    setOnMenuItemClickListener {
-                        val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                        sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-                        playerViewModel.currentSongFlow.value?.let { s -> lyricsViewModel.updateSong(s) }
-                        true
-                    }
-                }
-            }
-            if (menu.findItem(R.id.action_sound_settings) == null) {
-                menu.add(Menu.NONE, R.id.action_sound_settings, 6, "声音设置").apply {
-                    setIcon(R.drawable.ic_volume_up_24dp)
-                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                    setOnMenuItemClickListener { onQuickActionEvent(NowPlayingAction.SoundSettings); true }
+            // 独立注入我们的特供功能按钮，并单独绑定其点击事件，绝不干扰其他原生按钮
+            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式")
+            toggleFormatItem.apply {
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setOnMenuItemClickListener {
+                    toggleLyricsFormat()
+                    true
                 }
             }
 
+            // 🌟 将动态封面开关按钮放出，使用专辑的 icon，放置于均衡器之后
+            val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关")
+            toggleVideoItem.apply {
+                setIcon(R.drawable.ic_album_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setOnMenuItemClickListener {
+                    toggleVideoCover()
+                    true
+                }
+            }
+
+            // 溢出三点菜单拓展项
             if (menu.findItem(R.id.action_fetch_ttml) == null) {
                 menu.add(Menu.NONE, R.id.action_fetch_ttml, 10, "获取TTML").setOnMenuItemClickListener { fetchTtml(); true }
             }
@@ -307,12 +304,13 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             if (menu.findItem(R.id.action_delete_from_device) == null) {
                 menu.add(Menu.NONE, R.id.action_delete_from_device, 13, "删除歌曲及关联文件").setOnMenuItemClickListener { 
                     playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
-                    false // 返回 false 以保留系统的原生删除弹窗！
+                    false // 🌟 放行 false，使得系统原生的物理删除弹窗被唤起
                 }
             }
 
-            updateFormatIcon(menu.findItem(R.id.action_toggle_lyrics_format))
+            updateFormatIcon(toggleFormatItem)
         } else {
+            // 竖屏保留标准设定
             menu.setShowAsAction(R.id.action_playing_queue, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_favorite, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_sleep_timer, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
@@ -326,6 +324,23 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         item?.setIcon(if (isTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
     }
 
+    private fun toggleVideoCover() {
+        val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+        sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+    }
+
+    private fun toggleLyricsFormat() {
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        lyricsRepository.clearMemoryCache()
+        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
+        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
+        updateFormatIcon(playerToolbar.menu.findItem(R.id.action_toggle_lyrics_format))
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+    }
+
+    // ================= 扩展功能方法群 =================
     private fun fetchTtml() {
         playerViewModel.currentSongFlow.value?.let { currentSong ->
             val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
@@ -416,6 +431,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
+    // ================= ExoPlayer 引擎 =================
     private fun isDeviceStressed(): Boolean {
         if (powerManager.isPowerSaveMode) return true
         if (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) <= 20) return true
@@ -504,6 +520,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
+    // ================= 颜色映射注入 =================
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
