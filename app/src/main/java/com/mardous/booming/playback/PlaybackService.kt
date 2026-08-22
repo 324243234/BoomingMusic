@@ -196,7 +196,6 @@ class PlaybackService :
     private var carWithLastLyrics: String = ""
     private var carWithLastTranslationState: Boolean = false
     
-    // 💥 终极防泄露追踪器：记录上一次注入过歌词的歌曲，切歌时必须把它洗干净！
     private var carWithLastInjectedMediaId: String? = null
 
     private var errorRecoveryRetryCount = 0
@@ -730,8 +729,9 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
+            // 🌟 核心修复点：安全使用 getString 替代非法的扩展函数
             Playback.RESTORE_PLAYBACK -> {
-                val playOnStartupMode = preferences.requireString(PLAY_ON_STARTUP_MODE, PlayOnStartupMode.NEVER)
+                val playOnStartupMode = preferences.getString(PLAY_ON_STARTUP_MODE, PlayOnStartupMode.NEVER) ?: PlayOnStartupMode.NEVER
                 if (playOnStartupMode != PlayOnStartupMode.NEVER) {
                     CallbackToFutureAdapter.getFuture { completer ->
                         persistentStorage.waitForRestoration {
@@ -926,9 +926,6 @@ class PlaybackService :
         updateCarWithMetadata()
     }
 
-    // ==============================================================================
-    // 💥 终极修复：彻底根治 Binder OOM 与 CarWith 死机断连 BUG
-    // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
@@ -994,8 +991,6 @@ class PlaybackService :
                     val latestItem = player.getMediaItemAt(latestIndex)
                     if (latestItem.mediaId != expectedMediaId) return@withContext
 
-                    // 💥💥 核心抢救操作：清扫播放列表中上一首歌遗留的废弃歌词数据！
-                    // 彻底防止 Binder TransactionTooLargeException 导致车机组件失效和失联！
                     carWithLastInjectedMediaId?.let { oldMediaId ->
                         if (oldMediaId != expectedMediaId) {
                             for (i in 0 until player.mediaItemCount) {
@@ -1011,7 +1006,7 @@ class PlaybackService :
                                         val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
                                         player.exoPlayer.replaceMediaItem(i, cleanedItem)
                                     }
-                                    break // 扫雷完毕，立即跳出循环
+                                    break
                                 }
                             }
                         }
@@ -1039,7 +1034,6 @@ class PlaybackService :
 
                     player.exoPlayer.replaceMediaItem(latestIndex, updatedItem)
                     
-                    // 记录本次注入的 ID，供下一次切歌清扫
                     carWithLastInjectedMediaId = expectedMediaId
                 }
             }
