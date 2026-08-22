@@ -32,6 +32,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.mardous.booming.R
+import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
 import com.mardous.booming.core.model.player.PlayerTintTarget
@@ -72,18 +73,15 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
     private lateinit var controlsFragment: PlainPlayerControlsFragment
 
-    // 🌟 1. 定义官方偏好设置变更监听器
     private val preferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "now_playing_corner_radius") {
             syncVideoCoverSizeAndCorners()
         }
     }
 
-    // 🌟 2. 终极对齐：同时同步视频的“圆角”和“内边距(Margin)”，确保与静态图 100% 重合！
     private fun syncVideoCoverSizeAndCorners() {
         val binding = _binding ?: return
         
-        // --- 修复偏大问题：注入作者静态封面的 @dimen/player_cover_margin ---
         val coverMargin = resources.getDimensionPixelSize(R.dimen.player_cover_margin)
         val lp = binding.canvasPlayerView?.layoutParams as? ConstraintLayout.LayoutParams
         if (lp != null) {
@@ -91,7 +89,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             binding.canvasPlayerView?.layoutParams = lp
         }
 
-        // --- 同步圆角 ---
         val radiusDp = Preferences.getNowPlayingImageCornerRadius(requireContext())
         val radiusPx = radiusDp * resources.displayMetrics.density
 
@@ -108,7 +105,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
-    // ================= 视频引擎属性 =================
     private var canvasExoPlayer: ExoPlayer? = null
     private var videoFetchJob: Job? = null
     private var lastProcessedSongId: Long = -1L
@@ -138,7 +134,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         setupCanvasObserver()
         setupLyricsFavoriteButton()
         
-        // 🌟 初始化时，精准计算边距与圆角对齐
         syncVideoCoverSizeAndCorners()
         
         Preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
@@ -146,7 +141,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
         if (isLandscapeOrTablet) {
-            // 🌟 开启滑动监测：一旦触发拖拽手势，立刻让动封隐形！
             setupSlidingGhostMode()
         }
 
@@ -168,7 +162,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
-    // ================= 手势拦截核心逻辑 =================
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
@@ -208,7 +201,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
-    // ================= 幽灵滑动模式 =================
     private fun setupSlidingGhostMode() {
         viewLifecycleOwner.lifecycleScope.launch {
             delay(500) 
@@ -218,11 +210,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 viewPager?.addOnPageChangeListener(object : androidx.viewpager.widget.ViewPager.OnPageChangeListener {
                     override fun onPageScrollStateChanged(state: Int) {
                         if (state == androidx.viewpager.widget.ViewPager.SCROLL_STATE_DRAGGING) {
-                            // 手指开始滑动，瞬间干掉动封，露出底部的静态图片
                             binding.canvasPlayerView?.animate()?.cancel()
                             binding.canvasPlayerView?.alpha = 0f
                         } else if (state == androidx.viewpager.widget.ViewPager.SCROLL_STATE_IDLE) {
-                            // 滑动完毕，渐变恢复动封
                             if (canvasExoPlayer?.playbackState == Player.STATE_READY || canvasExoPlayer?.playbackState == Player.STATE_ENDED) {
                                 binding.canvasPlayerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
                             }
@@ -246,69 +236,87 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         return null
     }
 
-    // ================= 底部 Toolbar 菜单精准排版与功能 =================
+    // 🌟 修复按钮失效的终极杀招：取消全局监听，精准投喂局部点击事件！
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
+            // 隐藏无关的纵向图标
             menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
 
-            if (menu.findItem(R.id.action_go_to_artist) == null) menu.add(Menu.NONE, R.id.action_go_to_artist, 1, "歌手").setIcon(R.drawable.ic_person_24dp)
-            if (menu.findItem(R.id.action_go_to_album) == null) menu.add(Menu.NONE, R.id.action_go_to_album, 2, "专辑").setIcon(R.drawable.ic_album_24dp)
-            if (menu.findItem(R.id.action_toggle_lyrics_format) == null) menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式").setIcon(R.drawable.ic_lyrics_24dp)
-            if (menu.findItem(R.id.action_equalizer) == null) menu.add(Menu.NONE, R.id.action_equalizer, 4, "均衡器").setIcon(R.drawable.ic_equalizer_24dp)
-            if (menu.findItem(R.id.action_toggle_video_cover) == null) menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关").setIcon(R.drawable.ic_album_24dp) 
-            if (menu.findItem(R.id.action_sound_settings) == null) menu.add(Menu.NONE, R.id.action_sound_settings, 6, "声音设置").setIcon(R.drawable.ic_volume_up_24dp)
-
-            if (menu.findItem(R.id.action_fetch_ttml) == null) menu.add(Menu.NONE, R.id.action_fetch_ttml, 10, "获取TTML")
-            if (menu.findItem(R.id.action_delete_ttml) == null) menu.add(Menu.NONE, R.id.action_delete_ttml, 11, "删除TTML")
-            if (menu.findItem(R.id.action_blacklist_video) == null) menu.add(Menu.NONE, R.id.action_blacklist_video, 12, "动封黑名单")
-            if (menu.findItem(R.id.action_delete_from_device) == null) menu.add(Menu.NONE, R.id.action_delete_from_device, 13, "删除歌曲及关联文件")
-
-            listOf(R.id.action_go_to_artist, R.id.action_go_to_album, R.id.action_toggle_lyrics_format, R.id.action_equalizer, R.id.action_toggle_video_cover, R.id.action_sound_settings).forEach {
+            // 将原生的菜单强行暴露在面上（这些会自动被 AbsPlayerFragment 响应处理）
+            listOf(R.id.action_go_to_artist, R.id.action_go_to_album, R.id.action_equalizer).forEach {
                 menu.findItem(it)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
+
+            // 动态加入我们的特有菜单，并【精准绑定单个按钮的监听器】
+            if (menu.findItem(R.id.action_toggle_lyrics_format) == null) {
+                menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式").apply {
+                    setIcon(R.drawable.ic_lyrics_24dp)
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                    setOnMenuItemClickListener {
+                        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+                        val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+                        lyricsRepository.clearMemoryCache()
+                        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
+                        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC" else "已切换为 TTML", Toast.LENGTH_SHORT).show() }
+                        updateFormatIcon(this)
+                        playerViewModel.currentSongFlow.value?.let { s -> lyricsViewModel.updateSong(s) }
+                        true
+                    }
+                }
+            }
+            if (menu.findItem(R.id.action_toggle_video_cover) == null) {
+                menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关").apply {
+                    setIcon(R.drawable.ic_album_24dp)
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                    setOnMenuItemClickListener {
+                        val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+                        sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+                        playerViewModel.currentSongFlow.value?.let { s -> lyricsViewModel.updateSong(s) }
+                        true
+                    }
+                }
+            }
+            if (menu.findItem(R.id.action_sound_settings) == null) {
+                menu.add(Menu.NONE, R.id.action_sound_settings, 6, "声音设置").apply {
+                    setIcon(R.drawable.ic_volume_up_24dp)
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                    setOnMenuItemClickListener { onQuickActionEvent(NowPlayingAction.SoundSettings); true }
+                }
+            }
+
+            if (menu.findItem(R.id.action_fetch_ttml) == null) {
+                menu.add(Menu.NONE, R.id.action_fetch_ttml, 10, "获取TTML").setOnMenuItemClickListener { fetchTtml(); true }
+            }
+            if (menu.findItem(R.id.action_delete_ttml) == null) {
+                menu.add(Menu.NONE, R.id.action_delete_ttml, 11, "删除TTML").setOnMenuItemClickListener { 
+                    playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }; true 
+                }
+            }
+            if (menu.findItem(R.id.action_blacklist_video) == null) {
+                menu.add(Menu.NONE, R.id.action_blacklist_video, 12, "动封黑名单").setOnMenuItemClickListener { 
+                    playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }; true 
+                }
+            }
+            if (menu.findItem(R.id.action_delete_from_device) == null) {
+                menu.add(Menu.NONE, R.id.action_delete_from_device, 13, "删除歌曲及关联文件").setOnMenuItemClickListener { 
+                    playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
+                    false // 返回 false 以保留系统的原生删除弹窗！
+                }
+            }
+
             updateFormatIcon(menu.findItem(R.id.action_toggle_lyrics_format))
         } else {
             menu.setShowAsAction(R.id.action_playing_queue, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_favorite, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_sleep_timer, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_show_lyrics, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
-        }
-
-        playerToolbar.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                R.id.action_toggle_video_cover -> {
-                    val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
-                    sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-                    playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
-                    true
-                }
-                R.id.action_toggle_lyrics_format -> {
-                    val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
-                    val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
-                    val newFormat = if (isTtml) "lrc" else "ttml"
-                    lyricsRepository.clearMemoryCache()
-                    sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", newFormat) }
-                    context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
-                    updateFormatIcon(item)
-                    playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
-                    true
-                }
-                R.id.action_fetch_ttml -> { fetchTtml(); true }
-                R.id.action_delete_ttml -> { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }; true }
-                R.id.action_blacklist_video -> { playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }; true }
-                R.id.action_delete_from_device -> {
-                    playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
-                    false 
-                }
-                else -> false
-            }
         }
     }
 
@@ -318,7 +326,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         item?.setIcon(if (isTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
     }
 
-    // ================= 扩展功能方法群 =================
     private fun fetchTtml() {
         playerViewModel.currentSongFlow.value?.let { currentSong ->
             val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
@@ -409,7 +416,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
-    // ================= ExoPlayer 引擎 =================
     private fun isDeviceStressed(): Boolean {
         if (powerManager.isPowerSaveMode) return true
         if (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) <= 20) return true
@@ -498,7 +504,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         }
     }
 
-    // ================= 颜色映射注入 =================
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor

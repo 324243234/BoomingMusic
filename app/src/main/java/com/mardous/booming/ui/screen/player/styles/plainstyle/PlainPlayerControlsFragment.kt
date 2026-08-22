@@ -1,18 +1,5 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
@@ -21,10 +8,16 @@ import android.animation.Animator
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.TimeInterpolator
+import android.content.Context
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.os.Bundle
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -43,34 +36,32 @@ import com.mardous.booming.ui.component.views.MusicSlider
 import com.mardous.booming.ui.screen.player.PlayerAnimator
 import java.util.LinkedList
 
-/**
- * @author Christians M. A. (mardous)
- */
 class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_plain_player_playback_controls) {
 
     private var _binding: FragmentPlainPlayerPlaybackControlsBinding? = null
     private val binding get() = _binding!!
 
-    override val playPauseFab: FloatingActionButton
-        get() = binding.playPauseButton
+    override val playPauseFab: FloatingActionButton get() = binding.playPauseButton
+    override val repeatButton: MaterialButton get() = binding.repeatButton
+    override val shuffleButton: MaterialButton get() = binding.shuffleButton
+    override val musicSlider: MusicSlider? get() = binding.progressSlider
+    override val songCurrentProgress: TextView get() = binding.songCurrentProgress
+    override val songTotalTime: TextView get() = binding.songTotalTime
+    override val songInfoView: TextView? get() = binding.songInfo
 
-    override val repeatButton: MaterialButton
-        get() = binding.repeatButton
-
-    override val shuffleButton: MaterialButton
-        get() = binding.shuffleButton
-
-    override val musicSlider: MusicSlider?
-        get() = binding.progressSlider
-
-    override val songCurrentProgress: TextView
-        get() = binding.songCurrentProgress
-
-    override val songTotalTime: TextView
-        get() = binding.songTotalTime
-
-    override val songInfoView: TextView?
-        get() = binding.songInfo
+    // 🌟 移植的音量控制器
+    private lateinit var audioManager: AudioManager
+    private val volumeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                val newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val slider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+                if (slider != null && slider.progress != newVolume) {
+                    slider.progress = newVolume
+                }
+            }
+        }
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -80,30 +71,62 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         binding.repeatButton.setOnClickListener(this)
         binding.nextButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_NEXT))
         binding.previousButton.setOnTouchListener(getSkipButtonTouchHandler(DIRECTION_PREVIOUS))
+
+        setupVolumeSlider()
+
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        view.findViewById<View>(R.id.volumeContainer)?.isVisible = isLandscapeOrTablet
+    }
+
+    private fun setupVolumeSlider() {
+        val context = context ?: return
+        audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider) ?: return
+
+        volumeSlider.max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        volumeSlider.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+        volumeSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        ContextCompat.registerReceiver(
+            context, volumeReceiver,
+            IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+            ContextCompat.RECEIVER_EXPORTED
+        )
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
         val oldControlColor = binding.nextButton.iconTint.defaultColor
         val oldSliderColor = binding.progressSlider.currentColor
         val oldSecondaryTextColor = binding.songCurrentProgress.currentTextColor
+        
+        val volumeDownIcon = view?.findViewById<ImageView>(R.id.volumeDownIcon)
+        val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
+        val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
+        val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
+
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
-        val newShuffleColor = getPlaybackControlsColor(
-            isShuffleModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newShuffleColor = getPlaybackControlsColor(isShuffleModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         val oldRepeatColor = getPlaybackControlsColor(isRepeatModeOn)
-        val newRepeatColor = getPlaybackControlsColor(
-            isRepeatModeOn,
-            scheme.onSurfaceColor,
-            scheme.onSurfaceVariantColor
-        )
+        val newRepeatColor = getPlaybackControlsColor(isRepeatModeOn, scheme.onSurfaceColor, scheme.onSurfaceVariantColor)
         val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: oldControlColor
-        val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) {
-            scheme.onSurfaceColor
-        } else {
-            scheme.primaryColor
+        val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) scheme.onSurfaceColor else scheme.primaryColor
+
+        volumeSlider?.let { slider ->
+            val activeList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
+            if (slider.progressTintList?.defaultColor != scheme.onSurfaceVariantColor) {
+                slider.progressTintList = activeList
+                slider.thumbTintList = activeList
+            }
         }
+
         return listOfNotNull(
             binding.progressSlider.progressView?.tintTarget(oldSliderColor, newEmphasisColor),
             binding.songCurrentProgress.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor),
@@ -113,7 +136,9 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
             binding.nextButton.iconButtonTintTarget(oldControlColor, scheme.onSurfaceColor),
             binding.previousButton.iconButtonTintTarget(oldControlColor, scheme.onSurfaceColor),
             binding.shuffleButton.iconButtonTintTarget(oldShuffleColor, newShuffleColor),
-            binding.repeatButton.iconButtonTintTarget(oldRepeatColor, newRepeatColor)
+            binding.repeatButton.iconButtonTintTarget(oldRepeatColor, newRepeatColor),
+            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
         )
     }
 
@@ -152,6 +177,7 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
     }
 
     override fun onDestroyView() {
+        runCatching { context?.unregisterReceiver(volumeReceiver) }
         super.onDestroyView()
         _binding = null
     }
@@ -167,9 +193,7 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
                     PropertyValuesHolder.ofFloat(View.SCALE_X, 1f),
                     PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f),
                     PropertyValuesHolder.ofFloat(View.ROTATION, 360f)
-                ).apply {
-                    setInterpolator(DecelerateInterpolator())
-                }
+                ).apply { setInterpolator(DecelerateInterpolator()) }
             )
             addScaleAnimation(animators, binding.shuffleButton, interpolator, 100)
             addScaleAnimation(animators, binding.repeatButton, interpolator, 100)
@@ -180,11 +204,7 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         }
 
         override fun onPrepareForAnimation() {
-            binding.playPauseButton.apply {
-                scaleX = 0f
-                scaleY = 0f
-                rotation = 0f
-            }
+            binding.playPauseButton.apply { scaleX = 0f; scaleY = 0f; rotation = 0f }
             prepareForScaleAnimation(binding.previousButton)
             prepareForScaleAnimation(binding.nextButton)
             prepareForScaleAnimation(binding.shuffleButton)

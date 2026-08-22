@@ -1,18 +1,5 @@
 /*
- * Copyright (c) 2025 Christians Mart¨ªnez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (c) 2025 Christians MartÃ­nez Alvarado
  */
 
 package com.mardous.booming.playback
@@ -72,7 +59,7 @@ import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult.AcceptedResultBuilder
 import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
-import androidx.media3.session.MediaSessionService // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞÂÔöÃ½Ìå°´¼ü½Ó¿Ú°ü
+import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
@@ -118,7 +105,6 @@ import com.mardous.booming.util.PLAY_ON_STARTUP_MODE
 import com.mardous.booming.util.PackageValidator
 import com.mardous.booming.util.PlayOnStartupMode
 import com.mardous.booming.util.Preferences
-import com.mardous.booming.util.Preferences.requireString
 import com.mardous.booming.util.QUEUE_NEXT_MODE
 import com.mardous.booming.util.REWIND_WITH_BACK
 import com.mardous.booming.util.SEEK_INTERVAL
@@ -157,7 +143,7 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
-    private val lyricsRepository: LyricsRepository by inject() // ?? ±ØĞë±£ÁôµÄ±¾µØ×¢Èë
+    private val lyricsRepository: LyricsRepository by inject()
 
     private val queueStateHolder: QueueStateHolder by inject()
     private val isInTimelineUpdate = AtomicBoolean(false)
@@ -174,7 +160,6 @@ class PlaybackService :
         )
     }
 
-    /** Ignore the transient unset duration a resumed player reports. */ // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞÂÔö¹Ù·½×¢ÊÍ
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -199,7 +184,7 @@ class PlaybackService :
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
     
     // =========================================================================
-    // ?? »¤³ÇºÓ£º±¾µØÀ©Õ¹ÏµÍ³Óë·À·¢ÈÈ»º´æ±äÁ¿ (±ØĞë¾ø¶Ô±£Áô)
+    // ğŸ”¥ æ ¸å¿ƒæŠ¤åŸæ²³å˜é‡ (ä¿®å¤ OOM å’Œ æ–­è¿æ­»æœº)
     // =========================================================================
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
@@ -207,10 +192,12 @@ class PlaybackService :
     private var lastTimelineHashCode: Int = 0
     private var currentIsFavorite = false
 
-    // ³µ»ú¸è´Ê½âÎöµÄÄÚ´æ¼¶»¤³ÇºÓ»º´æ (¶Å¾ø·¢ÈÈ¡¢ºÄµç)
     private var carWithLastSongId: Long = -1L
     private var carWithLastLyrics: String = ""
     private var carWithLastTranslationState: Boolean = false
+    
+    // ğŸ’¥ ç»ˆæé˜²æ³„éœ²è¿½è¸ªå™¨ï¼šè®°å½•ä¸Šä¸€æ¬¡æ³¨å…¥è¿‡æ­Œè¯çš„æ­Œæ›²ï¼Œåˆ‡æ­Œæ—¶å¿…é¡»æŠŠå®ƒæ´—å¹²å‡€ï¼
+    private var carWithLastInjectedMediaId: String? = null
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -270,7 +257,6 @@ class PlaybackService :
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
-    // ?? ±¾µØÀ©Õ¹ºËĞÄ£ºÎŞ×´Ì¬Ãë¼¶ÌáÈ¡£¬100% ÃâÒß UI ÑÓ³Ùµ¼ÖÂµÄ²é´í¸è
     private suspend fun resolveSongInstantly(mediaItem: MediaItem?): Song {
         if (mediaItem == null) return Song.emptySong
         return withContext(IO) {
@@ -345,7 +331,6 @@ class PlaybackService :
                 .setHandleAudioBecomingNoisy(true)
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
                 .setSeekBackIncrementMs(seekInterval)
-                .setSeekForwardIncrementMs(seekInterval)
                 .setPlaybackLooper(playerThread.looper)
                 .build()
         )
@@ -445,7 +430,6 @@ class PlaybackService :
         sleepTimer.release()
     }
 
-    // ?? ±¾µØÀ©Õ¹ºËĞÄ£ºÀ¹½ØÍâ²¿´«µİµÄÌØ¶¨¸èÇú²¥·ÅÒâÍ¼
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_PLAY_SONG) {
             val songId = intent.getLongExtra(EXTRA_SONG_ID, -1L)
@@ -459,19 +443,15 @@ class PlaybackService :
         return super.onStartCommand(intent, flags, startId)
     }
 
-    // =========================================================================
-    // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞŞ¸´ Android 12+ / ³µÔØµÈÃ½Ìå°´Å¥ÎŞ·¨Á¬½ÓµÄ¼øÈ¨ BUG
-    // =========================================================================
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
         val myPackageName = this.packageName
-        val controllerPackageName = controllerInfo.packageName // NEW
+        val controllerPackageName = controllerInfo.packageName 
         if (controllerPackageName == myPackageName || 
             controllerPackageName == MediaBrowserService.SERVICE_INTERFACE || 
             controllerPackageName == MediaSession.ControllerInfo.LEGACY_CONTROLLER_PACKAGE_NAME) { 
             return mediaSession
         }
         val controllerType = controllerInfo.connectionHints.getString(CONNECTION_HINT_KEY_CONTROLLER_INFO_TYPE)
-        // ?? ºËĞÄĞŞ¸´ (Commit 9cd3edb)£ºÇ¿»¯Ã½Ìå¿ØÖÆÆ÷Ğ£Ñé
         if (controllerType == Intent.ACTION_MEDIA_BUTTON &&
             controllerPackageName == MediaSessionService.SERVICE_INTERFACE) { 
             val sessionId = controllerInfo.connectionHints.getString(CONNECTION_HINT_KEY_SESSION_ID)
@@ -499,7 +479,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // ±£Áô±¾µØÀ©Õ¹Ö¸Áî
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -591,9 +570,6 @@ class PlaybackService :
         pageSize: Int,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-        // ?? ÈÚºÏ×÷Õß¸üĞÂ×¢ÊÍ
-        // getChildren resolves any id it is handed, so FAVORITES and HISTORY are reachable without ever
-        // appearing in a root listing.
         session.denyUntrusted<ImmutableList<MediaItem>>(browser)?.let { return it }
         return serviceScope.future(IO) {
             val result = runCatching {
@@ -653,9 +629,6 @@ class PlaybackService :
         )
     }
 
-    // =========================================================================
-    // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºÖØ¹¹ Widget ÏìÓ¦µÄÊı¾İ×¢Èë·Ö·¢ (Commit 59515cc)
-    // =========================================================================
     override fun onAddMediaItems(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo,
@@ -741,7 +714,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // ?? »¤³ÇºÓ£º±£Áô³µ»úÔ­Éú²¥·ÅÄ£Ê½ÇĞ»»À©Õ¹
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 if (player.shuffleModeEnabled) {
                     player.shuffleModeEnabled = false
@@ -835,9 +807,6 @@ class PlaybackService :
         }
     }
 
-    // =========================================================================
-    // ?? »¤³ÇºÓÓë¹Ù·½¸üĞÂÍêÃÀÈÚºÏÇø
-    // =========================================================================
     override fun onPlayerError(error: PlaybackException) {
         val nextMediaIndex = player.nextMediaItemIndex
         if (nextMediaIndex != C.INDEX_UNSET &&
@@ -869,7 +838,6 @@ class PlaybackService :
                 dispatchPlayQueue(player)
                 if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
                     val exoPlayer = this.player.exoPlayer
-                    // Keep the staged start index while the queue is empty. // ?? ÈÚºÏ×÷Õß¸üĞÂ×¢ÊÍ
                     if (exoPlayer.mediaItemCount > 0) {
                         exoPlayer.applyRandomShuffleOrder()
                     }
@@ -881,7 +849,6 @@ class PlaybackService :
             val isStructuralChange = events.contains(Player.EVENT_TIMELINE_CHANGED) &&
                     player.currentTimeline.windowCount != queueStateHolder.queueSize
             if (!isStructuralChange) {
-                // ?? »½ĞÑ UI µ±Ç°²¥·Å×´Ì¬µÄÃüÂö´úÂë£¬ÈÃËùÓĞµÄ¸è´Ê¡¢·âÃæÖØĞÂ¹ö¶¯
                 queueStateHolder.setPlayerIndex(player.currentMediaItemIndex)
             }
         }
@@ -897,7 +864,6 @@ class PlaybackService :
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-            // ?? ±£»¤±¾µØÌØĞÔ£º·À³µ»úÖØ»æÀ¹½Ø¹şÏ£Ğ£Ñé
             var currentHash = 1
             val window = Timeline.Window()
             for (i in 0 until timeline.windowCount) {
@@ -961,7 +927,7 @@ class PlaybackService :
     }
 
     // ==============================================================================
-    // ?? ºËĞÄ»¤³ÇºÓ£º·ÀÖ¹³µ»ú CPU ì­ÉıµÄÈıÎ¬¼«ËÙ»º´æ (0.1ms Ãë´«¸è´Ê)
+    // ğŸ’¥ ç»ˆæä¿®å¤ï¼šå½»åº•æ ¹æ²» Binder OOM ä¸ CarWith æ­»æœºæ–­è¿ BUG
     // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
@@ -1003,7 +969,7 @@ class PlaybackService :
                         val translation = line.translation?.content
                         
                         if (showTranslation && !translation.isNullOrBlank()) {
-                            "$timeStr$content ¡¸$translation¡¹"
+                            "$timeStr$content ã€Œ$translationã€"
                         } else {
                             "$timeStr$content"
                         }
@@ -1026,18 +992,38 @@ class PlaybackService :
                     val latestIndex = player.currentMediaItemIndex
                     if (latestIndex < 0 || latestIndex >= player.mediaItemCount) return@withContext
                     val latestItem = player.getMediaItemAt(latestIndex)
-                    
                     if (latestItem.mediaId != expectedMediaId) return@withContext
 
-                    val currentExtras = latestItem.mediaMetadata.extras ?: Bundle.EMPTY
+                    // ğŸ’¥ğŸ’¥ æ ¸å¿ƒæŠ¢æ•‘æ“ä½œï¼šæ¸…æ‰«æ’­æ”¾åˆ—è¡¨ä¸­ä¸Šä¸€é¦–æ­Œé—ç•™çš„åºŸå¼ƒæ­Œè¯æ•°æ®ï¼
+                    // å½»åº•é˜²æ­¢ Binder TransactionTooLargeException å¯¼è‡´è½¦æœºç»„ä»¶å¤±æ•ˆå’Œå¤±è”ï¼
+                    carWithLastInjectedMediaId?.let { oldMediaId ->
+                        if (oldMediaId != expectedMediaId) {
+                            for (i in 0 until player.mediaItemCount) {
+                                val item = player.getMediaItemAt(i)
+                                if (item.mediaId == oldMediaId) {
+                                    val oldExtras = item.mediaMetadata.extras
+                                    if (oldExtras != null && oldExtras.containsKey("android.media.metadata.LYRIC")) {
+                                        val cleanedExtras = Bundle(oldExtras).apply {
+                                            remove("ucar.media.metadata.LYRICS_WHOLE")
+                                            remove("android.media.metadata.LYRIC")
+                                        }
+                                        val cleanedMetadata = item.mediaMetadata.buildUpon().setExtras(cleanedExtras).build()
+                                        val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
+                                        player.exoPlayer.replaceMediaItem(i, cleanedItem)
+                                    }
+                                    break // æ‰«é›·å®Œæ¯•ï¼Œç«‹å³è·³å‡ºå¾ªç¯
+                                }
+                            }
+                        }
+                    }
 
+                    val currentExtras = latestItem.mediaMetadata.extras ?: Bundle.EMPTY
                     val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
                     val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
                     val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
 
-                    if (currentCollectState == collectState &&
-                        currentPlayMode == playMode &&
-                        currentLyric == lrcText) {
+                    if (currentCollectState == collectState && currentPlayMode == playMode && currentLyric == lrcText) {
+                        carWithLastInjectedMediaId = expectedMediaId
                         return@withContext
                     }
 
@@ -1052,14 +1038,14 @@ class PlaybackService :
                     val updatedItem = latestItem.buildUpon().setMediaMetadata(updatedMetadata).build()
 
                     player.exoPlayer.replaceMediaItem(latestIndex, updatedItem)
+                    
+                    // è®°å½•æœ¬æ¬¡æ³¨å…¥çš„ IDï¼Œä¾›ä¸‹ä¸€æ¬¡åˆ‡æ­Œæ¸…æ‰«
+                    carWithLastInjectedMediaId = expectedMediaId
                 }
             }
         }
     }
 
-    // ==============================================================================
-    // ?? ºËĞÄ»¤³ÇºÓ£ºµ×²ãÇĞ¸èÊÂ¼şÈ«½Ó¹Ü£¬Ë²¼ä¼¤»îÀ¶ÑÀÓëÊÕ²Ø£¨¾ø²»»á±» UI ÑÓ³ÙÍÏÀÛ£©
-    // ==============================================================================
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val isPlaying = player.isPlaying
         val newMediaId = mediaItem?.mediaId
@@ -1205,7 +1191,6 @@ class PlaybackService :
         }
     }
 
-    /** Only the fields that genuinely come from the player; the rest is [WidgetDataSource]'s. */ // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞÂÔö¹Ù·½×¢ÊÍ
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
         val id = player.currentMediaItem?.mediaId?.toLongOrNull()
             ?: return PlaybackState()
@@ -1229,12 +1214,10 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
-    /** A command issued before the saved state lands has nothing to act on */ // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞÂÔö¹Ù·½×¢ÊÍ
     private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
-    /** The write is debounced */ // ?? ÈÚºÏ×÷Õß¸üĞÂ£ºĞÂÔö¹Ù·½×¢ÊÍ
     private suspend fun awaitSavedState() {
         persistentStorage.saveState()
         persistentStorage.awaitPendingSave()
@@ -1318,10 +1301,6 @@ class PlaybackService :
                 }
 
                 if (isInTimelineUpdate.exchange(false)) {
-                    // ?? ÈÚºÏ×÷Õß¸üĞÂ×¢ÊÍ
-                    // The queue structure changed due to the removal of some elements,
-                    // so the last snapshot is no longer valid; what remains now is to
-                    // force a new capture to ensure consistency.
                     buildPlayQueue(player, onCompletion)
                     return@withContext
                 }
