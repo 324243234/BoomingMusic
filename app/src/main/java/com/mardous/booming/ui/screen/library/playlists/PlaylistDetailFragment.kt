@@ -194,7 +194,19 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         setSupportActionBar(binding.toolbar)
 
         libraryViewModel.getMiniPlayerMargin().observe(viewLifecycleOwner) {
-            binding.recyclerView.updatePadding(bottom = it.getWithSpace())
+            val bottomOffset = it.getWithSpace()
+            // 1. 让列表底部增加 padding，防遮挡
+            binding.recyclerView.updatePadding(bottom = bottomOffset)
+            
+            // 2. 🌟 动态抬高悬浮按钮，完美避开 Mini 播放器
+            val fab = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabLocateSong)
+            if (fab != null) {
+                val lp = fab.layoutParams as android.view.ViewGroup.MarginLayoutParams
+                // 基础边距 16dp 转成像素，加上 mini 播放器的高度
+                val baseMargin = (16 * resources.displayMetrics.density).toInt()
+                lp.bottomMargin = baseMargin + bottomOffset
+                fab.layoutParams = lp
+            }
         }
 
         detailViewModel.getPlaylist().observe(viewLifecycleOwner) { playlistWithSongs ->
