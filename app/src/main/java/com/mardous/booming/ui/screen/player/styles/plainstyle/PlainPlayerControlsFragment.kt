@@ -111,7 +111,6 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         val volumeUpIcon = view?.findViewById<ImageView>(R.id.volumeUpIcon)
         val volumeSlider = view?.findViewById<SeekBar>(R.id.volumeSlider)
         
-        // 获取 XML 原始色，如果为空则兜底为旧文本色
         val oldVolumeIconColor = volumeDownIcon?.imageTintList?.defaultColor ?: oldSecondaryTextColor
 
         val oldShuffleColor = getPlaybackControlsColor(isShuffleModeOn)
@@ -121,13 +120,13 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
         val oldPlayPauseColor = binding.playPauseButton.backgroundTintList?.defaultColor ?: oldControlColor
         val newEmphasisColor = if (scheme.mode == PlayerColorSchemeMode.VibrantColor) scheme.onSurfaceColor else scheme.primaryColor
 
-        // 🌟 深度强制音量条主题变色：连同半透明底轨一起处理！
+        // 🌟 音量条色彩全面对标 Gradient 主题，高亮取色 + 半透明滑轨
         volumeSlider?.let { slider ->
-            val activeList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceVariantColor)
-            val backgroundAlphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceVariantColor, 76) // ~30% 透明度底轨
+            val activeList = android.content.res.ColorStateList.valueOf(scheme.onSurfaceColor)
+            val backgroundAlphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 76)
             val backgroundList = android.content.res.ColorStateList.valueOf(backgroundAlphaColor)
             
-            if (slider.progressTintList?.defaultColor != scheme.onSurfaceVariantColor) {
+            if (slider.progressTintList?.defaultColor != scheme.onSurfaceColor) {
                 slider.progressTintList = activeList
                 slider.thumbTintList = activeList
                 slider.progressBackgroundTintList = backgroundList
@@ -144,8 +143,9 @@ class PlainPlayerControlsFragment : AbsPlayerControlsFragment(R.layout.fragment_
             binding.previousButton.iconButtonTintTarget(oldControlColor, scheme.onSurfaceColor),
             binding.shuffleButton.iconButtonTintTarget(oldShuffleColor, newShuffleColor),
             binding.repeatButton.iconButtonTintTarget(oldRepeatColor, newRepeatColor),
-            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor),
-            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceVariantColor)
+            // 🌟 喇叭图标也同步使用高亮的 onSurfaceColor
+            volumeDownIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceColor),
+            volumeUpIcon?.tintTarget(oldVolumeIconColor, scheme.onSurfaceColor)
         )
     }
 

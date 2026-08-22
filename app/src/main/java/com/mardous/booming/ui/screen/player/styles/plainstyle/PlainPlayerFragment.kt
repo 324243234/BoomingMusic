@@ -32,6 +32,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.mardous.booming.R
+import com.mardous.booming.core.model.action.NowPlayingAction
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
 import com.mardous.booming.core.model.player.PlayerTintTarget
@@ -235,20 +236,20 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         return null
     }
 
-    // 🌟 终极修复：绝对放行底层原生事件！只一对一挂载自定义按钮监听器
+    // 🌟 终极强控挂载法：无条件重新绑定每一个动作，彻底杜绝按钮失效！
     override fun onMenuInflated(menu: Menu) {
         super.onMenuInflated(menu)
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
-            // 清理无用的旧项
+            // 隐藏无关的纵向图标
             menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
 
-            // 放出系统底层的原生按钮（系统会自动处理它们的点击事件！）
+            // 放出系统底层的原生按钮（不需要干涉监听器，系统自动处理）
             menu.findItem(R.id.action_go_to_artist)?.apply {
                 setIcon(R.drawable.ic_person_24dp)
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
@@ -266,8 +267,32 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
 
-            // 独立注入我们的特供功能按钮，并单独绑定其点击事件，绝不干扰其他原生按钮
-            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 3, "切换歌词格式")
+            // 🌟 动态封面开关：用专辑同样的 icon，放在均衡器右侧
+            val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 50, "动态封面开关")
+            toggleVideoItem.apply {
+                setIcon(R.drawable.ic_album_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                // 💥 绝对无条件绑定监听器！
+                setOnMenuItemClickListener {
+                    toggleVideoCover()
+                    true
+                }
+            }
+
+            // 🌟 获取TTML：直接放置于动态封面右侧，图标使用 "↓T" 纯文字样式
+            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "↓T")
+            fetchTtmlItem.apply {
+                title = "↓T"
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                // 💥 绝对无条件绑定监听器！
+                setOnMenuItemClickListener { 
+                    fetchTtml()
+                    true 
+                }
+            }
+
+            // 切换歌词格式
+            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 52, "切换歌词格式")
             toggleFormatItem.apply {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener {
@@ -276,36 +301,23 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
             }
 
-            // 🌟 将动态封面开关按钮放出，使用专辑的 icon，放置于均衡器之后
-            val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 5, "动态封面开关")
-            toggleVideoItem.apply {
-                setIcon(R.drawable.ic_album_24dp)
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                setOnMenuItemClickListener {
-                    toggleVideoCover()
-                    true
-                }
+            // 溢出三点菜单项：无条件挂载！
+            val deleteTtmlItem = menu.findItem(R.id.action_delete_ttml) ?: menu.add(Menu.NONE, R.id.action_delete_ttml, 101, "删除TTML")
+            deleteTtmlItem.setOnMenuItemClickListener { 
+                playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }
+                true 
             }
 
-            // 溢出三点菜单拓展项
-            if (menu.findItem(R.id.action_fetch_ttml) == null) {
-                menu.add(Menu.NONE, R.id.action_fetch_ttml, 10, "获取TTML").setOnMenuItemClickListener { fetchTtml(); true }
+            val blacklistVideoItem = menu.findItem(R.id.action_blacklist_video) ?: menu.add(Menu.NONE, R.id.action_blacklist_video, 102, "动封黑名单")
+            blacklistVideoItem.setOnMenuItemClickListener { 
+                playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }
+                true 
             }
-            if (menu.findItem(R.id.action_delete_ttml) == null) {
-                menu.add(Menu.NONE, R.id.action_delete_ttml, 11, "删除TTML").setOnMenuItemClickListener { 
-                    playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }; true 
-                }
-            }
-            if (menu.findItem(R.id.action_blacklist_video) == null) {
-                menu.add(Menu.NONE, R.id.action_blacklist_video, 12, "动封黑名单").setOnMenuItemClickListener { 
-                    playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }; true 
-                }
-            }
-            if (menu.findItem(R.id.action_delete_from_device) == null) {
-                menu.add(Menu.NONE, R.id.action_delete_from_device, 13, "删除歌曲及关联文件").setOnMenuItemClickListener { 
-                    playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
-                    false // 🌟 放行 false，使得系统原生的物理删除弹窗被唤起
-                }
+
+            val deleteDeviceItem = menu.findItem(R.id.action_delete_from_device) ?: menu.add(Menu.NONE, R.id.action_delete_from_device, 103, "删除歌曲及关联文件")
+            deleteDeviceItem.setOnMenuItemClickListener { 
+                playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
+                false // 🌟 放行 false，使得系统原生的物理删除弹窗被唤起
             }
 
             updateFormatIcon(toggleFormatItem)
@@ -327,6 +339,12 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     private fun toggleVideoCover() {
         val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
         sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+        
+        // 🌟 增加开启和关闭状态直观提示
+        context?.let {
+            Toast.makeText(it, if (newState) "动态封面：已开启" else "动态封面：已关闭", Toast.LENGTH_SHORT).show()
+        }
+        
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
 
