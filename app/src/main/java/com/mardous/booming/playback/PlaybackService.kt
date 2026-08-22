@@ -184,7 +184,7 @@ class PlaybackService :
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
     
     // =========================================================================
-    // 🔥 核心护城河变量 (修复 OOM 和 断连死机)
+    // 🔥 核心护城河变量
     // =========================================================================
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
@@ -195,8 +195,6 @@ class PlaybackService :
     private var carWithLastSongId: Long = -1L
     private var carWithLastLyrics: String = ""
     private var carWithLastTranslationState: Boolean = false
-    
-    private var carWithLastInjectedMediaId: String? = null
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -729,7 +727,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 核心修复点：安全使用 getString 替代非法的扩展函数
             Playback.RESTORE_PLAYBACK -> {
                 val playOnStartupMode = preferences.getString(PLAY_ON_STARTUP_MODE, PlayOnStartupMode.NEVER) ?: PlayOnStartupMode.NEVER
                 if (playOnStartupMode != PlayOnStartupMode.NEVER) {
@@ -926,6 +923,9 @@ class PlaybackService :
         updateCarWithMetadata()
     }
 
+    // ==============================================================================
+    // 💥 终极防御：全局大扫除 + 容量防爆盾 (彻底杜绝 OOM 与失联断连)
+    // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
@@ -933,7 +933,7 @@ class PlaybackService :
         val currentRepeatMode = player.repeatMode
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(50) 
+            delay(100) // 轻微防抖，防止用户疯狂点击切歌导致的过度请求
             
             val currentIndex = player.currentMediaItemIndex
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
@@ -950,12 +950,12 @@ class PlaybackService :
                 val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
                 val needsLyricReload = song.id != carWithLastSongId || showTranslation != carWithLastTranslationState
                 
-                val lrcText: String
+                val rawLrcText: String
                 if (needsLyricReload) {
                     val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) }.getOrNull()
                     val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-                    lrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
+                    rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                         val timeMs = line.start
                         val min = timeMs / 60000
                         val sec = (timeMs % 60000) / 1000
@@ -973,11 +973,15 @@ class PlaybackService :
                     } ?: ""
 
                     carWithLastSongId = song.id
-                    carWithLastLyrics = lrcText
+                    carWithLastLyrics = rawLrcText
                     carWithLastTranslationState = showTranslation
                 } else {
-                    lrcText = carWithLastLyrics
+                    rawLrcText = carWithLastLyrics
                 }
+
+                // 💥【防爆盾】严格限制歌词总字符数。防止异常巨型 LRC 文件直接干崩 Binder。
+                // 30000 字符限制对正常歌词绰绰有余，且仅占用 ~60KB。
+                val lrcText = if (rawLrcText.length > 30000) rawLrcText.substring(0, 30000) else rawLrcText
 
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
@@ -991,34 +995,33 @@ class PlaybackService :
                     val latestItem = player.getMediaItemAt(latestIndex)
                     if (latestItem.mediaId != expectedMediaId) return@withContext
 
-                    carWithLastInjectedMediaId?.let { oldMediaId ->
-                        if (oldMediaId != expectedMediaId) {
-                            for (i in 0 until player.mediaItemCount) {
-                                val item = player.getMediaItemAt(i)
-                                if (item.mediaId == oldMediaId) {
-                                    val oldExtras = item.mediaMetadata.extras
-                                    if (oldExtras != null && oldExtras.containsKey("android.media.metadata.LYRIC")) {
-                                        val cleanedExtras = Bundle(oldExtras).apply {
-                                            remove("ucar.media.metadata.LYRICS_WHOLE")
-                                            remove("android.media.metadata.LYRIC")
-                                        }
-                                        val cleanedMetadata = item.mediaMetadata.buildUpon().setExtras(cleanedExtras).build()
-                                        val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
-                                        player.exoPlayer.replaceMediaItem(i, cleanedItem)
-                                    }
-                                    break
-                                }
+                    // 💥💥【全局大扫除】：不靠回忆，直接遍历整个播放列表！
+                    // 把所有“不是当前正在播放”的歌曲身上残留的歌词数据，一律物理超度洗除！
+                    for (i in 0 until player.mediaItemCount) {
+                        if (i == latestIndex) continue // 当前要播放的歌不能洗
+                        
+                        val item = player.getMediaItemAt(i)
+                        val oldExtras = item.mediaMetadata.extras
+                        
+                        if (oldExtras != null && oldExtras.containsKey("android.media.metadata.LYRIC")) {
+                            val cleanedExtras = Bundle(oldExtras).apply {
+                                remove("ucar.media.metadata.LYRICS_WHOLE")
+                                remove("android.media.metadata.LYRIC")
                             }
+                            val cleanedMetadata = item.mediaMetadata.buildUpon().setExtras(cleanedExtras).build()
+                            val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
+                            
+                            player.exoPlayer.replaceMediaItem(i, cleanedItem)
                         }
                     }
 
+                    // ====== 处理当前新歌的数据注入 ======
                     val currentExtras = latestItem.mediaMetadata.extras ?: Bundle.EMPTY
                     val currentCollectState = currentExtras.getString("ucar.media.metadata.COLLECT_STATE") ?: ""
                     val currentPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
                     val currentLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE") ?: ""
 
                     if (currentCollectState == collectState && currentPlayMode == playMode && currentLyric == lrcText) {
-                        carWithLastInjectedMediaId = expectedMediaId
                         return@withContext
                     }
 
@@ -1033,8 +1036,6 @@ class PlaybackService :
                     val updatedItem = latestItem.buildUpon().setMediaMetadata(updatedMetadata).build()
 
                     player.exoPlayer.replaceMediaItem(latestIndex, updatedItem)
-                    
-                    carWithLastInjectedMediaId = expectedMediaId
                 }
             }
         }
