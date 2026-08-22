@@ -26,6 +26,7 @@ import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import coil3.SingletonImageLoader
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.transition.MaterialArcMotion
 import com.google.android.material.transition.MaterialContainerTransform
 import com.h6ah4i.android.widget.advrecyclerview.animator.RefactoredDefaultItemAnimator
@@ -129,7 +130,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         return null
     }
 
-    // 🔥 终极防抖写入：强刷物理硬盘，防系统缓存欺骗
     private suspend fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit): Boolean = withContext(Dispatchers.IO) {
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
         var success = false
@@ -146,7 +146,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 tempFile.inputStream().use { input ->
                     FileOutputStream(songFile).use { output -> 
                         input.copyTo(output)
-                        // 💥 终极杀招：强迫操作系统物理落盘，绝不留在内存缓冲区！
                         output.fd.sync() 
                     }
                 }
@@ -213,6 +212,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             binding.header.subtitle.text = playlist.songs.toSongs().playlistInfo(requireContext())
             binding.header.image.playlistImage(playlist)
         }
+        
         detailViewModel.getSongs().observe(viewLifecycleOwner) { songsEntity ->
             binding.progressIndicator.hide()
             val newSongs = songsEntity.toSongs()
@@ -226,11 +226,49 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 playlistSongAdapter?.dataSet = newSongs
             }
             binding.recyclerView.adapter?.notifyDataSetChanged()
+            
+            // 🌟 核心：当列表数据加载完毕时，检查当前播放歌曲是否在列表中
+            checkCurrentSongInPlaylist(playerViewModel.currentSongFlow.value)
         }
+        
         detailViewModel.playlistExists().observe(viewLifecycleOwner) {
             if (!it) {
                 findNavController().navigateUp()
             }
+        }
+
+        // 🌟 核心：监听当前播放歌曲的变化，实时判断是否要显示定位按钮
+        viewLifecycleOwner.lifecycleScope.launch {
+            playerViewModel.currentSongFlow.collect { currentSong ->
+                checkCurrentSongInPlaylist(currentSong)
+            }
+        }
+    }
+
+    // 🌟 定位按钮的核心逻辑方法
+    private fun checkCurrentSongInPlaylist(currentSong: Song?) {
+        // 使用 findViewById 兜底查找 XML 中的悬浮按钮
+        val fabLocateSong = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
+        val currentList = playlistSongAdapter?.dataSet
+
+        if (currentSong == null || currentSong.id == 0L || currentList.isNullOrEmpty()) {
+            fabLocateSong.hide()
+            return
+        }
+
+        // 查找当前正在播放的歌曲在当前歌单中的索引
+        val index = currentList.indexOfFirst { it.id == currentSong.id }
+
+        if (index != -1) {
+            // 歌曲在当前列表中，显示悬浮按钮
+            fabLocateSong.show()
+            fabLocateSong.setOnClickListener {
+                // 点击时，将列表滚动到该歌曲的位置
+                binding.recyclerView.scrollToPosition(index)
+            }
+        } else {
+            // 歌曲不在当前列表中，隐藏悬浮按钮
+            fabLocateSong.hide()
         }
     }
 
@@ -513,7 +551,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         if (success) {
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            // 💥 终极防竞争等待：确保底层 IO 操作 100% 结束且所有旧图读取任务超时
                             delay(500)
                             
                             try {
@@ -640,7 +677,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                         if (successIds.isNotEmpty()) {
                             try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
                             
-                            // 💥 批量操作耗时更长，增加安全缓冲期
                             delay(600)
                             
                             try {
