@@ -150,10 +150,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 		// =========================================================
         // 🌟 全局极光底座引擎：直接绑定系统的设置，并挂载在 Index 0 (最底层)
         // =========================================================
-        val composeBackground = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
-            layoutParams = android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        val composeBackground = ComposeView(requireContext()).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
             )
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
@@ -161,18 +161,21 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-                var gradientColors by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+                var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
 
-                androidx.compose.runtime.LaunchedEffect(song, isAuroraEnabled) {
+                // 🌟 修复 1：获取 Compose 层级中绝对安全的非空 Context
+                val currentContext = androidx.compose.ui.platform.LocalContext.current
+
+                LaunchedEffect(song, isAuroraEnabled) {
                     if (isAuroraEnabled && song != null) {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                            val result = coil3.SingletonImageLoader.get(context).execute(
-                                coil3.request.ImageRequest.Builder(context).data(song).build()
+                        withContext(Dispatchers.Default) {
+                            val result = SingletonImageLoader.get(currentContext).execute(
+                                ImageRequest.Builder(currentContext).data(song).build()
                             )
-                            if (result is coil3.request.SuccessResult) {
-                                gradientColors = com.mardous.booming.ui.component.compose.color.extractGradientColors(
-                                    coil3.toBitmap(result.image),
-                                    com.mardous.booming.extensions.resolveColor(context, com.mardous.booming.ui.component.views.PlaceholderDrawable.BACKGROUND_COLOR)
+                            if (result is SuccessResult) {
+                                // 🌟 修复 2：恢复 Kotlin 扩展函数的链式调用语法 (obj.func() 而不是 func(obj))
+                                gradientColors = result.image.toBitmap().extractGradientColors(
+                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
                             }
                         }
@@ -180,10 +183,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled && gradientColors.size >= 2) {
-                    com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
+                    AuroraGradientBackground(
                         colors = gradientColors,
                         isPlaying = isPlaying,
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             }
