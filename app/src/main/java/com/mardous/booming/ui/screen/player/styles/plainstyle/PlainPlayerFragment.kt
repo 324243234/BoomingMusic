@@ -148,10 +148,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         _binding = FragmentPlainPlayerBinding.bind(view)
 		
 		// =========================================================
-        // 🌟 全局极光底座引擎：直接绑定系统的设置，并挂载在 Index 0 (最底层)
+        // 🌟 全局极光底座引擎：直接复用系统已算好的主题色，0 额外计算开销
         // =========================================================
         val composeBackground = ComposeView(requireContext()).apply {
-            layoutParams = ViewGroup.LayoutParams(
+            // 保持之前优化的负边距拉伸准备
+            layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
@@ -159,35 +160,47 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
                 val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
                 
-                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-                var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+                
+                // 🌟 神级优化：直接监听原作者已经算好的全局主题色彩流！
+                val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsStateWithLifecycle(
+                    initialValue = com.mardous.booming.core.model.player.PlayerColorScheme.themeColorScheme(context)
+                )
 
-                // 🌟 修复 1：获取 Compose 层级中绝对安全的非空 Context
-                val currentContext = androidx.compose.ui.platform.LocalContext.current
+                if (isAuroraEnabled) {
+                    // 🌟 榨干原作者的价值：直接白嫖 primary、tertiary、secondary 作为极光三原色
+                    val gradientColors = listOf(
+                        playerColorScheme.primary,
+                        playerColorScheme.tertiary,
+                        playerColorScheme.secondary
+                    )
 
-                LaunchedEffect(song, isAuroraEnabled) {
-                    if (isAuroraEnabled && song != null) {
-                        withContext(Dispatchers.Default) {
-                            val result = SingletonImageLoader.get(currentContext).execute(
-                                ImageRequest.Builder(currentContext).data(song).build()
-                            )
-                            if (result is SuccessResult) {
-                                // 🌟 修复 2：恢复 Kotlin 扩展函数的链式调用语法 (obj.func() 而不是 func(obj))
-                                gradientColors = result.image.toBitmap().extractGradientColors(
-                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (isAuroraEnabled && gradientColors.size >= 2) {
-                    AuroraGradientBackground(
+                    com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
                         colors = gradientColors,
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
+                }
+            }
+        }
+        
+        // 强制插入底层
+        (binding.root as? ViewGroup)?.addView(composeBackground, 0)
+        
+        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
+        (binding.root as? ViewGroup)?.clipToPadding = false
+
+        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
+                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
+                
+                // 🌟 解决切歌延迟 Bug：立刻砸碎背景实体墙！
+                if (isAuroraEnabled) {
+                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                } else {
+                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
                 }
             }
         }
@@ -221,11 +234,34 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             setupSlidingGhostMode()
         }
 
+        // 🌟 优化 2：解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕外！
+        (binding.root as? ViewGroup)?.clipToPadding = false
+
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
-            v.updatePadding(top = systemBars.top, bottom = systemBars.bottom)
             val displayCutout = insets.getInsets(Type.displayCutout())
-            v.updatePadding(left = displayCutout.left, right = displayCutout.right)
+            
+            // 原版逻辑：给主视图应用安全区 Padding，保护按键和歌词不被刘海遮挡
+            v.updatePadding(
+                top = systemBars.top, 
+                bottom = systemBars.bottom,
+                left = displayCutout.left, 
+                right = displayCutout.right
+            )
+
+            // 🚀 核心黑科技：给极光底盘设置等量的“负边距 (Negative Margin)”！
+            // 这会让极光强行突破安全区，逆向伸展填满状态栏、小白条和摄像头区域！
+            val lp = composeBackground.layoutParams as? ViewGroup.MarginLayoutParams
+            lp?.let {
+                it.setMargins(
+                    -displayCutout.left, 
+                    -systemBars.top, 
+                    -displayCutout.right, 
+                    -systemBars.bottom
+                )
+                composeBackground.layoutParams = it
+            }
+
             WindowInsetsCompat.CONSUMED
         }
         

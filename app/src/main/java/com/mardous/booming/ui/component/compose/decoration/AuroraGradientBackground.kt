@@ -24,7 +24,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.isActive
 import kotlin.math.cos
@@ -47,7 +50,6 @@ fun AuroraGradientBackground(
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
 
-    // 电池电量与省电广播监听
     DisposableEffect(context) {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_BATTERY_CHANGED)
@@ -88,7 +90,6 @@ fun AuroraGradientBackground(
         }
     }
 
-    // Android 10+ 硬件热温监听（Severe 及以上触发熔断）
     DisposableEffect(context) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -109,10 +110,9 @@ fun AuroraGradientBackground(
         }
     }
 
-    // 是否允许执行动态渲染
     val shouldAnimate = isPlaying && !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    // 2. 颜色预处理与对象池化（避免在 Draw 阶段分配内存）
+    // 2. 颜色预处理与对象池化
     val c1 = remember(colors) { (colors.getOrNull(0) ?: Color(0xFF2C3E50)).boostForAurora() }
     val c2 = remember(colors) { (colors.getOrNull(1) ?: Color(0xFF3498DB)).boostForAurora() }
     val c3 = remember(colors) { (colors.getOrNull(2) ?: c1).boostForAurora() }
@@ -122,7 +122,7 @@ fun AuroraGradientBackground(
     val c3List = remember(c3) { listOf(c3.copy(alpha = 0.45f), Color.Transparent) }
     val baseBgColor = remember { Color(0xFF0C0C0F) }
 
-    // 3. 动态时间轴控制（冻结时直接挂起循环）
+    // 3. 动态时间轴控制（🌟 优化：运用 200*PI 完美数学公约数，杜绝 Float 精度溢出毛刺）
     var time by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
         if (shouldAnimate) {
@@ -131,7 +131,7 @@ fun AuroraGradientBackground(
                 withInfiniteAnimationFrameMillis { frameTime ->
                     if (lastTime != 0L) {
                         val delta = (frameTime - lastTime) / 1000f
-                        time = (time + delta) % 6283.185f // 2000*PI 精度保护取模
+                        time = (time + delta) % 628.3185f // 200*PI 完美利萨如循环周期
                     }
                     lastTime = frameTime
                 }
@@ -139,50 +139,55 @@ fun AuroraGradientBackground(
         }
     }
 
-    // 4. 零 GC 开销的底层绘制
+    // 🌟 优化：提取 Radius 计算，并且在 Offset.Zero 构建不变的静态 Brush (死死锁住，0 JNI分配)
+    var maxRadius by remember { mutableFloatStateOf(0f) }
+    
+    val brush1 = remember(c1List, maxRadius) {
+        if (maxRadius > 0f) Brush.radialGradient(c1List, Offset.Zero, maxRadius) else SolidColor(Color.Transparent)
+    }
+    val brush2 = remember(c2List, maxRadius) {
+        if (maxRadius > 0f) Brush.radialGradient(c2List, Offset.Zero, maxRadius * 0.9f) else SolidColor(Color.Transparent)
+    }
+    val brush3 = remember(c3List, maxRadius) {
+        if (maxRadius > 0f) Brush.radialGradient(c3List, Offset.Zero, maxRadius * 0.85f) else SolidColor(Color.Transparent)
+    }
+
+    // 4. 绝对零 GC 开销的极客底层绘制
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged { size ->
+                val w = size.width.toFloat()
+                val h = size.height.toFloat()
+                maxRadius = (if (w > h) w else h) * 0.9f
+            }
             .drawBehind {
+                if (maxRadius == 0f) return@drawBehind
+
                 val w = size.width
                 val h = size.height
-                val maxRadius = (if (w > h) w else h) * 0.9f
-
+                
                 // 暗底铺设（保证车内夜间对比度）
                 drawRect(baseBgColor)
 
-                // 光斑 1（主光束）
+                // 🌟 核心优化：笔刷不动，平移画布 (translate)。从源头切断 Shader 对象重建
                 val x1 = w * 0.5f + w * 0.35f * sin(time * 0.15f)
                 val y1 = h * 0.5f + h * 0.25f * cos(time * 0.11f)
-                val center1 = Offset(x1, y1)
-                drawCircle(
-                    brush = Brush.radialGradient(c1List, center1, maxRadius),
-                    radius = maxRadius,
-                    center = center1,
-                    blendMode = BlendMode.Screen
-                )
+                translate(left = x1, top = y1) {
+                    drawCircle(brush1, maxRadius, Offset.Zero, blendMode = BlendMode.Screen)
+                }
 
-                // 光斑 2（反向副光束）
                 val x2 = w * 0.5f + w * 0.4f * sin(time * 0.19f + 2f)
                 val y2 = h * 0.5f + h * 0.3f * cos(time * 0.14f + 1f)
-                val center2 = Offset(x2, y2)
-                drawCircle(
-                    brush = Brush.radialGradient(c2List, center2, maxRadius * 0.9f),
-                    radius = maxRadius * 0.9f,
-                    center = center2,
-                    blendMode = BlendMode.Screen
-                )
+                translate(left = x2, top = y2) {
+                    drawCircle(brush2, maxRadius * 0.9f, Offset.Zero, blendMode = BlendMode.Screen)
+                }
 
-                // 光斑 3（点缀漫游光束）
                 val x3 = w * 0.5f + w * 0.25f * sin(time * 0.12f + 4f)
                 val y3 = h * 0.5f + h * 0.4f * cos(time * 0.17f + 3f)
-                val center3 = Offset(x3, y3)
-                drawCircle(
-                    brush = Brush.radialGradient(c3List, center3, maxRadius * 0.85f),
-                    radius = maxRadius * 0.85f,
-                    center = center3,
-                    blendMode = BlendMode.Screen
-                )
+                translate(left = x3, top = y3) {
+                    drawCircle(brush3, maxRadius * 0.85f, Offset.Zero, blendMode = BlendMode.Screen)
+                }
             }
     )
 }
