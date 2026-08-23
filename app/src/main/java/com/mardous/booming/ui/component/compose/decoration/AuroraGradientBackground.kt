@@ -278,15 +278,18 @@ private fun Color.boostForAurora(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
     
-    // 🌟 修复 1：智能防变异机制
-    // 如果原图是黑白灰（饱和度 < 5%），绝不强行加饱和度，防止底层默认色相(绿/红)被暴力放大
-    if (hsv[1] > 0.05f) {
-        hsv[1] = (hsv[1] * 1.3f).coerceAtMost(0.9f) // 仅限制最高值，不再强求最低值
+    // 🌟 修复 2：极其严苛的黑白噪点过滤机制
+    // 将饱和度免疫阈值提高到 15% (0.15f)。很多黑白老照片因为 JPEG 压缩会带有 10% 左右的绿/紫噪点。
+    // 低于 15% 的，统统视为纯黑白/灰阶，强制把色彩剥夺（归零）！彻底杀死诡异的突兀变异色！
+    if (hsv[1] < 0.15f) {
+        hsv[1] = 0f 
+        // 亮度适度压制，保持水墨/黑胶的深邃感，防止太亮变成白板
+        hsv[2] = (hsv[2] * 0.8f).coerceIn(0.15f, 0.45f)
     } else {
-        hsv[1] = 0f // 如果是无色彩图，就让流体保持高级的高级灰/黑白质感
+        // 对于真正有色彩的封面，进行温和提纯
+        hsv[1] = (hsv[1] * 1.2f).coerceIn(0.4f, 0.9f)
+        hsv[2] = (hsv[2] * 0.85f).coerceIn(0.2f, 0.65f)
     }
     
-    // 亮度适度压制，保持极光的深邃感
-    hsv[2] = (hsv[2] * 0.85f).coerceIn(0.2f, 0.65f)
     return Color(android.graphics.Color.HSVToColor(hsv))
 }

@@ -193,21 +193,31 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled) {
-                    // 🌟 1. 安全兜底色，确保至少能提取出 3 个颜色位点
-                    val safeColors = if (gradientColors.size >= 2) gradientColors else listOf(
-                        androidx.compose.ui.graphics.Color(0xFF1E3C72), 
-                        androidx.compose.ui.graphics.Color(0xFF2A5298),
-                        androidx.compose.ui.graphics.Color(0xFF00C9FF) 
-                    )
+                    // 🌟 修复 1：智能黑白兜底色（彻底剔除硬编码的蓝色！）
+                    // 当封面是黑白导致提取不出足够的彩色时，绝不能强塞蓝色！
+                    // 我们根据提取到的数量，智能降级为单色衍生或高级黑灰流体。
+                    val safeColors = when {
+                        gradientColors.size >= 2 -> gradientColors
+                        gradientColors.size == 1 -> listOf(
+                            gradientColors[0], 
+                            gradientColors[0].copy(alpha = 0.7f), 
+                            gradientColors[0].copy(alpha = 0.4f)
+                        )
+                        else -> listOf(
+                            androidx.compose.ui.graphics.Color(0xFF2C2C30), // 高级深空灰
+                            androidx.compose.ui.graphics.Color(0xFF1A1A1E), // 极夜黑
+                            androidx.compose.ui.graphics.Color(0xFF38383F)  // 银灰色
+                        )
+                    }
 
                     // 将不确定数量的颜色固定映射到 3 个目标靶点
-                    val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF1E3C72) }
-                    val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF2A5298) }
+                    val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF2C2C30) }
+                    val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF1A1A1E) }
                     val targetC3 = safeColors.getOrElse(2) { targetC1 }
 
                     // 🌟 2. 核心黑科技：色彩平滑渐变状态 (1.5秒线性插值晕染)
                     val animatedC1 by animateColorAsState(targetValue = targetC1, animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = targetC2, animationSpec = tween(1500), label = "c2")
+					val animatedC2 by animateColorAsState(targetValue = targetC2, animationSpec = tween(1500), label = "c2")
                     val animatedC3 by animateColorAsState(targetValue = targetC3, animationSpec = tween(1500), label = "c3")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
