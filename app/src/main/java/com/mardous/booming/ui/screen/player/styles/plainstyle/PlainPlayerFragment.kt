@@ -17,6 +17,15 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.widget.Toolbar
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
 import androidx.core.graphics.ColorUtils
@@ -24,6 +33,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.updatePadding
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -31,8 +41,13 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.toBitmap
 import com.mardous.booming.R
 import com.mardous.booming.core.model.action.NowPlayingAction
+import com.mardous.booming.core.model.lyrics.LyricsViewSettings
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
 import com.mardous.booming.core.model.player.PlayerTintTarget
@@ -45,9 +60,13 @@ import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.databinding.FragmentPlainPlayerBinding
 import com.mardous.booming.extensions.getOnBackPressedDispatcher
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
+import com.mardous.booming.extensions.resolveColor
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.component.compose.color.extractGradientColors
+import com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground
+import com.mardous.booming.ui.component.views.PlaceholderDrawable
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
@@ -60,25 +79,6 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.SingletonImageLoader
-import coil3.request.ImageRequest
-import coil3.request.SuccessResult
-import coil3.toBitmap
-import com.mardous.booming.core.model.lyrics.LyricsViewSettings
-import com.mardous.booming.extensions.resolveColor
-import com.mardous.booming.ui.component.compose.color.extractGradientColors
-import com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground
-import com.mardous.booming.ui.component.views.PlaceholderDrawable
 
 class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
@@ -146,8 +146,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentPlainPlayerBinding.bind(view)
-		
-		// =========================================================
+        
+        // =========================================================
         // 🌟 全局极光底座引擎：0 GC AGSL 渲染 + 究极生命周期防御
         // =========================================================
         val rootGroup = binding.root as? ViewGroup
@@ -165,7 +165,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             )
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
-                val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
                 
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
@@ -196,7 +196,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         androidx.compose.ui.graphics.Color(0xFF2A5298)
                     )
 
-                    com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
+                    AuroraGradientBackground(
                         colors = safeColors,
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
@@ -215,7 +215,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.playerLyricsViewSettings.collect { settings ->
-                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                val isAuroraEnabled = settings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
                 binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
                 
                 // 立刻砸碎背景实体墙！
@@ -227,60 +227,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             }
         }
         
-        // 强制插入底层
-        (binding.root as? ViewGroup)?.addView(composeBackground, 0)
-        
-        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
-        (binding.root as? ViewGroup)?.clipToPadding = false
-
-        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
-        viewLifecycleOwner.lifecycleScope.launch {
-            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
-                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
-                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
-                
-                // 🌟 解决切歌延迟 Bug：立刻砸碎背景实体墙！
-                if (isAuroraEnabled) {
-                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                } else {
-                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
-                }
-            }
-        }
-        
-        // 强制插入底层
-        (binding.root as? ViewGroup)?.addView(composeBackground, 0)
-        
-        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
-        (binding.root as? ViewGroup)?.clipToPadding = false
-
-        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
-        viewLifecycleOwner.lifecycleScope.launch {
-            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
-                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
-                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
-                
-                // 🌟 解决切歌延迟 Bug：立刻砸碎背景实体墙！
-                if (isAuroraEnabled) {
-                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                } else {
-                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
-                }
-            }
-        }
-        
-        // 强制插入底层
-        (binding.root as? android.view.ViewGroup)?.addView(composeBackground, 0)
-        
-        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
-        viewLifecycleOwner.lifecycleScope.launch {
-            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
-                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
-                binding.blur.visibility = if (isAuroraEnabled) android.view.View.INVISIBLE else android.view.View.VISIBLE
-            }
-        }
-		
-		
         setupToolbar()
         inflateMenuInView(playerToolbar)
         
@@ -297,9 +243,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         if (isLandscapeOrTablet) {
             setupSlidingGhostMode()
         }
-
-        // 🌟 优化 2：解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕外！
-        (binding.root as? ViewGroup)?.clipToPadding = false
 
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
@@ -363,7 +306,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     }
 
     private fun handleCoverClick() {
-        // UI 主线程触发，且 View 一定存活，使用 binding 安全
         val willShowLyrics = binding.rightLyricsContainer?.visibility != View.VISIBLE
         binding.rightLyricsContainer?.visibility = if (willShowLyrics) View.VISIBLE else View.INVISIBLE
         val originalVisibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
@@ -387,7 +329,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val viewPager = findViewPager(innerView)
                 viewPager?.addOnPageChangeListener(object : androidx.viewpager.widget.ViewPager.OnPageChangeListener {
                     override fun onPageScrollStateChanged(state: Int) {
-                        // 🌟 安全调用：因为是在滑动回调中，页面可能已经被销毁，使用 _binding?. 代替 binding.
                         if (state == androidx.viewpager.widget.ViewPager.SCROLL_STATE_DRAGGING) {
                             _binding?.canvasPlayerView?.animate()?.cancel()
                             _binding?.canvasPlayerView?.alpha = 0f
@@ -574,7 +515,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                     videoFetchJob?.cancel()
                     canvasExoPlayer?.stop()
                     canvasExoPlayer?.clearMediaItems()
-                    // 🌟 安全调用
                     _binding?.canvasPlayerView?.alpha = 0f
                 }
             } catch (e: Exception) {}
@@ -637,12 +577,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
             addListener(object : Player.Listener {
                 override fun onRenderedFirstFrame() { 
-                    // 🌟 致命错误修复点：将 binding 替换为安全调用 _binding?.
                     _binding?.canvasPlayerView?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(800).start() } 
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_ENDED) {
-                        // 🌟 致命错误修复点：全部替换为 _binding?. 避免动画结束时页面已被销毁
                         _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction { 
                             _binding?.canvasPlayerView?.postDelayed({ 
                                 canvasExoPlayer?.seekTo(0)
@@ -662,7 +600,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
                         
-                        // 🌟 安全调用
                         _binding?.lyricsSongTitleText?.text = song.title
                         val artistStr = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) song.albumArtistName else song.artistName
                         _binding?.lyricsSongArtistText?.text = artistStr
@@ -675,7 +612,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         videoFetchJob?.cancel()
                         canvasExoPlayer?.stop()
                         canvasExoPlayer?.clearMediaItems()
-                        // 🌟 安全调用
                         _binding?.canvasPlayerView?.alpha = 0f
 
                         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -710,7 +646,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     }
 
     private fun updateFavoriteIcon(isFavorite: Boolean) {
-        // 🌟 安全调用
         _binding?.lyricsFavoriteButton?.apply {
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
@@ -721,9 +656,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
         val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
-		
-		val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
-        // 如果开启极光，强制把表层底板变透明，让底层发光透上来！
+        
+        val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
         val finalSurfaceColor = if (isAuroraEnabled) android.graphics.Color.TRANSPARENT else scheme.surfaceColor
 
         val targets = mutableListOf(
@@ -749,10 +683,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onDestroyView() {
         Preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
         videoFetchJob?.cancel()
-        
-        // 🌟 终极防线：页面销毁时，强制取消可能在倒计时的动画！
         _binding?.canvasPlayerView?.animate()?.cancel()
-        
         canvasExoPlayer?.release()
         super.onDestroyView()
         _binding = null
