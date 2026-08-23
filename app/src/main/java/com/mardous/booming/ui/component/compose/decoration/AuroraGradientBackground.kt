@@ -1,9 +1,11 @@
 package com.mardous.booming.ui.component.compose.decoration
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.RuntimeShader
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -24,18 +26,60 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.isActive
+import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * 专为 CarWith 车载与极端工况优化的极光背景
- * 具备温控熔断、低电量保护、省电模式降级及零 GC 内存开销特性
+ * 🌟 真正的流体力学 GPU 着色器 (AGSL)
+ * 仅在 Android 13+ (API 33+) 激活。利用域扭曲(Domain Warping)算法产生极致粘稠的液态融合。
+ */
+@Language("AGSL")
+private const val FLUID_SHADER = """
+    uniform float2 resolution;
+    uniform float time;
+    uniform layout(color) half4 c1;
+    uniform layout(color) half4 c2;
+    uniform layout(color) half4 c3;
+    uniform layout(color) bg;
+
+    half4 main(in float2 fragCoord) {
+        float2 uv = fragCoord / resolution.xy;
+        float2 p = uv * 2.0 - 1.0; // 将坐标系映射到 -1 到 1
+        p.x *= resolution.x / resolution.y; // 修正屏幕比例防拉伸
+        
+        float t = time * 0.15; // 控制流体流动的全局速度
+        
+        // 核心数学：利用分形正弦波进行多重域扭曲 (Domain Warping)，模拟粘稠流体力学
+        for(float i = 1.0; i < 4.0; i += 1.0) {
+            float2 newP = p;
+            newP.x += 0.4 / i * sin(i * 2.0 * p.y + t);
+            newP.y += 0.4 / i * cos(i * 1.5 * p.x - t * 0.8);
+            p = newP;
+        }
+        
+        // 提取扭曲后的坐标点权重
+        float w1 = 0.5 + 0.5 * sin(p.x * 2.5 + t);
+        float w2 = 0.5 + 0.5 * cos(p.y * 2.0 - t);
+        
+        // GPU 并行混合：Apple Music 同款液态色彩剥离
+        half4 color = mix(c1, c2, w1);
+        color = mix(color, c3, w2);
+        
+        // 叠加一层极光暗底，增强车内夜间的深邃通透感
+        return mix(bg, color, 0.85);
+    }
+"""
+
+/**
+ * 专为 CarWith 车载与极端工况优化的世界级极光背景 (Dual-Engine 架构)
  */
 @Composable
 fun AuroraGradientBackground(
@@ -55,7 +99,6 @@ fun AuroraGradientBackground(
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
         }
-
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         isPowerSaveMode = powerManager?.isPowerSaveMode == true
 
@@ -65,9 +108,7 @@ fun AuroraGradientBackground(
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
                         val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                        if (level != -1 && scale != -1) {
-                            isLowBattery = (level * 100f / scale) <= 20f
-                        }
+                        if (level != -1 && scale != -1) { isLowBattery = (level * 100f / scale) <= 20f }
                     }
                     PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
                         isPowerSaveMode = powerManager?.isPowerSaveMode == true
@@ -75,19 +116,13 @@ fun AuroraGradientBackground(
                 }
             }
         }
-
         val initialIntent = context.registerReceiver(batteryReceiver, filter)
         initialIntent?.let { intent ->
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-            if (level != -1 && scale != -1) {
-                isLowBattery = (level * 100f / scale) <= 20f
-            }
+            if (level != -1 && scale != -1) { isLowBattery = (level * 100f / scale) <= 20f }
         }
-
-        onDispose {
-            context.unregisterReceiver(batteryReceiver)
-        }
+        onDispose { context.unregisterReceiver(batteryReceiver) }
     }
 
     DisposableEffect(context) {
@@ -102,7 +137,6 @@ fun AuroraGradientBackground(
             isOverheating = powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
             powerManager.addThermalStatusListener(thermalListener)
         }
-
         onDispose {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null && powerManager != null) {
                 powerManager.removeThermalStatusListener(thermalListener)
@@ -112,18 +146,14 @@ fun AuroraGradientBackground(
 
     val shouldAnimate = isPlaying && !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    // 2. 颜色预处理与对象池化
+    // 2. 颜色提取与极光亮度提纯
     val c1 = remember(colors) { (colors.getOrNull(0) ?: Color(0xFF2C3E50)).boostForAurora() }
     val c2 = remember(colors) { (colors.getOrNull(1) ?: Color(0xFF3498DB)).boostForAurora() }
     val c3 = remember(colors) { (colors.getOrNull(2) ?: c1).boostForAurora() }
-
-    val c1List = remember(c1) { listOf(c1.copy(alpha = 0.65f), Color.Transparent) }
-    val c2List = remember(c2) { listOf(c2.copy(alpha = 0.55f), Color.Transparent) }
-    val c3List = remember(c3) { listOf(c3.copy(alpha = 0.45f), Color.Transparent) }
     val baseBgColor = remember { Color(0xFF0C0C0F) }
 
-    // 3. 动态时间轴控制（🌟 优化：运用 200*PI 完美数学公约数，杜绝 Float 精度溢出毛刺）
-    var time by remember { mutableFloatStateOf(0f) }
+    // 3. 全局时间轴挂起驱动 (传入 Provider 函数，彻底杜绝 Compose 重组产生的内存抖动)
+    var timeState by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
         if (shouldAnimate) {
             var lastTime = 0L
@@ -131,7 +161,7 @@ fun AuroraGradientBackground(
                 withInfiniteAnimationFrameMillis { frameTime ->
                     if (lastTime != 0L) {
                         val delta = (frameTime - lastTime) / 1000f
-                        time = (time + delta) % 628.3185f // 200*PI 完美利萨如循环周期
+                        timeState = (timeState + delta) % 628.3185f // 200*PI 完美防溢出周期
                     }
                     lastTime = frameTime
                 }
@@ -139,7 +169,57 @@ fun AuroraGradientBackground(
         }
     }
 
-    // 🌟 优化：提取 Radius 计算，并且在 Offset.Zero 构建不变的静态 Brush (死死锁住，0 JNI分配)
+    // 4. 双引擎路由：根据系统版本动态调度硬件
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        AgslFluidBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
+    } else {
+        CanvasAuroraBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
+    }
+}
+
+/**
+ * 🚀 引擎 A：API 33+ 满血纯 GPU 流体着色器 (0 CPU 开销)
+ */
+@SuppressLint("NewApi")
+@Composable
+private fun AgslFluidBackground(
+    c1: Color, c2: Color, c3: Color, baseBgColor: Color,
+    timeProvider: () -> Float,
+    modifier: Modifier
+) {
+    // 实例化 AGSL 着色器并永久缓存
+    val shader = remember { RuntimeShader(FLUID_SHADER) }
+    val brush = remember(shader) { ShaderBrush(shader) }
+    
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .drawBehind {
+                // 每帧仅更新 Uniform 变量，由 GPU 负责百万级像素流体计算
+                shader.setFloatUniform("resolution", size.width, size.height)
+                shader.setFloatUniform("time", timeProvider())
+                shader.setColorUniform("c1", c1.toArgb())
+                shader.setColorUniform("c2", c2.toArgb())
+                shader.setColorUniform("c3", c3.toArgb())
+                shader.setColorUniform("bg", baseBgColor.toArgb())
+                drawRect(brush)
+            }
+    )
+}
+
+/**
+ * 🔋 引擎 B：降级兼容方案，0 GC 的 Canvas 数学极光引擎
+ */
+@Composable
+private fun CanvasAuroraBackground(
+    c1: Color, c2: Color, c3: Color, baseBgColor: Color,
+    timeProvider: () -> Float,
+    modifier: Modifier
+) {
+    val c1List = remember(c1) { listOf(c1.copy(alpha = 0.65f), Color.Transparent) }
+    val c2List = remember(c2) { listOf(c2.copy(alpha = 0.55f), Color.Transparent) }
+    val c3List = remember(c3) { listOf(c3.copy(alpha = 0.45f), Color.Transparent) }
+    
     var maxRadius by remember { mutableFloatStateOf(0f) }
     
     val brush1 = remember(c1List, maxRadius) {
@@ -152,7 +232,6 @@ fun AuroraGradientBackground(
         if (maxRadius > 0f) Brush.radialGradient(c3List, Offset.Zero, maxRadius * 0.85f) else SolidColor(Color.Transparent)
     }
 
-    // 4. 绝对零 GC 开销的极客底层绘制
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -166,11 +245,11 @@ fun AuroraGradientBackground(
 
                 val w = size.width
                 val h = size.height
+                val time = timeProvider()
                 
-                // 暗底铺设（保证车内夜间对比度）
                 drawRect(baseBgColor)
 
-                // 🌟 核心优化：笔刷不动，平移画布 (translate)。从源头切断 Shader 对象重建
+                // 使用 translate 平移画布，彻底掐断 JNI 对象重分配
                 val x1 = w * 0.5f + w * 0.35f * sin(time * 0.15f)
                 val y1 = h * 0.5f + h * 0.25f * cos(time * 0.11f)
                 translate(left = x1, top = y1) {
@@ -192,6 +271,7 @@ fun AuroraGradientBackground(
     )
 }
 
+// 通用色彩高亮提纯算法
 private fun Color.boostForAurora(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)

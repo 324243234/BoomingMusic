@@ -148,10 +148,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         _binding = FragmentPlainPlayerBinding.bind(view)
 		
 		// =========================================================
-        // 🌟 全局极光底座引擎：直接复用系统已算好的主题色，0 额外计算开销
+        // 🌟 全局极光底座引擎：使用后台线程精准提取封面的 3 色渐变
         // =========================================================
         val composeBackground = ComposeView(requireContext()).apply {
-            // 保持之前优化的负边距拉伸准备
             layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -160,26 +159,63 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
                 val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
                 
+                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-                
-                // 🌟 神级优化：直接监听原作者已经算好的全局主题色彩流！
-                val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsStateWithLifecycle(
-                    initialValue = com.mardous.booming.core.model.player.PlayerColorScheme.themeColorScheme(context)
-                )
+                var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+
+                // 🌟 获取 Compose 层级中绝对安全的非空 Context
+                val currentContext = androidx.compose.ui.platform.LocalContext.current
+
+                // 🌟 切歌时仅执行一次的轻量级取色（完美避开发热）
+                LaunchedEffect(song, isAuroraEnabled) {
+                    if (isAuroraEnabled && song != null) {
+                        withContext(Dispatchers.Default) {
+                            val result = SingletonImageLoader.get(currentContext).execute(
+                                ImageRequest.Builder(currentContext).data(song).build()
+                            )
+                            if (result is SuccessResult) {
+                                gradientColors = result.image.toBitmap().extractGradientColors(
+                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
+                                )
+                            }
+                        }
+                    }
+                }
 
                 if (isAuroraEnabled) {
-                    // 🌟 榨干原作者的价值：直接白嫖 primary、tertiary、secondary 作为极光三原色
-                    val gradientColors = listOf(
-                        playerColorScheme.primary,
-                        playerColorScheme.tertiary,
-                        playerColorScheme.secondary
+                    // 🌟 安全兜底：防止某些变态封面取色失败导致黑屏，给一套绝美的默认深邃极光色
+                    val safeColors = if (gradientColors.size >= 2) gradientColors else listOf(
+                        androidx.compose.ui.graphics.Color(0xFF1E3C72), 
+                        androidx.compose.ui.graphics.Color(0xFF2A5298),
+                        androidx.compose.ui.graphics.Color(0xFF00C9FF)
                     )
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                        colors = gradientColors,
+                        colors = safeColors,
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
+                }
+            }
+        }
+        
+        // 强制插入底层
+        (binding.root as? ViewGroup)?.addView(composeBackground, 0)
+        
+        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
+        (binding.root as? ViewGroup)?.clipToPadding = false
+
+        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
+                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
+                
+                // 🌟 解决切歌延迟 Bug：立刻砸碎背景实体墙！
+                if (isAuroraEnabled) {
+                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                } else {
+                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
                 }
             }
         }
