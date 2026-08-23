@@ -4,6 +4,8 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
@@ -148,11 +150,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         _binding = FragmentPlainPlayerBinding.bind(view)
         
         // =========================================================
-        // 🌟 全局极光底座引擎：0 GC AGSL 渲染 + 究极生命周期防御
+        // 🌟 全局极光底座引擎：0 GC AGSL 渲染 + 平滑色彩过渡 (Crossfade)
         // =========================================================
         val rootGroup = binding.root as? ViewGroup
         
-        // 🛡️ 防御 1：清除因 Fragment 视图复用（切主题时）残留的旧背景，防止无限堆叠
+        // 🛡️ 防御 1：清除因 Fragment 视图复用残留的旧背景
         rootGroup?.findViewWithTag<View>("AuroraBackground")?.let { oldBg ->
             rootGroup.removeView(oldBg)
         }
@@ -165,7 +167,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             )
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
-                val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
                 
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
@@ -190,14 +192,26 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled) {
-                    // 安全兜底色
+                    // 🌟 1. 安全兜底色，确保至少能提取出 3 个颜色位点
                     val safeColors = if (gradientColors.size >= 2) gradientColors else listOf(
                         androidx.compose.ui.graphics.Color(0xFF1E3C72), 
-                        androidx.compose.ui.graphics.Color(0xFF2A5298)
+                        androidx.compose.ui.graphics.Color(0xFF2A5298),
+                        androidx.compose.ui.graphics.Color(0xFF00C9FF) 
                     )
 
-                    AuroraGradientBackground(
-                        colors = safeColors,
+                    // 将不确定数量的颜色固定映射到 3 个目标靶点
+                    val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF1E3C72) }
+                    val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF2A5298) }
+                    val targetC3 = safeColors.getOrElse(2) { targetC1 }
+
+                    // 🌟 2. 核心黑科技：色彩平滑渐变状态 (1.5秒线性插值晕染)
+                    val animatedC1 by animateColorAsState(targetValue = targetC1, animationSpec = tween(1500), label = "c1")
+                    val animatedC2 by animateColorAsState(targetValue = targetC2, animationSpec = tween(1500), label = "c2")
+                    val animatedC3 by animateColorAsState(targetValue = targetC3, animationSpec = tween(1500), label = "c3")
+
+                    com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
+                        // 传入动态插值的颜色
+                        colors = listOf(animatedC1, animatedC2, animatedC3),
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
