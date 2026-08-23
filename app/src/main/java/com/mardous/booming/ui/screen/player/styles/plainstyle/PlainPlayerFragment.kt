@@ -4,6 +4,7 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+import android.view.WindowManager
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import android.content.Context
@@ -258,30 +259,39 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             setupSlidingGhostMode()
         }
 
+        // 🌟 修复 2(A)：向 Android 系统申请“刘海/打孔屏”的越权渲染许可
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            requireActivity().window.attributes = requireActivity().window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+
+        // 🌟 修复 2(B)：彻底抛弃负边距，直接读取屏幕物理像素进行绝对覆盖
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
             val displayCutout = insets.getInsets(Type.displayCutout())
             
-            // 原版逻辑：给主视图应用安全区 Padding，保护按键和歌词不被刘海遮挡
+            // 计算双端最大的安全边距
+            val totalLeft = Math.max(systemBars.left, displayCutout.left)
+            val totalRight = Math.max(systemBars.right, displayCutout.right)
+            
+            // 原版逻辑：给主视图应用安全区 Padding，保护播放按钮和歌词
             v.updatePadding(
                 top = systemBars.top, 
                 bottom = systemBars.bottom,
-                left = displayCutout.left, 
-                right = displayCutout.right
+                left = totalLeft, 
+                right = totalRight
             )
 
-            // 🚀 核心黑科技：给极光底盘设置等量的“负边距 (Negative Margin)”！
-            // 这会让极光强行突破安全区，逆向伸展填满状态栏、小白条和摄像头区域！
-            val lp = composeBackground.layoutParams as? ViewGroup.MarginLayoutParams
-            lp?.let {
-                it.setMargins(
-                    -displayCutout.left, 
-                    -systemBars.top, 
-                    -displayCutout.right, 
-                    -systemBars.bottom
-                )
-                composeBackground.layoutParams = it
+            // 🚀 核心黑科技：直接让极光底盘撑大到物理屏幕的极限尺寸，并反向位移
+            val displayMetrics = v.resources.displayMetrics
+            composeBackground.layoutParams = composeBackground.layoutParams.apply {
+                width = displayMetrics.widthPixels + totalLeft + totalRight
+                height = displayMetrics.heightPixels + systemBars.top + systemBars.bottom
             }
+            // 使用硬件加速的 translation 完美抵消父布局的 Padding
+            composeBackground.translationX = -totalLeft.toFloat()
+            composeBackground.translationY = -systemBars.top.toFloat()
 
             WindowInsetsCompat.CONSUMED
         }

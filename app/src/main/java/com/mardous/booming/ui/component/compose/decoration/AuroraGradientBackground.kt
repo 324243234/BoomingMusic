@@ -277,7 +277,16 @@ private fun CanvasAuroraBackground(
 private fun Color.boostForAurora(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
-    hsv[1] = (hsv[1] * 1.3f).coerceIn(0.55f, 0.9f)
-    hsv[2] = (hsv[2] * 0.85f).coerceIn(0.3f, 0.65f)
+    
+    // 🌟 修复 1：智能防变异机制
+    // 如果原图是黑白灰（饱和度 < 5%），绝不强行加饱和度，防止底层默认色相(绿/红)被暴力放大
+    if (hsv[1] > 0.05f) {
+        hsv[1] = (hsv[1] * 1.3f).coerceAtMost(0.9f) // 仅限制最高值，不再强求最低值
+    } else {
+        hsv[1] = 0f // 如果是无色彩图，就让流体保持高级的高级灰/黑白质感
+    }
+    
+    // 亮度适度压制，保持极光的深邃感
+    hsv[2] = (hsv[2] * 0.85f).coerceIn(0.2f, 0.65f)
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
