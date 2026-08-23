@@ -45,10 +45,12 @@ import kotlin.math.sin
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
-    uniform layout(color) half4 c1;
-    uniform layout(color) half4 c2;
-    uniform layout(color) half4 c3;
-    uniform layout(color) bg;
+    
+    // 🌟 修复：在 AGSL 语法中，layout(...) 修饰符必须放在 uniform 前面
+    layout(color) uniform half4 c1;
+    layout(color) uniform half4 c2;
+    layout(color) uniform half4 c3;
+    layout(color) uniform half4 bg;
 
     half4 main(in float2 fragCoord) {
         float2 uv = fragCoord / resolution.xy;
