@@ -159,6 +159,7 @@ fun LyricsScreen(
 
     val hasBackgroundEffects = remember(lyricsViewSettings.backgroundEffect, gradientColors) {
         (lyricsViewSettings.backgroundEffect.isGradient && gradientColors.size >= 2) ||
+		(lyricsViewSettings.backgroundEffect.isAurora && gradientColors.size >= 2) || // ?? 追加极光判断
                 lyricsViewSettings.backgroundEffect.isBlur
     }
 
@@ -188,6 +189,16 @@ fun LyricsScreen(
                 }, label = "LyricsBackground"
             ) { (effect, colors) ->
                 when {
+				
+				    // ?? 1. 新增：极光动态特效（独立选项）
+                    effect.isAurora && colors.size >= 2 -> {
+                        com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
+                            colors = colors,
+                            isPlaying = isPlaying, // 随歌曲暂停而冻结动画，极致护航续航
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+					
                     effect.isGradient && colors.size >= 2 -> {
                         Box(
                             modifier = Modifier

@@ -30,11 +30,13 @@ class LyricsViewSettings(
 
     enum class BackgroundEffect {
         Gradient,
+        Aurora, // 🌟 1. 新增：极光动态特效
         Blur,
         None;
 
         val isBlur get() = this == Blur
         val isGradient get() = this == Gradient
+        val isAurora get() = this == Aurora // 🌟 2. 新增：判断辅助属性
         val isNone get() = this == None
     }
 

@@ -355,6 +355,7 @@ class LyricsViewModel(
                 BackgroundEffect.None
             } else when (preferences.getString(Key.BACKGROUND_EFFECT, null)) {
                 "gradient" -> BackgroundEffect.Gradient
+				"aurora" -> BackgroundEffect.Aurora // 🌟 新增：解析极光动态
                 "blur" -> BackgroundEffect.Blur
                 else -> BackgroundEffect.None
             }
