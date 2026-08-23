@@ -365,7 +365,7 @@ class LyricsViewModel(
                 "blur" -> BackgroundEffect.Blur
                 else -> BackgroundEffect.None
             }
-            }
+            
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
         val enableKaraokeStyle = preferences.getBoolean(Key.ENABLE_KARAOKE_STYLE, false)
         val progressiveColoring = preferences.getBoolean(Key.PROGRESSIVE_COLORING, false)

@@ -60,6 +60,25 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.toBitmap
+import com.mardous.booming.core.model.lyrics.LyricsViewSettings
+import com.mardous.booming.extensions.resolveColor
+import com.mardous.booming.ui.component.compose.color.extractGradientColors
+import com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground
+import com.mardous.booming.ui.component.views.PlaceholderDrawable
 
 class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
