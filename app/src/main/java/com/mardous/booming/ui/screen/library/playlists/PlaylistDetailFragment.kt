@@ -99,6 +99,9 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     private var playlistSongAdapter: PlaylistSongAdapter? = null
     private var wrappedAdapter: RecyclerView.Adapter<*>? = null
     private var recyclerViewDragDropManager: RecyclerViewDragDropManager? = null
+    
+    // 🌟 用于记录当前播放歌曲是否在列表中，辅助滑动显隐判断
+    private var isCurrentSongInList = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -195,14 +198,11 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
 
         libraryViewModel.getMiniPlayerMargin().observe(viewLifecycleOwner) {
             val bottomOffset = it.getWithSpace()
-            // 1. 让列表底部增加 padding，防遮挡
             binding.recyclerView.updatePadding(bottom = bottomOffset)
             
-            // 2. 🌟 动态抬高悬浮按钮，完美避开 Mini 播放器
-            val fab = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabLocateSong)
+            val fab = view.findViewById<FloatingActionButton>(R.id.fabLocateSong)
             if (fab != null) {
                 val lp = fab.layoutParams as android.view.ViewGroup.MarginLayoutParams
-                // 基础边距 16dp 转成像素，加上 mini 播放器的高度
                 val baseMargin = (16 * resources.displayMetrics.density).toInt()
                 lp.bottomMargin = baseMargin + bottomOffset
                 fab.layoutParams = lp
@@ -239,7 +239,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             }
             binding.recyclerView.adapter?.notifyDataSetChanged()
             
-            // 🌟 核心：当列表数据加载完毕时，检查当前播放歌曲是否在列表中
             checkCurrentSongInPlaylist(playerViewModel.currentSongFlow.value)
         }
         
@@ -249,7 +248,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             }
         }
 
-        // 🌟 核心：监听当前播放歌曲的变化，实时判断是否要显示定位按钮
         viewLifecycleOwner.lifecycleScope.launch {
             playerViewModel.currentSongFlow.collect { currentSong ->
                 checkCurrentSongInPlaylist(currentSong)
@@ -257,29 +255,26 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         }
     }
 
-    // 🌟 定位按钮的核心逻辑方法
     private fun checkCurrentSongInPlaylist(currentSong: Song?) {
-        // 使用 findViewById 兜底查找 XML 中的悬浮按钮
         val fabLocateSong = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
         val currentList = playlistSongAdapter?.dataSet
 
         if (currentSong == null || currentSong.id == 0L || currentList.isNullOrEmpty()) {
+            isCurrentSongInList = false
             fabLocateSong.hide()
             return
         }
 
-        // 查找当前正在播放的歌曲在当前歌单中的索引
         val index = currentList.indexOfFirst { it.id == currentSong.id }
 
         if (index != -1) {
-            // 歌曲在当前列表中，显示悬浮按钮
+            isCurrentSongInList = true
             fabLocateSong.show()
             fabLocateSong.setOnClickListener {
-                // 点击时，将列表滚动到该歌曲的位置
                 binding.recyclerView.scrollToPosition(index)
             }
         } else {
-            // 歌曲不在当前列表中，隐藏悬浮按钮
+            isCurrentSongInList = false
             fabLocateSong.hide()
         }
     }
@@ -375,6 +370,19 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         binding.recyclerView.createFastScroller()
         recyclerViewDragDropManager?.attachRecyclerView(binding.recyclerView)
         playlistSongAdapter!!.registerAdapterDataObserver(adapterDataObserver)
+        
+        // 🌟 添加列表滑动监听，下滚隐藏，上滚显示
+        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                val fab = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
+                if (dy > 0 && fab.isShown) {
+                    fab.hide()
+                } else if (dy < 0 && isCurrentSongInList && !fab.isShown) {
+                    fab.show()
+                }
+            }
+        })
     }
 
     private val adapterDataObserver = object : RecyclerView.AdapterDataObserver() {

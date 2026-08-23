@@ -1,18 +1,5 @@
 /*
  * Copyright (c) 2025 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.folders
@@ -33,7 +20,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import coil3.SingletonImageLoader
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.mardous.booming.R
 import com.mardous.booming.core.sort.SongSortMode
 import com.mardous.booming.data.mapper.searchFilter
@@ -84,6 +73,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     private val lyricsRepository: LyricsRepository by inject()
 
     private lateinit var songAdapter: SongAdapter
+    
+    // 🌟 用于记录当前播放歌曲是否在列表中，辅助滑动显隐判断
+    private var isCurrentSongInList = false
 
     private val folder: Folder
         get() = detailViewModel.getFolder().value ?: Folder.empty
@@ -96,16 +88,60 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
         view.applyHorizontalWindowInsets()
 
+        // 🌟 动态适配 Mini 播放器高度与 FAB 位置
         libraryViewModel.getMiniPlayerMargin().observe(viewLifecycleOwner) {
-            binding.recyclerView.updatePadding(bottom = it.getWithSpace())
+            val bottomOffset = it.getWithSpace()
+            binding.recyclerView.updatePadding(bottom = bottomOffset)
+            
+            val fab = view.findViewById<FloatingActionButton>(R.id.fabLocateSong)
+            if (fab != null) {
+                val lp = fab.layoutParams as android.view.ViewGroup.MarginLayoutParams
+                val baseMargin = (16 * resources.displayMetrics.density).toInt()
+                lp.bottomMargin = baseMargin + bottomOffset
+                fab.layoutParams = lp
+            }
         }
 
         setupButtons()
         setupRecyclerView()
+        
         detailViewModel.getFolder().observe(viewLifecycleOwner) {
             binding.collapsingAppBarLayout.title = it.fileName
             binding.title.text = it.fileName
             songs(it.songs)
+        }
+
+        // 🌟 实时侦听当前正在播放的歌曲
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            launch {
+                playerViewModel.currentSongFlow.collect { currentSong ->
+                    checkCurrentSongInFolder(currentSong)
+                }
+            }
+        }
+    }
+
+    private fun checkCurrentSongInFolder(currentSong: Song?) {
+        val fabLocateSong = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
+        val currentList = songAdapter.dataSet
+
+        if (currentSong == null || currentSong.id == 0L || currentList.isEmpty()) {
+            isCurrentSongInList = false
+            fabLocateSong.hide()
+            return
+        }
+
+        val index = currentList.indexOfFirst { it.id == currentSong.id }
+
+        if (index != -1) {
+            isCurrentSongInList = true
+            fabLocateSong.show()
+            fabLocateSong.setOnClickListener {
+                binding.recyclerView.scrollToPosition(index)
+            }
+        } else {
+            isCurrentSongInList = false
+            fabLocateSong.hide()
         }
     }
 
@@ -129,7 +165,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         return null
     }
 
-    // 🔥 终极防抖写入：强刷物理硬盘，防系统缓存欺骗
     private suspend fun safeWriteMetadataInPlace(songFile: File, updateTag: (org.jaudiotagger.tag.Tag) -> Unit): Boolean = withContext(Dispatchers.IO) {
         val tempFile = File(requireContext().cacheDir, "temp_meta_${System.currentTimeMillis()}.${songFile.extension}")
         var success = false
@@ -146,7 +181,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 tempFile.inputStream().use { input ->
                     FileOutputStream(songFile).use { output -> 
                         input.copyTo(output)
-                        // 💥 终极杀招：强迫操作系统物理落盘，绝不留在内存缓冲区！
                         output.fd.sync() 
                     }
                 }
@@ -200,6 +234,19 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         binding.recyclerView.apply {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = songAdapter
+            
+            // 🌟 滚动监听：向下滑动隐藏，向上滑动显示
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    super.onScrolled(recyclerView, dx, dy)
+                    val fab = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
+                    if (dy > 0 && fab.isShown) {
+                        fab.hide() // 系统原生的收缩消失动画
+                    } else if (dy < 0 && isCurrentSongInList && !fab.isShown) {
+                        fab.show() // 系统原生的弹现动画
+                    }
+                }
+            })
         }
     }
 
@@ -212,6 +259,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         binding.subtitle.text =
             buildInfoString(songs.songCountStr(requireContext()), songs.songsDurationStr())
         songAdapter.dataSet = songs
+        
+        // 🌟 载入数据后立刻校验定位按钮的状态
+        checkCurrentSongInFolder(playerViewModel.currentSongFlow.value)
     }
 
     override fun songMenuItemClick(
@@ -294,7 +344,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         if (success) {
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            // 💥 终极防竞争等待：确保底层 IO 操作 100% 结束且所有旧图读取任务超时
                             delay(500)
                             
                             try {
@@ -416,7 +465,6 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         if (successIds.isNotEmpty()) {
                             try { repository.updatePlaylistsContainingIds(successIds) } catch (e: Exception) {}
                             
-                            // 💥 防竞争阻断期
                             delay(600)
                             
                             try {

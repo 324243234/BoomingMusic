@@ -804,13 +804,49 @@ class PlaybackService :
         }
     }
 
+    // =========================================================================
+    // 💥 终极音频容错自愈引擎 (残缺/损坏 FLAC & 截断音频无感恢复)
+    // =========================================================================
     override fun onPlayerError(error: PlaybackException) {
-        val nextMediaIndex = player.nextMediaItemIndex
-        if (nextMediaIndex != C.INDEX_UNSET &&
-            errorRecoveryRetryCount < MAX_RETRY_COUNT_AFTER_ERROR) {
+        val currentPosition = player.currentPosition
+        val duration = player.duration
+        val errorCode = error.errorCode
+
+        Log.w(TAG, "检测到音频流异常: errorCode=${error.errorCodeName}, position=$currentPosition, duration=$duration")
+
+        // 1. 尾部截断自愈：如果已经在歌曲后半段或接近末尾时遭遇致命解析错误，视为自然播放完毕
+        val isNearEnd = duration > 0 && (duration - currentPosition) <= 5000L
+        if (isNearEnd || errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED) {
+            val nextMediaIndex = player.nextMediaItemIndex
+            if (nextMediaIndex != C.INDEX_UNSET) {
+                Log.i(TAG, "音频文件尾部截断/损坏，自动平滑切入下一曲")
+                errorRecoveryRetryCount = 0
+                player.seekToNextMediaItem()
+                player.prepare()
+                player.play()
+                return
+            }
+        }
+
+        // 2. 中间坏块/坏帧自愈：向后跳跃 3 秒跨过损坏的数据块，重新对齐帧同步字
+        if (errorRecoveryRetryCount < MAX_RETRY_COUNT_AFTER_ERROR) {
             errorRecoveryRetryCount++
+            val jumpTargetPosition = currentPosition + 3000L
+            Log.i(TAG, "尝试跳过损坏帧 (第 ${errorRecoveryRetryCount} 次重试)，跳转至: ${jumpTargetPosition}ms")
+            
+            player.seekTo(player.currentMediaItemIndex, jumpTargetPosition)
+            player.prepare()
+            player.play()
+            return
+        }
+
+        // 3. 彻底损坏无法恢复时，切下一首并重置计数器
+        val nextMediaIndex = player.nextMediaItemIndex
+        if (nextMediaIndex != C.INDEX_UNSET) {
+            errorRecoveryRetryCount = 0
             player.seekToNextMediaItem()
             player.prepare()
+            player.play()
         }
         showToast(getString(R.string.playback_error_code, error.errorCodeName))
     }

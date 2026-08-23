@@ -157,5 +157,19 @@
             android:indeterminate="true" />
 
     </FrameLayout>
+	
+	<!-- 当前播放歌曲定位悬浮按钮 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabLocateSong"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:layout_gravity="bottom|center_horizontal"
+        app:srcCompat="@drawable/ic_album_24dp"
+        app:tint="?colorOnPrimary"
+        android:backgroundTint="?colorPrimary"
+        app:fabSize="mini"
+        android:visibility="gone"
+        tools:visibility="visible" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
