@@ -148,9 +148,17 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         _binding = FragmentPlainPlayerBinding.bind(view)
 		
 		// =========================================================
-        // 🌟 全局极光底座引擎：使用后台线程精准提取封面的 3 色渐变
+        // 🌟 全局极光底座引擎：0 GC AGSL 渲染 + 究极生命周期防御
         // =========================================================
+        val rootGroup = binding.root as? ViewGroup
+        
+        // 🛡️ 防御 1：清除因 Fragment 视图复用（切主题时）残留的旧背景，防止无限堆叠
+        rootGroup?.findViewWithTag<View>("AuroraBackground")?.let { oldBg ->
+            rootGroup.removeView(oldBg)
+        }
+
         val composeBackground = ComposeView(requireContext()).apply {
+            tag = "AuroraBackground" // 打上标记
             layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -163,10 +171,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
                 var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
 
-                // 🌟 获取 Compose 层级中绝对安全的非空 Context
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
-                // 🌟 切歌时仅执行一次的轻量级取色（完美避开发热）
+                // 🌟 切歌时仅执行一次的轻量级取色
                 LaunchedEffect(song, isAuroraEnabled) {
                     if (isAuroraEnabled && song != null) {
                         withContext(Dispatchers.Default) {
@@ -183,11 +190,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled) {
-                    // 🌟 安全兜底：防止某些变态封面取色失败导致黑屏，给一套绝美的默认深邃极光色
+                    // 安全兜底色
                     val safeColors = if (gradientColors.size >= 2) gradientColors else listOf(
                         androidx.compose.ui.graphics.Color(0xFF1E3C72), 
-                        androidx.compose.ui.graphics.Color(0xFF2A5298),
-                        androidx.compose.ui.graphics.Color(0xFF00C9FF)
+                        androidx.compose.ui.graphics.Color(0xFF2A5298)
                     )
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
@@ -195,6 +201,28 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
+                }
+            }
+        }
+        
+        // 🛡️ 防御 2：彻底掐断 "child already has a parent" 崩溃！
+        (composeBackground.parent as? ViewGroup)?.removeView(composeBackground)
+        rootGroup?.addView(composeBackground, 0)
+        
+        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
+        rootGroup?.clipToPadding = false
+
+        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
+                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
+                
+                // 立刻砸碎背景实体墙！
+                if (isAuroraEnabled) {
+                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                } else {
+                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
                 }
             }
         }
