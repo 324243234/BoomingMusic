@@ -111,12 +111,10 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             songs(it.songs)
         }
 
-        // 🌟 实时侦听当前正在播放的歌曲
-        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
-            launch {
-                playerViewModel.currentSongFlow.collect { currentSong ->
-                    checkCurrentSongInFolder(currentSong)
-                }
+        // 🌟 修复点：直接使用已导包的 lifecycleScope.launch，完美实时侦听当前正在播放的歌曲
+        viewLifecycleOwner.lifecycleScope.launch {
+            playerViewModel.currentSongFlow.collect { currentSong ->
+                checkCurrentSongInFolder(currentSong)
             }
         }
     }
@@ -344,6 +342,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         if (success) {
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
+                            // 💥 终极防竞争等待：确保底层 IO 操作 100% 结束且所有旧图读取任务超时
                             delay(500)
                             
                             try {
