@@ -350,14 +350,21 @@ class LyricsViewModel(
     }
 
     private fun createViewSettings(mode: LyricsViewMode): LyricsViewSettings {
+	    
+        // 1. 先获取用户在设置里选了什么
+        val effectString = preferences.getString(Key.BACKGROUND_EFFECT, null)
+
+        // 2. 核心逻辑：拦截拦截模糊和渐变，唯独给“极光”放行 VIP 通道！
         val background: BackgroundEffect =
-            if (!mode.isFull) {
+            if (!mode.isFull && effectString != "aurora") { 
+                // 🌟 如果不是全屏，且选的不是极光，统统按原作者逻辑强行关闭！
                 BackgroundEffect.None
-            } else when (preferences.getString(Key.BACKGROUND_EFFECT, null)) {
+            } else when (effectString) {
                 "gradient" -> BackgroundEffect.Gradient
-				"aurora" -> BackgroundEffect.Aurora // 🌟 新增：解析极光动态
+                "aurora" -> BackgroundEffect.Aurora
                 "blur" -> BackgroundEffect.Blur
                 else -> BackgroundEffect.None
+            }
             }
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
         val enableKaraokeStyle = preferences.getBoolean(Key.ENABLE_KARAOKE_STYLE, false)

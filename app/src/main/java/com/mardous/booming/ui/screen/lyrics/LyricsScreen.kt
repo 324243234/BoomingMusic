@@ -159,7 +159,6 @@ fun LyricsScreen(
 
     val hasBackgroundEffects = remember(lyricsViewSettings.backgroundEffect, gradientColors) {
         (lyricsViewSettings.backgroundEffect.isGradient && gradientColors.size >= 2) ||
-		(lyricsViewSettings.backgroundEffect.isAurora && gradientColors.size >= 2) || // ?? ×·¼Ó¼«¹âÅÐ¶Ï
                 lyricsViewSettings.backgroundEffect.isBlur
     }
 
@@ -189,16 +188,6 @@ fun LyricsScreen(
                 }, label = "LyricsBackground"
             ) { (effect, colors) ->
                 when {
-				
-				    // ?? 1. ÐÂÔö£º¼«¹â¶¯Ì¬ÌØÐ§£¨¶ÀÁ¢Ñ¡Ïî£©
-                    effect.isAurora && colors.size >= 2 -> {
-                        com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                            colors = colors,
-                            isPlaying = isPlaying, // Ëæ¸èÇúÔÝÍ£¶ø¶³½á¶¯»­£¬¼«ÖÂ»¤º½Ðøº½
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-					
                     effect.isGradient && colors.size >= 2 -> {
                         Box(
                             modifier = Modifier
@@ -278,6 +267,8 @@ fun CoverLyricsScreen(
     val isPowerSaveMode = context.isPowerSaveMode()
     val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
     val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
+	// ðŸŒŸ æ ¸å¿ƒï¼šæ£€æµ‹åˆ°æžå…‰ï¼Œå°±å‘Šè¯‰æ­Œè¯å¼•æ“Žæœ‰æ·±è‰²èƒŒæ™¯
+    val hasBackgroundEffects = lyricsViewSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
     val uiState by lyricsViewModel.lyricsUiState.collectAsState()
     val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
         initial = PlayerColorScheme.themeColorScheme(context)
@@ -330,7 +321,10 @@ fun CoverLyricsScreen(
                 textAlign = TextAlign.Center,
                 isPlaying = isPlaying,
                 isPowerSaveMode = isPowerSaveMode,
-                hasBackgroundEffects = false,
+                //hasBackgroundEffects = false,
+				// ðŸŒŸ æŠŠåŽŸä½œè€…å†™æ­»çš„ falseï¼Œæ›¿æ¢æˆæˆ‘ä»¬çš„åŠ¨æ€åˆ¤æ–­ï¼
+                // è¿™æ ·åªè¦å¼€äº†æžå…‰ï¼Œå­—ä½“å°±ä¼šè‡ªåŠ¨å˜æˆé«˜äº®ç™½è‰²ï¼Œç™½å¤©æ™šä¸Šéƒ½æ¸…æ™°å¯è§ï¼
+                hasBackgroundEffects = hasBackgroundEffects,
                 onSeekTo = { position ->
                     playerViewModel.seekTo(position) 
                     if (lyricsViewSettings.resumeOnSeek) {

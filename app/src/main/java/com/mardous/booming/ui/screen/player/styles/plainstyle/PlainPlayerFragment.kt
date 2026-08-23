@@ -127,6 +127,61 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentPlainPlayerBinding.bind(view)
+		
+		// =========================================================
+        // 🌟 全局极光底座引擎：直接绑定系统的设置，并挂载在 Index 0 (最底层)
+        // =========================================================
+        val composeBackground = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setContent {
+                val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                
+                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
+                val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
+                var gradientColors by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+
+                androidx.compose.runtime.LaunchedEffect(song, isAuroraEnabled) {
+                    if (isAuroraEnabled && song != null) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            val result = coil3.SingletonImageLoader.get(context).execute(
+                                coil3.request.ImageRequest.Builder(context).data(song).build()
+                            )
+                            if (result is coil3.request.SuccessResult) {
+                                gradientColors = com.mardous.booming.ui.component.compose.color.extractGradientColors(
+                                    coil3.toBitmap(result.image),
+                                    com.mardous.booming.extensions.resolveColor(context, com.mardous.booming.ui.component.views.PlaceholderDrawable.BACKGROUND_COLOR)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (isAuroraEnabled && gradientColors.size >= 2) {
+                    com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
+                        colors = gradientColors,
+                        isPlaying = isPlaying,
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+        
+        // 强制插入底层
+        (binding.root as? android.view.ViewGroup)?.addView(composeBackground, 0)
+        
+        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
+                val isAuroraEnabled = settings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                binding.blur.visibility = if (isAuroraEnabled) android.view.View.INVISIBLE else android.view.View.VISIBLE
+            }
+        }
+		
+		
         setupToolbar()
         inflateMenuInView(playerToolbar)
         
@@ -544,9 +599,13 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
         val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
+		
+		val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+        // 如果开启极光，强制把表层底板变透明，让底层发光透上来！
+        val finalSurfaceColor = if (isAuroraEnabled) android.graphics.Color.TRANSPARENT else scheme.surfaceColor
 
         val targets = mutableListOf(
-            binding.root.surfaceTintTarget(scheme.surfaceColor),
+            binding.root.surfaceTintTarget(finalSurfaceColor),
             binding.toolbar.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
