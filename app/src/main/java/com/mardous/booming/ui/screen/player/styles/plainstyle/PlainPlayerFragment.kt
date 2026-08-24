@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
@@ -150,18 +151,14 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         super.onViewCreated(view, savedInstanceState)
         _binding = FragmentPlainPlayerBinding.bind(view)
         
-        // =========================================================
-        // 🌟 全局极光底座引擎：0 GC AGSL 渲染 + 平滑色彩过渡 (Crossfade)
-        // =========================================================
         val rootGroup = binding.root as? ViewGroup
         
-        // 🛡️ 防御 1：清除因 Fragment 视图复用残留的旧背景
         rootGroup?.findViewWithTag<View>("AuroraBackground")?.let { oldBg ->
             rootGroup.removeView(oldBg)
         }
 
         val composeBackground = ComposeView(requireContext()).apply {
-            tag = "AuroraBackground" // 打上标记
+            tag = "AuroraBackground" 
             layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -176,7 +173,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
-                // 🌟 切歌时仅执行一次的轻量级取色
                 LaunchedEffect(song, isAuroraEnabled) {
                     if (isAuroraEnabled && song != null) {
                         withContext(Dispatchers.Default) {
@@ -193,9 +189,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled) {
-                    // 🌟 修复 1：智能黑白兜底色（彻底剔除硬编码的蓝色！）
-                    // 当封面是黑白导致提取不出足够的彩色时，绝不能强塞蓝色！
-                    // 我们根据提取到的数量，智能降级为单色衍生或高级黑灰流体。
                     val safeColors = when {
                         gradientColors.size >= 2 -> gradientColors
                         gradientColors.size == 1 -> listOf(
@@ -204,24 +197,22 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             gradientColors[0].copy(alpha = 0.4f)
                         )
                         else -> listOf(
-                            androidx.compose.ui.graphics.Color(0xFF2C2C30), // 高级深空灰
-                            androidx.compose.ui.graphics.Color(0xFF1A1A1E), // 极夜黑
-                            androidx.compose.ui.graphics.Color(0xFF38383F)  // 银灰色
+                            androidx.compose.ui.graphics.Color(0xFF2C2C30), 
+                            androidx.compose.ui.graphics.Color(0xFF1A1A1E), 
+                            androidx.compose.ui.graphics.Color(0xFF38383F)  
                         )
                     }
 
-                    // 将不确定数量的颜色固定映射到 3 个目标靶点
-                    val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF2C2C30) }
-                    val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF1A1A1E) }
-                    val targetC3 = safeColors.getOrElse(2) { targetC1 }
+                    // 🌟 核心拦截点：先提纯噪点，再丢给动画引擎！
+                    val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF2C2C30) }.boostForAurora()
+                    val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF1A1A1E) }.boostForAurora()
+                    val targetC3 = safeColors.getOrElse(2) { targetC1 }.boostForAurora()
 
-                    // 🌟 2. 核心黑科技：色彩平滑渐变状态 (1.5秒线性插值晕染)
                     val animatedC1 by animateColorAsState(targetValue = targetC1, animationSpec = tween(1500), label = "c1")
-					val animatedC2 by animateColorAsState(targetValue = targetC2, animationSpec = tween(1500), label = "c2")
+                    val animatedC2 by animateColorAsState(targetValue = targetC2, animationSpec = tween(1500), label = "c2")
                     val animatedC3 by animateColorAsState(targetValue = targetC3, animationSpec = tween(1500), label = "c3")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                        // 传入动态插值的颜色
                         colors = listOf(animatedC1, animatedC2, animatedC3),
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
@@ -230,20 +221,16 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             }
         }
         
-        // 🛡️ 防御 2：彻底掐断 "child already has a parent" 崩溃！
         (composeBackground.parent as? ViewGroup)?.removeView(composeBackground)
         rootGroup?.addView(composeBackground, 0)
         
-        // 解除根视图的 Padding 裁剪限制，允许底层极光画到屏幕边缘外！
         rootGroup?.clipToPadding = false
 
-        // 拦截并隐藏原有的系统模糊背景，防止它遮挡极光
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.playerLyricsViewSettings.collect { settings ->
                 val isAuroraEnabled = settings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
                 binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
                 
-                // 立刻砸碎背景实体墙！
                 if (isAuroraEnabled) {
                     binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 } else {
@@ -269,23 +256,19 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             setupSlidingGhostMode()
         }
 
-        // 🌟 修复 2(A)：向 Android 系统申请“刘海/打孔屏”的越权渲染许可
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             requireActivity().window.attributes = requireActivity().window.attributes.apply {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
 
-        // 🌟 修复 2(B)：彻底抛弃负边距，直接读取屏幕物理像素进行绝对覆盖
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
             val displayCutout = insets.getInsets(Type.displayCutout())
             
-            // 计算双端最大的安全边距
             val totalLeft = Math.max(systemBars.left, displayCutout.left)
             val totalRight = Math.max(systemBars.right, displayCutout.right)
             
-            // 原版逻辑：给主视图应用安全区 Padding，保护播放按钮和歌词
             v.updatePadding(
                 top = systemBars.top, 
                 bottom = systemBars.bottom,
@@ -293,13 +276,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 right = totalRight
             )
 
-            // 🚀 核心黑科技：直接让极光底盘撑大到物理屏幕的极限尺寸，并反向位移
             val displayMetrics = v.resources.displayMetrics
             composeBackground.layoutParams = composeBackground.layoutParams.apply {
                 width = displayMetrics.widthPixels + totalLeft + totalRight
                 height = displayMetrics.heightPixels + systemBars.top + systemBars.bottom
             }
-            // 使用硬件加速的 translation 完美抵消父布局的 Padding
             composeBackground.translationX = -totalLeft.toFloat()
             composeBackground.translationY = -systemBars.top.toFloat()
 
@@ -550,6 +531,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                     canvasExoPlayer?.stop()
                     canvasExoPlayer?.clearMediaItems()
                     _binding?.canvasPlayerView?.alpha = 0f
+                    com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                 }
             } catch (e: Exception) {}
         }
@@ -585,6 +567,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                     } else if (!onlyTtml && (deletedTtml || deletedOther)) {
                         lyricsRepository.clearMemoryCache()
                         Toast.makeText(context, "本地歌词及视频已清空", Toast.LENGTH_SHORT).show()
+                        com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                     }
                 }
             } catch (e: Exception) {}
@@ -652,13 +635,19 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
                         
                         if (isLandscapeOrTablet && sharedPreferences.getBoolean("pref_enable_video_cover", true) && !isDeviceStressed()) {
+                            com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.SQUARE)
+
                             videoFetchJob = launch {
                                 delay(400)
                                 val videoUri = withContext(Dispatchers.IO) { com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song) }
                                 if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed() && sharedPreferences.getBoolean("pref_enable_video_cover", true)) {
                                     withContext(Dispatchers.Main) { canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri)); canvasExoPlayer?.prepare(); canvasExoPlayer?.play() }
+                                } else {
+                                    com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                                 }
                             }
+                        } else {
+                            com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                         }
                         lastProcessedSongId = song.id
                     }
@@ -731,5 +720,21 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onPause() { 
         super.onPause()
         canvasExoPlayer?.pause() 
+    }
+
+    // 🌟 在文件末尾添加扩展函数：彻底解决颜色平滑过渡时的“半路闪跳 Bug”
+    private fun androidx.compose.ui.graphics.Color.boostForAurora(): androidx.compose.ui.graphics.Color {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+        
+        if (hsv[1] < 0.15f) {
+            hsv[1] = 0f 
+            hsv[2] = (hsv[2] * 0.8f).coerceIn(0.15f, 0.45f)
+        } else {
+            hsv[1] = (hsv[1] * 1.2f).coerceIn(0.4f, 0.9f)
+            hsv[2] = (hsv[2] * 0.85f).coerceIn(0.2f, 0.65f)
+        }
+        
+        return androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv))
     }
 }

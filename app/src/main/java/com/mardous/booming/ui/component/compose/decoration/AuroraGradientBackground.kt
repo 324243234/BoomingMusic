@@ -37,16 +37,11 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * 🌟 真正的流体力学 GPU 着色器 (AGSL)
- * 仅在 Android 13+ (API 33+) 激活。利用域扭曲(Domain Warping)算法产生极致粘稠的液态融合。
- */
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
     
-    // 🌟 修复：在 AGSL 语法中，layout(...) 修饰符必须放在 uniform 前面
     layout(color) uniform half4 c1;
     layout(color) uniform half4 c2;
     layout(color) uniform half4 c3;
@@ -54,12 +49,11 @@ private const val FLUID_SHADER = """
 
     half4 main(in float2 fragCoord) {
         float2 uv = fragCoord / resolution.xy;
-        float2 p = uv * 2.0 - 1.0; // 将坐标系映射到 -1 到 1
-        p.x *= resolution.x / resolution.y; // 修正屏幕比例防拉伸
+        float2 p = uv * 2.0 - 1.0; 
+        p.x *= resolution.x / resolution.y; 
         
-        float t = time * 0.15; // 控制流体流动的全局速度
+        float t = time * 0.15; 
         
-        // 核心数学：利用分形正弦波进行多重域扭曲 (Domain Warping)，模拟粘稠流体力学
         for(float i = 1.0; i < 4.0; i += 1.0) {
             float2 newP = p;
             newP.x += 0.4 / i * sin(i * 2.0 * p.y + t);
@@ -67,22 +61,16 @@ private const val FLUID_SHADER = """
             p = newP;
         }
         
-        // 提取扭曲后的坐标点权重
         float w1 = 0.5 + 0.5 * sin(p.x * 2.5 + t);
         float w2 = 0.5 + 0.5 * cos(p.y * 2.0 - t);
         
-        // GPU 并行混合：Apple Music 同款液态色彩剥离
         half4 color = mix(c1, c2, w1);
         color = mix(color, c3, w2);
         
-        // 叠加一层极光暗底，增强车内夜间的深邃通透感
         return mix(bg, color, 0.85);
     }
 """
 
-/**
- * 专为 CarWith 车载与极端工况优化的世界级极光背景 (Dual-Engine 架构)
- */
 @Composable
 fun AuroraGradientBackground(
     colors: List<Color>,
@@ -91,7 +79,6 @@ fun AuroraGradientBackground(
 ) {
     val context = LocalContext.current
 
-    // 1. 硬件状态感知：省电模式、发热状态、低电量
     var isPowerSaveMode by remember { mutableStateOf(false) }
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
@@ -148,13 +135,12 @@ fun AuroraGradientBackground(
 
     val shouldAnimate = isPlaying && !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    // 2. 颜色提取与极光亮度提纯
-    val c1 = remember(colors) { (colors.getOrNull(0) ?: Color(0xFF2C3E50)).boostForAurora() }
-    val c2 = remember(colors) { (colors.getOrNull(1) ?: Color(0xFF3498DB)).boostForAurora() }
-    val c3 = remember(colors) { (colors.getOrNull(2) ?: c1).boostForAurora() }
+    // 🌟 核心修改：不再在这里调用 boostForAurora()，直接吃前面传进来的干净颜色！
+    val c1 = colors.getOrNull(0) ?: Color(0xFF2C3E50)
+    val c2 = colors.getOrNull(1) ?: Color(0xFF3498DB)
+    val c3 = colors.getOrNull(2) ?: c1
     val baseBgColor = remember { Color(0xFF0C0C0F) }
 
-    // 3. 全局时间轴挂起驱动 (传入 Provider 函数，彻底杜绝 Compose 重组产生的内存抖动)
     var timeState by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
         if (shouldAnimate) {
@@ -163,7 +149,7 @@ fun AuroraGradientBackground(
                 withInfiniteAnimationFrameMillis { frameTime ->
                     if (lastTime != 0L) {
                         val delta = (frameTime - lastTime) / 1000f
-                        timeState = (timeState + delta) % 628.3185f // 200*PI 完美防溢出周期
+                        timeState = (timeState + delta) % 628.3185f 
                     }
                     lastTime = frameTime
                 }
@@ -171,7 +157,6 @@ fun AuroraGradientBackground(
         }
     }
 
-    // 4. 双引擎路由：根据系统版本动态调度硬件
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         AgslFluidBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
     } else {
@@ -179,9 +164,6 @@ fun AuroraGradientBackground(
     }
 }
 
-/**
- * 🚀 引擎 A：API 33+ 满血纯 GPU 流体着色器 (0 CPU 开销)
- */
 @SuppressLint("NewApi")
 @Composable
 private fun AgslFluidBackground(
@@ -189,7 +171,6 @@ private fun AgslFluidBackground(
     timeProvider: () -> Float,
     modifier: Modifier
 ) {
-    // 实例化 AGSL 着色器并永久缓存
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     val brush = remember(shader) { ShaderBrush(shader) }
     
@@ -197,7 +178,6 @@ private fun AgslFluidBackground(
         modifier = modifier
             .fillMaxSize()
             .drawBehind {
-                // 每帧仅更新 Uniform 变量，由 GPU 负责百万级像素流体计算
                 shader.setFloatUniform("resolution", size.width, size.height)
                 shader.setFloatUniform("time", timeProvider())
                 shader.setColorUniform("c1", c1.toArgb())
@@ -209,9 +189,6 @@ private fun AgslFluidBackground(
     )
 }
 
-/**
- * 🔋 引擎 B：降级兼容方案，0 GC 的 Canvas 数学极光引擎
- */
 @Composable
 private fun CanvasAuroraBackground(
     c1: Color, c2: Color, c3: Color, baseBgColor: Color,
@@ -251,7 +228,6 @@ private fun CanvasAuroraBackground(
                 
                 drawRect(baseBgColor)
 
-                // 使用 translate 平移画布，彻底掐断 JNI 对象重分配
                 val x1 = w * 0.5f + w * 0.35f * sin(time * 0.15f)
                 val y1 = h * 0.5f + h * 0.25f * cos(time * 0.11f)
                 translate(left = x1, top = y1) {
@@ -271,25 +247,4 @@ private fun CanvasAuroraBackground(
                 }
             }
     )
-}
-
-// 通用色彩高亮提纯算法
-private fun Color.boostForAurora(): Color {
-    val hsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
-    
-    // 🌟 修复 2：极其严苛的黑白噪点过滤机制
-    // 将饱和度免疫阈值提高到 15% (0.15f)。很多黑白老照片因为 JPEG 压缩会带有 10% 左右的绿/紫噪点。
-    // 低于 15% 的，统统视为纯黑白/灰阶，强制把色彩剥夺（归零）！彻底杀死诡异的突兀变异色！
-    if (hsv[1] < 0.15f) {
-        hsv[1] = 0f 
-        // 亮度适度压制，保持水墨/黑胶的深邃感，防止太亮变成白板
-        hsv[2] = (hsv[2] * 0.8f).coerceIn(0.15f, 0.45f)
-    } else {
-        // 对于真正有色彩的封面，进行温和提纯
-        hsv[1] = (hsv[1] * 1.2f).coerceIn(0.4f, 0.9f)
-        hsv[2] = (hsv[2] * 0.85f).coerceIn(0.2f, 0.65f)
-    }
-    
-    return Color(android.graphics.Color.HSVToColor(hsv))
 }
