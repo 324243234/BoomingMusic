@@ -164,7 +164,7 @@ class ImageFragment : Fragment() {
                 // 设为 20%的深空蓝黑，让底部的 AGSL 极光透过来，同时加上白色的 3D 锐利高光边缘！
                 card?.setCardBackgroundColor(android.graphics.Color.parseColor("#33000510"))
                 card?.strokeWidth = (1.5f * density).toInt()
-                card?.strokeColor = android.graphics.Color.parseColor("#4DFFFFFF") // 30% 亮度的科技反光边缘
+                card?.strokeColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#4DFFFFFF")) // 30% 亮度的科技反光边缘
                 card?.radius = 10000f // 给定极其夸张的圆角，确保外环是个绝对的圆
                 card?.cardElevation = 0f
 
@@ -207,7 +207,10 @@ class ImageFragment : Fragment() {
         }
     }
 
-    private fun startRotation(targetView: View) {
+    // 🌟 修复编译崩溃：接收参数加上可空问号 View?，并在内部拦截 null
+    private fun startRotation(targetView: View?) {
+        if (targetView == null) return // 🛡️ 终极防线：控件尚未初始化时绝对不崩溃
+        
         if (rotationAnimator == null) {
             // 将旋转绑定在整体容器上，这样玻璃光圈也会跟着缓缓转动，流光倒影极其生动
             rotationAnimator = ObjectAnimator.ofFloat(targetView, View.ROTATION, 0f, 360f).apply {
