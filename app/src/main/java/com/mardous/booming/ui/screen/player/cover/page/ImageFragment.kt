@@ -12,7 +12,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.core.os.BundleCompat
 import androidx.core.view.updateLayoutParams
-import androidx.core.view.updateMarginsRelative
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import coil3.dispose
@@ -107,23 +106,24 @@ class ImageFragment : Fragment() {
     private fun setupImageStyle() {
         if (nowPlayingScreen == NowPlayingScreen.Plain) {
             val card = requestView { it.findViewById<View>(R.id.player_image_card) } as? MaterialCardView
-            card?.setCardBackgroundColor(android.graphics.Color.TRANSPARENT)
-            card?.strokeWidth = 0
-            card?.radius = 0f
-            card?.cardElevation = 0f
+            val image = albumCover as? ShapeableImageView
+            
+            // 🌟 核心防剪裁修复：彻底解除外层卡片的自带裁剪，防止和内部发生冲突
+            card?.clipToOutline = false
+            card?.clipChildren = false
 
-            // 监听形状状态，采用零CPU开销的硬件加速切换
+            // 监听形状状态，采用零CPU开销的“瞬切硬件加速”
             viewLifecycleOwner.lifecycleScope.launch {
                 VideoCoverStateManager.states.collect { states ->
                     val newState = states[song.id] ?: CoverShapeState.UNKNOWN
                     if (newState != currentShapeState) {
                         currentShapeState = newState
-                        applyShapeState(newState)
+                        applyShapeState(newState, card, image)
                     }
                 }
             }
 
-            // 音乐播放状态随动
+            // 音乐播放状态随动 (纯GPU旋转，车机0发热)
             viewLifecycleOwner.lifecycleScope.launch {
                 playerViewModel.isPlayingFlow.collect { isPlaying ->
                     if (isPlaying) {
@@ -147,57 +147,71 @@ class ImageFragment : Fragment() {
                     if (fallbackCard is MaterialCardView) fallbackCard.setCornerRadius(cornerRadius.toFloat())
                 }
             }
-            if (nowPlayingScreen.supportsSmallImage && Preferences.isSmallImage) {
-                val carouselCard = requestView { it.findViewById<View>(R.id.player_image_card) }
-                if (carouselCard == null) {
-                    albumCover?.let { image ->
-                        image.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                            updateMarginsRelative(start = marginStart * 2, end = marginEnd * 2)
-                        }
-                    }
-                }
-            }
         }
     }
 
-    private fun applyShapeState(state: CoverShapeState) {
-        val image = albumCover as? ShapeableImageView ?: return
+    private fun applyShapeState(state: CoverShapeState, card: MaterialCardView?, image: ShapeableImageView?) {
         val density = resources.displayMetrics.density
 
         when (state) {
             CoverShapeState.CIRCLE -> {
-                // 1. 设置《夜航星》风格半透明边缘光圈与圆形外观
-                image.setPadding(0, 0, 0, 0)
-                image.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                image.strokeWidth = 14f * density
-                image.strokeColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#33000000"))
-                image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
-                    .setAllCornerSizes(RelativeCornerSize(0.5f))
-                    .build()
+                // ==========================================
+                // 🚀 科技感 3D 玻璃边框 (双层架构，彻底解决切角 Bug)
+                // ==========================================
+                val ringWidth = (14 * density).toInt()
+
+                // 第一层：底盘卡片充当“半透明玻璃光环”
+                // 设为 20%的深空蓝黑，让底部的 AGSL 极光透过来，同时加上白色的 3D 锐利高光边缘！
+                card?.setCardBackgroundColor(android.graphics.Color.parseColor("#33000510"))
+                card?.strokeWidth = (1.5f * density).toInt()
+                card?.strokeColor = android.graphics.Color.parseColor("#4DFFFFFF") // 30% 亮度的科技反光边缘
+                card?.radius = 10000f // 给定极其夸张的圆角，确保外环是个绝对的圆
+                card?.cardElevation = 0f
+
+                // 第二层：内部纯图片
+                // 抛弃 padding，改用 Margin 将图片往内挤，这样内外两层分别裁剪，图片将呈现绝对完美的正圆，毫无切角！
+                image?.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    setMargins(ringWidth, ringWidth, ringWidth, ringWidth)
+                }
+                image?.setPadding(0, 0, 0, 0)
+                image?.shapeAppearanceModel = image?.shapeAppearanceModel?.toBuilder()
+                    ?.setAllCornerSizes(RelativeCornerSize(0.5f))
+                    ?.build() ?: return
                 
-                startRotation()
+                startRotation(card ?: image)
             }
             else -> {
-                // SQUARE 或 UNKNOWN：回归静态方形底盘
+                // ==========================================
+                // 🎯 方形模式：回归静态，完美衔接视频的呼吸循环
+                // ==========================================
                 rotationAnimator?.cancel()
-                image.rotation = 0f
-                image.setPadding(0, 0, 0, 0)
-                image.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                image.strokeWidth = 0f
                 
                 val cornerRadius = Preferences.getNowPlayingImageCornerRadius(requireContext())
-                image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
-                    .setAllCornerSizes(AbsoluteCornerSize(cornerRadius.toFloat() * density))
-                    .build()
+                val cornerRadiusPx = cornerRadius.toFloat() * density
+
+                // 外层容器还原
+                card?.rotation = 0f
+                image?.rotation = 0f
+                card?.setCardBackgroundColor(android.graphics.Color.TRANSPARENT)
+                card?.strokeWidth = 0
+                card?.radius = cornerRadiusPx
+
+                // 内层图片还原
+                image?.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    setMargins(0, 0, 0, 0)
+                }
+                image?.shapeAppearanceModel = image?.shapeAppearanceModel?.toBuilder()
+                    ?.setAllCornerSizes(AbsoluteCornerSize(cornerRadiusPx))
+                    ?.build() ?: return
             }
         }
     }
 
-    private fun startRotation() {
-        val image = albumCover ?: return
+    private fun startRotation(targetView: View) {
         if (rotationAnimator == null) {
-            rotationAnimator = ObjectAnimator.ofFloat(image, View.ROTATION, 0f, 360f).apply {
-                duration = 40000L // 40秒一圈慵懒转速
+            // 将旋转绑定在整体容器上，这样玻璃光圈也会跟着缓缓转动，流光倒影极其生动
+            rotationAnimator = ObjectAnimator.ofFloat(targetView, View.ROTATION, 0f, 360f).apply {
+                duration = 40000L // 40秒一圈慵懒转速，符合高端车机的沉稳气质
                 interpolator = android.view.animation.LinearInterpolator()
                 repeatCount = ObjectAnimator.INFINITE
             }
@@ -251,7 +265,6 @@ class ImageFragment : Fragment() {
     }
 
     interface ColorReceiver {
-        // 🌟 修复导致崩溃的手误：由 fn 改回 fun
         fun onColorReady(color: PaletteColor, request: Int)
     }
 
