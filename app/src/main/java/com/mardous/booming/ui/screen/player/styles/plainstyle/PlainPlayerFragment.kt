@@ -184,7 +184,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                     currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
                             } else {
-                                // 🌟 核心修复 2：防止空封面导致颜色死机驻留闪烁！
                                 gradientColors = emptyList() 
                             }
                         }
@@ -529,12 +528,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "已拉黑并清理相关视频", Toast.LENGTH_SHORT).show()
-                    // 彻底归还你原本的逻辑
+                    // 🌟 剔除报错指令，保留优雅淡出露出静态封面的逻辑
                     videoFetchJob?.cancel()
                     canvasExoPlayer?.stop()
                     canvasExoPlayer?.clearMediaItems()
-                    _binding?.canvasPlayerView?.alpha = 0f
-                    com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
+                    _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(300)?.start()
                 }
             } catch (e: Exception) {}
         }
@@ -570,7 +568,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                     } else if (!onlyTtml && (deletedTtml || deletedOther)) {
                         lyricsRepository.clearMemoryCache()
                         Toast.makeText(context, "本地歌词及视频已清空", Toast.LENGTH_SHORT).show()
-                        com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
+                        // 🌟 剔除旧指令
                     }
                 }
             } catch (e: Exception) {}
@@ -629,29 +627,28 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
                         }
 
-                        // 🌟 彻底清除上次增加的“动画截断和假淡出”，完全归还你原本简洁的设计！
+                        // 🌟 纯净重置：切歌时停掉视频层，完全透明露出底层的 ImageFragment
                         videoFetchJob?.cancel()
                         canvasExoPlayer?.stop()
                         canvasExoPlayer?.clearMediaItems()
+                        _binding?.canvasPlayerView?.animate()?.cancel()
                         _binding?.canvasPlayerView?.alpha = 0f
 
                         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
                             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
                         
                         if (isLandscapeOrTablet && sharedPreferences.getBoolean("pref_enable_video_cover", true) && !isDeviceStressed()) {
-                            com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.SQUARE)
-
                             videoFetchJob = launch {
                                 delay(400)
                                 val videoUri = withContext(Dispatchers.IO) { com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song) }
                                 if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed() && sharedPreferences.getBoolean("pref_enable_video_cover", true)) {
-                                    withContext(Dispatchers.Main) { canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri)); canvasExoPlayer?.prepare(); canvasExoPlayer?.play() }
-                                } else {
-                                    com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
+                                    withContext(Dispatchers.Main) { 
+                                        canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                        canvasExoPlayer?.prepare()
+                                        canvasExoPlayer?.play() 
+                                    }
                                 }
                             }
-                        } else {
-                            com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                         }
                         lastProcessedSongId = song.id
                     }
