@@ -707,62 +707,83 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     }
 
     // =========================================================================
-    // 🌟 极光同色系裂变引擎 (Analogous Color Synthesizer)
-    // 彻底解决单色/纯色封面无法流动的问题！它会自动计算色相偏移，强行拉出液态层次感！
+    // 🌟 极光同色系裂变引擎 2.0 (自适应明暗与肤色保护机制)
+    // 彻底根除暗色系强制提亮、肤色偏移变绿的“沼泽绿”视觉 Bug！
     // =========================================================================
     private fun synthesizeAuroraPalette(extractedColors: List<androidx.compose.ui.graphics.Color>): List<androidx.compose.ui.graphics.Color> {
+        // 兜底方案：极具深邃感的高级灰
         val fallbackPalette = listOf(
-            androidx.compose.ui.graphics.Color(0xFF2C2C30), 
-            androidx.compose.ui.graphics.Color(0xFF1A1A1E), 
-            androidx.compose.ui.graphics.Color(0xFF38383F)
+            androidx.compose.ui.graphics.Color(0xFF1E1E22), 
+            androidx.compose.ui.graphics.Color(0xFF121215), 
+            androidx.compose.ui.graphics.Color(0xFF25252A)
         )
         
         if (extractedColors.isEmpty()) return fallbackPalette
 
-        val hsv1 = FloatArray(3)
-        android.graphics.Color.colorToHSV(extractedColors[0].toArgb(), hsv1)
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(extractedColors[0].toArgb(), hsv)
+        
+        val hue = hsv[0]
+        val sat = hsv[1]
+        val value = hsv[2]
 
-        // 🛡️ 过滤：如果是纯黑、纯白或极低饱和度（老照片），强制退回深空高级灰，防止画面变脏
-        if (hsv1[1] < 0.15f) return fallbackPalette
-
-        // 🎨 C1: 强化主色调（提升纯净度，适度压暗以适合车载夜间环境）
-        hsv1[1] = (hsv1[1] * 1.2f).coerceIn(0.4f, 0.9f)
-        hsv1[2] = (hsv1[2] * 0.85f).coerceIn(0.2f, 0.65f)
-        val c1 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv1))
-
-        // 🎨 C2: 智能生成第二色
-        val c2: androidx.compose.ui.graphics.Color
-        if (extractedColors.size >= 2) {
-            val hsvTemp = FloatArray(3)
-            android.graphics.Color.colorToHSV(extractedColors[1].toArgb(), hsvTemp)
-            val hueDiff = Math.abs(hsv1[0] - hsvTemp[0])
-            
-            // 如果提取的第二个颜色和主色差异很大（比如红蓝撞色），保留它并提纯！
-            if (hueDiff > 15f && hueDiff < 345f && hsvTemp[1] > 0.15f) {
-                hsvTemp[1] = (hsvTemp[1] * 1.2f).coerceIn(0.4f, 0.9f)
-                hsvTemp[2] = (hsvTemp[2] * 0.85f).coerceIn(0.2f, 0.65f)
-                c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsvTemp))
-            } else {
-                // 如果极其相似（像 Vava 这张纯红），强行向右偏移色相 +25°（比如红变橙）创造邻近色！
-                val hsv2 = hsv1.clone()
-                hsv2[0] = (hsv2[0] + 25f) % 360f
-                hsv2[2] = (hsv2[2] * 1.1f).coerceIn(0.2f, 0.7f) // 高光部分稍微提亮
-                c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv2))
-            }
-        } else {
-            // 只有一种颜色的情况，强行裂变
-            val hsv2 = hsv1.clone()
-            hsv2[0] = (hsv2[0] + 25f) % 360f
-            hsv2[2] = (hsv2[2] * 1.1f).coerceIn(0.2f, 0.7f)
-            c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv2))
+        // 🛡️ 护城河 1：极暗或低饱和度（如黑白/暗黑封面），拒绝强行提亮提纯！
+        // 保持原有的暗影质感，依靠明度的微小落差产生暗流涌动的极光
+        if (sat < 0.15f || value < 0.2f) {
+            return listOf(
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.22f))),
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.12f))),
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.28f)))
+            )
         }
 
-        // 🎨 C3: 智能生成暗部托底色
-        val hsv3 = hsv1.clone()
-        // 强行向左偏移色相 -20°（比如红变深紫红），增加流动的水波厚度！
-        hsv3[0] = (hsv3[0] - 20f + 360f) % 360f
-        hsv3[2] = (hsv3[2] * 0.8f).coerceIn(0.15f, 0.5f) // 作为暗部深深压下去
-        val c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsv3))
+        // 🛡️ 护城河 2：肤色及暖灰保护机制
+        // 如果提取色在 10°~45°(人脸肤色、土黄) 且饱和度不算太高，绝对禁止色相偏移！
+        // 否则偏移后必变黄绿/沼泽绿，导致诡异的视觉污染。
+        val isSkinToneOrWarmGrey = (hue in 10f..45f) && sat < 0.5f
+
+        // C1: 主基调底色（适度控制饱和度和亮度，车机需要深邃感）
+        val c1Hsv = floatArrayOf(
+            hue, 
+            sat.coerceIn(0.2f, 0.65f), 
+            value.coerceIn(0.2f, 0.5f) // 强制压暗，坚决不让背景比封面还亮
+        )
+        val c1 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c1Hsv))
+
+        val c2: androidx.compose.ui.graphics.Color
+        val c3: androidx.compose.ui.graphics.Color
+
+        if (isSkinToneOrWarmGrey || sat < 0.3f) {
+            // 🎬 模式 A：肤色/单调色模式 -> 【锁定色相】，只通过改变亮度和饱和度来实现流体分层
+            val c2Hsv = floatArrayOf(hue, (sat * 0.8f).coerceAtLeast(0.1f), (c1Hsv[2] * 1.3f).coerceAtMost(0.6f))
+            val c3Hsv = floatArrayOf(hue, (sat * 1.2f).coerceAtMost(0.8f), (c1Hsv[2] * 0.7f).coerceAtLeast(0.1f))
+            c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+            c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c3Hsv))
+        } else {
+            // 🎬 模式 B：多彩鲜艳模式 (如 Vava 的纯红封面) -> 允许微调色相（±15度），产生绚丽的极光折射
+            if (extractedColors.size >= 2) {
+                val hsvTemp = FloatArray(3)
+                android.graphics.Color.colorToHSV(extractedColors[1].toArgb(), hsvTemp)
+                val hueDiff = Math.abs(hue - hsvTemp[0])
+                
+                // 如果第二颜色足够鲜艳且和主色有区别，直接借用
+                if (hueDiff > 10f && hueDiff < 350f && hsvTemp[1] > 0.2f) {
+                    hsvTemp[1] = hsvTemp[1].coerceIn(0.3f, 0.65f)
+                    hsvTemp[2] = hsvTemp[2].coerceIn(0.2f, 0.45f)
+                    c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsvTemp))
+                } else {
+                    val c2Hsv = floatArrayOf((hue + 15f) % 360f, (sat * 0.9f).coerceIn(0.3f, 0.65f), (c1Hsv[2] * 1.2f).coerceAtMost(0.55f))
+                    c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+                }
+            } else {
+                val c2Hsv = floatArrayOf((hue + 15f) % 360f, (sat * 0.9f).coerceIn(0.3f, 0.65f), (c1Hsv[2] * 1.2f).coerceAtMost(0.55f))
+                c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+            }
+            
+            // C3 托底暗色：反向色相偏移，进一步压低亮度
+            val c3Hsv = floatArrayOf((hue - 15f + 360f) % 360f, (sat * 1.1f).coerceIn(0.3f, 0.7f), (c1Hsv[2] * 0.8f).coerceAtLeast(0.15f))
+            c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c3Hsv))
+        }
 
         return listOf(c1, c2, c3)
     }

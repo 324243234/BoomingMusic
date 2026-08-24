@@ -108,7 +108,6 @@ import com.mardous.booming.util.Preferences
 import com.mardous.booming.util.QUEUE_NEXT_MODE
 import com.mardous.booming.util.REWIND_WITH_BACK
 import com.mardous.booming.util.SEEK_INTERVAL
-import com.mardous.booming.util.STOP_WHEN_CLOSED_FROM_RECENTS
 import com.mardous.booming.util.SongPlayCountHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
@@ -184,7 +183,7 @@ class PlaybackService :
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
     
     // =========================================================================
-    // 🔥 核心护城河变量
+    // 🔥 车机专属状态管理变量
     // =========================================================================
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
@@ -195,6 +194,8 @@ class PlaybackService :
     private var carWithLastSongId: Long = -1L
     private var carWithLastLyrics: String = ""
     private var carWithLastTranslationState: Boolean = false
+    // 🌟 核心防错变量：记录上一首注入歌词的 MediaId，无惧播放列表打乱重排
+    private var carWithLastInjectedMediaId: String? = null
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -804,9 +805,6 @@ class PlaybackService :
         }
     }
 
-    // =========================================================================
-    // 💥 终极音频容错自愈引擎 (残缺/损坏 FLAC & 截断音频无感恢复)
-    // =========================================================================
     override fun onPlayerError(error: PlaybackException) {
         val currentPosition = player.currentPosition
         val duration = player.duration
@@ -814,7 +812,6 @@ class PlaybackService :
 
         Log.w(TAG, "检测到音频流异常: errorCode=${error.errorCodeName}, position=$currentPosition, duration=$duration")
 
-        // 1. 尾部截断自愈：如果已经在歌曲后半段或接近末尾时遭遇致命解析错误，视为自然播放完毕
         val isNearEnd = duration > 0 && (duration - currentPosition) <= 5000L
         if (isNearEnd || errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED) {
             val nextMediaIndex = player.nextMediaItemIndex
@@ -828,7 +825,6 @@ class PlaybackService :
             }
         }
 
-        // 2. 中间坏块/坏帧自愈：向后跳跃 3 秒跨过损坏的数据块，重新对齐帧同步字
         if (errorRecoveryRetryCount < MAX_RETRY_COUNT_AFTER_ERROR) {
             errorRecoveryRetryCount++
             val jumpTargetPosition = currentPosition + 3000L
@@ -840,7 +836,6 @@ class PlaybackService :
             return
         }
 
-        // 3. 彻底损坏无法恢复时，切下一首并重置计数器
         val nextMediaIndex = player.nextMediaItemIndex
         if (nextMediaIndex != C.INDEX_UNSET) {
             errorRecoveryRetryCount = 0
@@ -960,7 +955,7 @@ class PlaybackService :
     }
 
     // ==============================================================================
-    // 💥 终极防御：全局大扫除 + 容量防爆盾 (彻底杜绝 OOM 与失联断连)
+    // 💥 终极防御：O(1) 定点擦除 + 容量防爆盾 (彻底杜绝 OOM 与蓝牙断连)
     // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
@@ -969,7 +964,7 @@ class PlaybackService :
         val currentRepeatMode = player.repeatMode
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            delay(100) // 轻微防抖，防止用户疯狂点击切歌导致的过度请求
+            delay(100) 
             
             val currentIndex = player.currentMediaItemIndex
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
@@ -1015,9 +1010,8 @@ class PlaybackService :
                     rawLrcText = carWithLastLyrics
                 }
 
-                // 💥【防爆盾】严格限制歌词总字符数。防止异常巨型 LRC 文件直接干崩 Binder。
-                // 30000 字符限制对正常歌词绰绰有余，且仅占用 ~60KB。
-                val lrcText = if (rawLrcText.length > 30000) rawLrcText.substring(0, 30000) else rawLrcText
+                // 💥【防爆盾】极度压缩截断长度，严防 Binder IPC 溢出，保卫车机蓝牙连接
+                val lrcText = if (rawLrcText.length > 20000) rawLrcText.substring(0, 20000) else rawLrcText
 
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
@@ -1031,25 +1025,27 @@ class PlaybackService :
                     val latestItem = player.getMediaItemAt(latestIndex)
                     if (latestItem.mediaId != expectedMediaId) return@withContext
 
-                    // 💥💥【全局大扫除】：不靠回忆，直接遍历整个播放列表！
-                    // 把所有“不是当前正在播放”的歌曲身上残留的歌词数据，一律物理超度洗除！
-                    for (i in 0 until player.mediaItemCount) {
-                        if (i == latestIndex) continue // 当前要播放的歌不能洗
-                        
-                        val item = player.getMediaItemAt(i)
-                        val oldExtras = item.mediaMetadata.extras
-                        
-                        if (oldExtras != null && oldExtras.containsKey("android.media.metadata.LYRIC")) {
-                            val cleanedExtras = Bundle(oldExtras).apply {
-                                remove("ucar.media.metadata.LYRICS_WHOLE")
-                                remove("android.media.metadata.LYRIC")
+                    // 💥💥【终极 O(1) 定点擦除】彻底告别循环替换，通过 MediaId 精准狙击旧数据！
+                    if (carWithLastInjectedMediaId != null && carWithLastInjectedMediaId != expectedMediaId) {
+                        for (i in 0 until player.mediaItemCount) {
+                            val item = player.getMediaItemAt(i)
+                            if (item.mediaId == carWithLastInjectedMediaId) {
+                                val oldExtras = item.mediaMetadata.extras
+                                if (oldExtras != null && oldExtras.containsKey("android.media.metadata.LYRIC")) {
+                                    val cleanedExtras = Bundle(oldExtras).apply {
+                                        remove("ucar.media.metadata.LYRICS_WHOLE")
+                                        remove("android.media.metadata.LYRIC")
+                                    }
+                                    val cleanedMetadata = item.mediaMetadata.buildUpon().setExtras(cleanedExtras).build()
+                                    val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
+                                    player.exoPlayer.replaceMediaItem(i, cleanedItem)
+                                }
+                                break // 找到并清理完毕，立刻退出循环，零多余损耗！
                             }
-                            val cleanedMetadata = item.mediaMetadata.buildUpon().setExtras(cleanedExtras).build()
-                            val cleanedItem = item.buildUpon().setMediaMetadata(cleanedMetadata).build()
-                            
-                            player.exoPlayer.replaceMediaItem(i, cleanedItem)
                         }
                     }
+                    
+                    carWithLastInjectedMediaId = expectedMediaId
 
                     // ====== 处理当前新歌的数据注入 ======
                     val currentExtras = latestItem.mediaMetadata.extras ?: Bundle.EMPTY
@@ -1525,31 +1521,20 @@ class PlaybackService :
 
     private var bluetoothConnectedRegistered = false
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
+        // 🌟 核心防闪断修复：砍掉多余的 ACL 物理监听，专心监听 A2DP 媒体协议通道
         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
-        addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
-        addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
     }
     private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
-            when (intent?.action) {
-                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
-                    when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
-                        BluetoothA2dp.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
-                            player.play()
-                        }
-                        BluetoothA2dp.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
-                            player.pause()
-                        }
+            if (intent?.action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) {
+                when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
+                    BluetoothA2dp.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
+                        if (!player.isPlaying) player.play()
+                    }
+                    BluetoothA2dp.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
+                        if (player.isPlaying) player.pause()
                     }
                 }
-                BluetoothDevice.ACTION_ACL_CONNECTED ->
-                    if (context.isBluetoothA2dpConnected() && Preferences.isResumeOnConnect(true)) {
-                        player.play()
-                    }
-                BluetoothDevice.ACTION_ACL_DISCONNECTED ->
-                    if (context.isBluetoothA2dpDisconnected() && Preferences.isPauseOnDisconnect(true)) {
-                        player.pause()
-                    }
             }
         }
     }
