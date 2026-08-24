@@ -15,6 +15,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.core.os.BundleCompat
 import androidx.core.view.updateLayoutParams
+// 🌟 修复报错：加回了被我不小心误删的系统扩展包
+import androidx.core.view.updateMarginsRelative
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import coil3.dispose
@@ -268,7 +270,7 @@ class ImageFragment : Fragment() {
         card?.rotation = 0f
         image.rotation = 0f
         
-        // 🌟 核心修复点：将 Scale 恢复到 1.0f 即可，彻底删除了 setMargins 的脏代码！
+        // 🌟 核心修复点：将 Scale 恢复到 1.0f 即可，绝不干扰原本的 margin 布局参数
         image.scaleX = 1.0f
         image.scaleY = 1.0f
         
