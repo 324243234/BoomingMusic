@@ -179,12 +179,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             val result = SingletonImageLoader.get(currentContext).execute(
                                 ImageRequest.Builder(currentContext).data(song).build()
 								
-								.data(song)
-                    // 🌟 性能护城河 1：强制降采样到 128x128，内存开销减少 99%，提取速度快 100 倍！
-                    .size(256, 256) 
-                    // 🌟 性能护城河 2：关闭硬件位图！取色算法需要直接读取内存像素，硬件位图在显存里，强行读取会引发崩溃或回退机制，消耗大量性能。
-                    .allowHardware(false) 
-                    .build()
                             )
                             if (result is SuccessResult) {
                                 gradientColors = result.image.toBitmap().extractGradientColors(
