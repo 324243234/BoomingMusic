@@ -203,7 +203,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         )
                     }
 
-                    // 🌟 核心拦截点：先提纯噪点，再丢给动画引擎！
+                    // 提纯噪点，彻底解决黑色封面的色块溢出问题
                     val targetC1 = safeColors.getOrElse(0) { androidx.compose.ui.graphics.Color(0xFF2C2C30) }.boostForAurora()
                     val targetC2 = safeColors.getOrElse(1) { androidx.compose.ui.graphics.Color(0xFF1A1A1E) }.boostForAurora()
                     val targetC3 = safeColors.getOrElse(2) { targetC1 }.boostForAurora()
@@ -527,10 +527,14 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "已拉黑并清理相关视频", Toast.LENGTH_SHORT).show()
-                    videoFetchJob?.cancel()
-                    canvasExoPlayer?.stop()
-                    canvasExoPlayer?.clearMediaItems()
-                    _binding?.canvasPlayerView?.alpha = 0f
+                    // 🌟 拉黑时优雅淡出，防闪跳
+                    canvasExoPlayer?.pause()
+                    _binding?.canvasPlayerView?.animate()?.cancel()
+                    _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(350)?.withEndAction {
+                        videoFetchJob?.cancel()
+                        canvasExoPlayer?.stop()
+                        canvasExoPlayer?.clearMediaItems()
+                    }?.start()
                     com.mardous.booming.ui.screen.player.cover.page.VideoCoverStateManager.updateState(song.id, com.mardous.booming.ui.screen.player.cover.page.CoverShapeState.CIRCLE)
                 }
             } catch (e: Exception) {}
@@ -626,10 +630,14 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
                         }
 
-                        videoFetchJob?.cancel()
-                        canvasExoPlayer?.stop()
-                        canvasExoPlayer?.clearMediaItems()
-                        _binding?.canvasPlayerView?.alpha = 0f
+                        // 🌟 核心防闪变修复点：切歌时，冻结旧视频的最后一帧，给眼睛 350 毫秒的时间平滑淡出，彻底消灭视觉空洞！
+                        canvasExoPlayer?.pause()
+                        _binding?.canvasPlayerView?.animate()?.cancel()
+                        _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(350)?.withEndAction {
+                            videoFetchJob?.cancel()
+                            canvasExoPlayer?.stop()
+                            canvasExoPlayer?.clearMediaItems()
+                        }?.start()
 
                         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
                             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
@@ -722,7 +730,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         canvasExoPlayer?.pause() 
     }
 
-    // 🌟 在文件末尾添加扩展函数：彻底解决颜色平滑过渡时的“半路闪跳 Bug”
+    // 🌟 保留用于修复黑色封面变异的流光过滤扩展函数
     private fun androidx.compose.ui.graphics.Color.boostForAurora(): androidx.compose.ui.graphics.Color {
         val hsv = FloatArray(3)
         android.graphics.Color.colorToHSV(this.toArgb(), hsv)
