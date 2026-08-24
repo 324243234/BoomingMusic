@@ -78,7 +78,6 @@ fun AuroraGradientBackground(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-
     var isPowerSaveMode by remember { mutableStateOf(false) }
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
@@ -133,9 +132,10 @@ fun AuroraGradientBackground(
         }
     }
 
-    val shouldAnimate = isPlaying && !isPowerSaveMode && !isOverheating && !isLowBattery
+    // 🌟 核心修复 1：与 isPlaying 彻底解绑！
+    // 不再因为缓冲导致的 isPlaying=false 而停止流体动画，彻底解决“急刹车式闪变”！
+    val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    // 🌟 核心修改：不再在这里调用 boostForAurora()，直接吃前面传进来的干净颜色！
     val c1 = colors.getOrNull(0) ?: Color(0xFF2C3E50)
     val c2 = colors.getOrNull(1) ?: Color(0xFF3498DB)
     val c3 = colors.getOrNull(2) ?: c1
@@ -230,21 +230,15 @@ private fun CanvasAuroraBackground(
 
                 val x1 = w * 0.5f + w * 0.35f * sin(time * 0.15f)
                 val y1 = h * 0.5f + h * 0.25f * cos(time * 0.11f)
-                translate(left = x1, top = y1) {
-                    drawCircle(brush1, maxRadius, Offset.Zero, blendMode = BlendMode.Screen)
-                }
+                translate(left = x1, top = y1) { drawCircle(brush1, maxRadius, Offset.Zero, blendMode = BlendMode.Screen) }
 
                 val x2 = w * 0.5f + w * 0.4f * sin(time * 0.19f + 2f)
                 val y2 = h * 0.5f + h * 0.3f * cos(time * 0.14f + 1f)
-                translate(left = x2, top = y2) {
-                    drawCircle(brush2, maxRadius * 0.9f, Offset.Zero, blendMode = BlendMode.Screen)
-                }
+                translate(left = x2, top = y2) { drawCircle(brush2, maxRadius * 0.9f, Offset.Zero, blendMode = BlendMode.Screen) }
 
                 val x3 = w * 0.5f + w * 0.25f * sin(time * 0.12f + 4f)
                 val y3 = h * 0.5f + h * 0.4f * cos(time * 0.17f + 3f)
-                translate(left = x3, top = y3) {
-                    drawCircle(brush3, maxRadius * 0.85f, Offset.Zero, blendMode = BlendMode.Screen)
-                }
+                translate(left = x3, top = y3) { drawCircle(brush3, maxRadius * 0.85f, Offset.Zero, blendMode = BlendMode.Screen) }
             }
     )
 }

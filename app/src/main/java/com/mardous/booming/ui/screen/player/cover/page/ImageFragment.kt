@@ -166,7 +166,7 @@ class ImageFragment : Fragment() {
 
         when (state) {
             CoverShapeState.CIRCLE -> {
-                // 1. 完美复刻《夜航星》参考图质感：全画面铺满 + 20%透明度边缘玻璃光环
+                // 1. 设置《夜航星》风格半透明边缘光圈与圆形外观
                 image.setPadding(0, 0, 0, 0)
                 image.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 image.strokeWidth = 14f * density
@@ -197,7 +197,7 @@ class ImageFragment : Fragment() {
         val image = albumCover ?: return
         if (rotationAnimator == null) {
             rotationAnimator = ObjectAnimator.ofFloat(image, View.ROTATION, 0f, 360f).apply {
-                duration = 40000L // 40秒一圈极度慵懒的高级转速
+                duration = 40000L // 40秒一圈慵懒转速
                 interpolator = android.view.animation.LinearInterpolator()
                 repeatCount = ObjectAnimator.INFINITE
             }
@@ -251,7 +251,7 @@ class ImageFragment : Fragment() {
     }
 
     interface ColorReceiver {
-        // 🌟 修复编译崩溃：将手误打错的 fn 改回正统的 fun 关键字
+        // 🌟 修复导致崩溃的手误：由 fn 改回 fun
         fun onColorReady(color: PaletteColor, request: Int)
     }
 
