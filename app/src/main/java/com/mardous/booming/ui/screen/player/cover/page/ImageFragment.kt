@@ -4,6 +4,7 @@
 
 package com.mardous.booming.ui.screen.player.cover.page
 
+import androidx.core.view.updateMarginsRelative
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
