@@ -14,16 +14,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.core.os.BundleCompat
-import androidx.core.view.updateLayoutParams
-// 🌟 修复报错：加回了被我不小心误删的系统扩展包
-import androidx.core.view.updateMarginsRelative
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import coil3.dispose
 import coil3.request.Disposable
 import coil3.request.crossfade
 import coil3.toBitmap
-import com.google.android.material.card.MaterialCardView
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.shape.AbsoluteCornerSize
 import com.google.android.material.shape.RelativeCornerSize
@@ -34,7 +30,6 @@ import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.core.palette.PaletteProcessor
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.extensions.EXTRA_SONG
-import com.mardous.booming.extensions.requestView
 import com.mardous.booming.extensions.resources.setCornerRadius
 import com.mardous.booming.extensions.withArgs
 import com.mardous.booming.ui.screen.player.PlayerViewModel
@@ -77,10 +72,8 @@ class ImageFragment : Fragment() {
         get() = Preferences.nowPlayingScreen
 
     private fun getLayoutWithPlayerTheme(): Int {
-        if (nowPlayingScreen.supportsCarouselEffect) {
-            if (Preferences.isCarouselEffect) {
-                return R.layout.fragment_album_cover_carousel
-            }
+        if (nowPlayingScreen.supportsCarouselEffect && Preferences.isCarouselEffect) {
+            return R.layout.fragment_album_cover_carousel
         }
         return nowPlayingScreen.albumCoverLayoutRes
     }
@@ -111,13 +104,11 @@ class ImageFragment : Fragment() {
 
     private fun setupImageStyle() {
         if (nowPlayingScreen == NowPlayingScreen.Plain) {
-            val card = requestView { it.findViewById<View>(R.id.player_image_card) } as? MaterialCardView
-            val image = albumCover as? ShapeableImageView
+            val image = albumCover as? ShapeableImageView ?: return
             
-            // 🌟 解除互相干涉，双层独立运算防切角
-            card?.clipToOutline = false
-            card?.clipChildren = false
-
+            // 剥离多余外部约束，完全交给原生 ShapeableImageView 处理
+            image.setPadding(0, 0, 0, 0)
+            
             viewLifecycleOwner.lifecycleScope.launch {
                 VideoCoverStateManager.states.collect { states ->
                     val newState = states[song.id] ?: CoverShapeState.UNKNOWN
@@ -125,16 +116,17 @@ class ImageFragment : Fragment() {
                     if (isFirstStateEmission) {
                         isFirstStateEmission = false
                         currentShapeState = newState
-                        when (newState) {
-                            CoverShapeState.CIRCLE -> applyCircleModernStyleInstant(card, image)
-                            else -> applySquareStyleInstant(card, image)
+                        if (newState == CoverShapeState.CIRCLE) {
+                            applyCircleModernStyleInstant(image)
+                        } else {
+                            applySquareStyleInstant(image)
                         }
                     } else {
                         if (newState != currentShapeState) {
                             if (newState == CoverShapeState.CIRCLE) {
-                                animateMorphToCircle(card, image) // 🎬 启动平滑形变动画
+                                animateMorphToCircle(image) // 🎬 绝美形变动画起飞！
                             } else if (newState == CoverShapeState.SQUARE) {
-                                applySquareStyleInstant(card, image)
+                                applySquareStyleInstant(image)
                             }
                             currentShapeState = newState
                         }
@@ -158,140 +150,98 @@ class ImageFragment : Fragment() {
             // 原版其它主题逻辑，不干涉
             if (!nowPlayingScreen.supportsCustomCornerRadius) return
             val cornerRadius = Preferences.getNowPlayingImageCornerRadius(requireContext())
-            when (val image = albumCover) {
-                is ShapeableImageView -> image.setCornerRadius(cornerRadius.toFloat())
-                else -> {
-                    val fallbackCard = requestView { it.findViewById<View>(R.id.player_image_card) }
-                    if (fallbackCard is MaterialCardView) fallbackCard.setCornerRadius(cornerRadius.toFloat())
-                }
-            }
-            if (nowPlayingScreen.supportsSmallImage && Preferences.isSmallImage) {
-                val carouselCard = requestView { it.findViewById<View>(R.id.player_image_card) }
-                if (carouselCard == null) {
-                    albumCover?.let { image ->
-                        image.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                            updateMarginsRelative(start = marginStart * 2, end = marginEnd * 2)
-                        }
-                    }
-                }
-            }
+            (albumCover as? ShapeableImageView)?.setCornerRadius(cornerRadius.toFloat())
         }
     }
 
     // ==========================================
-    // 🎬 顶级动效：纯 GPU 缩放，绝不干涉 Layout 边距
+    // 🎬 核心动效：从方形外围缓缓收缩成 3D 悬窗圆盘
     // ==========================================
-    private fun animateMorphToCircle(card: MaterialCardView?, image: ShapeableImageView?) {
-        if (image == null) return
-        val density = resources.displayMetrics.density
-        
-        val defaultCorner = Preferences.getNowPlayingImageCornerRadius(requireContext()) * density
-        val maxRadius = Math.min(image.width, image.height) / 2f
-        if (maxRadius <= 0f) {
-            applyCircleModernStyleInstant(card, image)
+    private fun animateMorphToCircle(image: ShapeableImageView) {
+        // 🛡️ 终极防切硬修复：如果宽高等于0（布局未完成），放入队列等它准备好再动画！
+        if (image.width == 0 || image.height == 0) {
+            image.post { animateMorphToCircle(image) }
             return
         }
 
-        // 🌟 核心：只用 scale 控制图片缩小，绝不改变任何 margin，保证对齐不崩坏！
-        val targetScale = 0.82f 
-        val maxStroke = (1.5f * density).toInt()
+        val density = resources.displayMetrics.density
+        val defaultCorner = Preferences.getNowPlayingImageCornerRadius(requireContext()) * density
+        val targetCorner = Math.min(image.width, image.height) / 2f
+        val targetStrokeWidth = 6f * density // 科技感玻璃倒角宽度
 
         rotationAnimator?.cancel()
-        card?.rotation = 0f
         image.rotation = 0f
 
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 850L // 850毫秒平滑收缩
+            duration = 850L // 850毫秒：极其平滑、从容的收缩过程
             interpolator = androidx.interpolator.view.animation.FastOutSlowInInterpolator()
             
             addUpdateListener { anim ->
                 val fraction = anim.animatedFraction
                 
-                // 1. 封面平滑往里缩放 (而不是挤边距)
-                val scale = 1.0f - (1.0f - targetScale) * fraction
-                image.scaleX = scale
-                image.scaleY = scale
-                
-                // 2. 方形圆角 -> 完美正圆的平滑过渡
-                val currentCorner = defaultCorner + (maxRadius - defaultCorner) * fraction
+                // 1. 方形圆角 -> 完美正圆的丝滑收敛
+                val currentCorner = defaultCorner + (targetCorner - defaultCorner) * fraction
                 image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
                     .setAllCornerSizes(AbsoluteCornerSize(currentCorner))
                     .build()
-                card?.radius = currentCorner
                 
-                // 3. 科技感玻璃底盘渐显 (深空蓝黑 #33001525)
-                val bgAlpha = (0x33 * fraction).toInt()
-                card?.setCardBackgroundColor(android.graphics.Color.argb(bgAlpha, 0x00, 0x15, 0x25))
-                
-                // 4. 3D 高光边框渐显 (半透明银白 #66FFFFFF)
-                card?.strokeWidth = (maxStroke * fraction).toInt()
-                val strokeAlpha = (0x66 * fraction).toInt()
-                card?.strokeColor = android.graphics.Color.argb(strokeAlpha, 0xFF, 0xFF, 0xFF)
+                // 2. 科技感 3D 玻璃倒角渐显 (极其高级的半透明白 #40FFFFFF)
+                image.strokeWidth = targetStrokeWidth * fraction
+                val alpha = (0x40 * fraction).toInt() // Alpha 渐变到 25% 的高光边缘
+                image.strokeColor = android.content.res.ColorStateList.valueOf(
+                    android.graphics.Color.argb(alpha, 255, 255, 255)
+                )
             }
         }
         
         animator.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
+                // 动画结束，锁定相对比例，防止车机分屏时被拉伸成椭圆
                 image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
                     .setAllCornerSizes(RelativeCornerSize(0.5f))
                     .build()
-                startRotation(card ?: image)
+                startRotation(image)
             }
         })
         
         animator.start()
     }
 
-    // 🎯 瞬间科技悬窗（切歌已知无视频时直切）
-    private fun applyCircleModernStyleInstant(card: MaterialCardView?, image: ShapeableImageView?) {
-        if (image == null) return
+    // 🎯 瞬间呈现科技圆盘（切歌前已知无视频）
+    private fun applyCircleModernStyleInstant(image: ShapeableImageView) {
         val density = resources.displayMetrics.density
         
-        image.scaleX = 0.82f
-        image.scaleY = 0.82f
         image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
             .setAllCornerSizes(RelativeCornerSize(0.5f))
             .build()
             
-        card?.radius = 10000f
-        card?.setCardBackgroundColor(android.graphics.Color.parseColor("#33001525"))
-        card?.strokeWidth = (1.5f * density).toInt()
-        card?.strokeColor = android.graphics.Color.parseColor("#66FFFFFF") 
+        // 瞬间满配 3D 玻璃光泽
+        image.strokeWidth = 6f * density
+        image.strokeColor = android.content.res.ColorStateList.valueOf(
+            android.graphics.Color.argb(0x40, 255, 255, 255)
+        )
         
-        startRotation(card ?: image)
+        startRotation(image)
     }
 
-    // 🎯 完美回归方形：重置 Scale 比例，尺寸将再次和动态视频绝对 100% 对齐！
-    private fun applySquareStyleInstant(card: MaterialCardView?, image: ShapeableImageView?) {
-        if (image == null) return
+    // 🎯 回归静态方形（视频准备就绪，尺寸与视频层 100% 一致）
+    private fun applySquareStyleInstant(image: ShapeableImageView) {
         val density = resources.displayMetrics.density
         
         rotationAnimator?.cancel()
-        card?.rotation = 0f
         image.rotation = 0f
+        image.strokeWidth = 0f // 撤去光泽
         
-        // 🌟 核心修复点：将 Scale 恢复到 1.0f 即可，绝不干扰原本的 margin 布局参数
-        image.scaleX = 1.0f
-        image.scaleY = 1.0f
-        
-        val cornerRadius = Preferences.getNowPlayingImageCornerRadius(requireContext())
-        val cornerRadiusPx = cornerRadius.toFloat() * density
-        
+        val cornerRadiusPx = Preferences.getNowPlayingImageCornerRadius(requireContext()) * density
         image.shapeAppearanceModel = image.shapeAppearanceModel.toBuilder()
             .setAllCornerSizes(AbsoluteCornerSize(cornerRadiusPx))
             .build()
-            
-        card?.radius = cornerRadiusPx
-        card?.setCardBackgroundColor(android.graphics.Color.TRANSPARENT)
-        card?.strokeWidth = 0
     }
 
-    private fun startRotation(targetView: View?) {
-        if (targetView == null) return
-        
+    private fun startRotation(targetView: View) {
         if (rotationAnimator == null) {
             rotationAnimator = ObjectAnimator.ofFloat(targetView, View.ROTATION, 0f, 360f).apply {
-                duration = 40000L 
+                duration = 40000L // 40秒慵懒的高级转速
                 interpolator = android.view.animation.LinearInterpolator()
                 repeatCount = ObjectAnimator.INFINITE
             }
