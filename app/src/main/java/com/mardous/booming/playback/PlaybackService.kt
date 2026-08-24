@@ -4,6 +4,7 @@
 
 package com.mardous.booming.playback
 
+import com.mardous.booming.util.STOP_WHEN_CLOSED_FROM_RECENTS
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
