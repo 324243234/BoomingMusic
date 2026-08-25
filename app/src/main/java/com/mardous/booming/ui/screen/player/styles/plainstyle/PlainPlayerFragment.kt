@@ -4,6 +4,9 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+import android.view.WindowManager
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
@@ -14,12 +17,9 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.widget.Toolbar
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -165,13 +165,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             )
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
-                val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
                 
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-                
-                // 🌟 数据层：彻底抛弃 Bitmap，仅提取 Apple Music 所需的 4 个核心矢量点色彩
-                var fluidColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+                var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
 
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -180,29 +178,29 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         withContext(Dispatchers.Default) {
                             val result = SingletonImageLoader.get(currentContext).execute(
                                 ImageRequest.Builder(currentContext).data(song).build()
+								
                             )
                             if (result is SuccessResult) {
-                                val rawBitmap = result.image.toBitmap()
-                                // 利用色彩算法，从高清原图提取优质的主色矩阵
-                                fluidColors = synthesizeAuroraPalette(
-                                    rawBitmap.extractGradientColors(currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR))
+                                gradientColors = result.image.toBitmap().extractGradientColors(
+                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
                             } else {
-                                fluidColors = emptyList() 
+                                gradientColors = emptyList() 
                             }
                         }
                     }
                 }
 
                 if (isAuroraEnabled) {
-                    // 使用 tween 动画确保切歌时，4 种主色平滑过渡
-                    val animatedC1 by animateColorAsState(targetValue = fluidColors.getOrElse(0) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = fluidColors.getOrElse(1) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c2")
-                    val animatedC3 by animateColorAsState(targetValue = fluidColors.getOrElse(2) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c3")
-                    val animatedC4 by animateColorAsState(targetValue = fluidColors.getOrElse(3) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c4")
+                    // 🌟 核心升级：调用色彩同系裂变引擎，彻底解决纯色封面不流动问题！
+                    val targetColors = synthesizeAuroraPalette(gradientColors)
+
+                    val animatedC1 by animateColorAsState(targetValue = targetColors[0], animationSpec = tween(1500), label = "c1")
+                    val animatedC2 by animateColorAsState(targetValue = targetColors[1], animationSpec = tween(1500), label = "c2")
+                    val animatedC3 by animateColorAsState(targetValue = targetColors[2], animationSpec = tween(1500), label = "c3")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                        colors = listOf(animatedC1, animatedC2, animatedC3, animatedC4),
+                        colors = listOf(animatedC1, animatedC2, animatedC3),
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -708,13 +706,16 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         canvasExoPlayer?.pause() 
     }
 
-    // 🌟 核心防黑屏逻辑：强制确保提取出的颜色具有足够的亮度，应对 Hugo 这种纯黑底色的封面
+    // =========================================================================
+    // 🌟 极光同色系裂变引擎 2.0 (自适应明暗与肤色保护机制)
+    // 彻底根除暗色系强制提亮、肤色偏移变绿的“沼泽绿”视觉 Bug！
+    // =========================================================================
     private fun synthesizeAuroraPalette(extractedColors: List<androidx.compose.ui.graphics.Color>): List<androidx.compose.ui.graphics.Color> {
+        // 兜底方案：极具深邃感的高级灰
         val fallbackPalette = listOf(
-            androidx.compose.ui.graphics.Color(0xFF2A2A35), 
-            androidx.compose.ui.graphics.Color(0xFF1E1E26), 
-            androidx.compose.ui.graphics.Color(0xFF353545),
-            androidx.compose.ui.graphics.Color(0xFF15151C)
+            androidx.compose.ui.graphics.Color(0xFF1E1E22), 
+            androidx.compose.ui.graphics.Color(0xFF121215), 
+            androidx.compose.ui.graphics.Color(0xFF25252A)
         )
         
         if (extractedColors.isEmpty()) return fallbackPalette
@@ -726,17 +727,64 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val sat = hsv[1]
         val value = hsv[2]
 
-        // 🌟 救命稻草：强制拉升最低亮度 (Value) 和饱和度 (Saturation)！
-        // 这样即使原图是近乎纯黑的，也能衍生出幽蓝、深紫等可见的暗色流光，而不是融合成一滩死水。
-        val safeValue = value.coerceAtLeast(0.35f) 
-        val safeSat = sat.coerceAtLeast(0.3f)
+        // 🛡️ 护城河 1：极暗或低饱和度（如黑白/暗黑封面），拒绝强行提亮提纯！
+        // 保持原有的暗影质感，依靠明度的微小落差产生暗流涌动的极光
+        if (sat < 0.15f || value < 0.2f) {
+            return listOf(
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.22f))),
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.12f))),
+                androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, 0.28f)))
+            )
+        }
 
-        // 生成 4 个相关且具备一定亮度的控制色
-        val c1 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, safeSat, safeValue)))
-        val c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf((hue + 25f) % 360f, safeSat * 0.9f, (safeValue * 1.2f).coerceAtMost(1f))))
-        val c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf((hue - 20f + 360f) % 360f, (safeSat * 1.1f).coerceAtMost(1f), safeValue * 0.85f)))
-        val c4 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(floatArrayOf((hue + 45f) % 360f, safeSat * 0.8f, (safeValue * 1.3f).coerceAtMost(1f))))
+        // 🛡️ 护城河 2：肤色及暖灰保护机制
+        // 如果提取色在 10°~45°(人脸肤色、土黄) 且饱和度不算太高，绝对禁止色相偏移！
+        // 否则偏移后必变黄绿/沼泽绿，导致诡异的视觉污染。
+        val isSkinToneOrWarmGrey = (hue in 10f..45f) && sat < 0.5f
 
-        return listOf(c1, c2, c3, c4)
+        // C1: 主基调底色（适度控制饱和度和亮度，车机需要深邃感）
+        val c1Hsv = floatArrayOf(
+            hue, 
+            sat.coerceIn(0.2f, 0.65f), 
+            value.coerceIn(0.2f, 0.5f) // 强制压暗，坚决不让背景比封面还亮
+        )
+        val c1 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c1Hsv))
+
+        val c2: androidx.compose.ui.graphics.Color
+        val c3: androidx.compose.ui.graphics.Color
+
+        if (isSkinToneOrWarmGrey || sat < 0.3f) {
+            // 🎬 模式 A：肤色/单调色模式 -> 【锁定色相】，只通过改变亮度和饱和度来实现流体分层
+            val c2Hsv = floatArrayOf(hue, (sat * 0.8f).coerceAtLeast(0.1f), (c1Hsv[2] * 1.3f).coerceAtMost(0.6f))
+            val c3Hsv = floatArrayOf(hue, (sat * 1.2f).coerceAtMost(0.8f), (c1Hsv[2] * 0.7f).coerceAtLeast(0.1f))
+            c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+            c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c3Hsv))
+        } else {
+            // 🎬 模式 B：多彩鲜艳模式 (如 Vava 的纯红封面) -> 允许微调色相（±15度），产生绚丽的极光折射
+            if (extractedColors.size >= 2) {
+                val hsvTemp = FloatArray(3)
+                android.graphics.Color.colorToHSV(extractedColors[1].toArgb(), hsvTemp)
+                val hueDiff = Math.abs(hue - hsvTemp[0])
+                
+                // 如果第二颜色足够鲜艳且和主色有区别，直接借用
+                if (hueDiff > 10f && hueDiff < 350f && hsvTemp[1] > 0.2f) {
+                    hsvTemp[1] = hsvTemp[1].coerceIn(0.3f, 0.65f)
+                    hsvTemp[2] = hsvTemp[2].coerceIn(0.2f, 0.45f)
+                    c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(hsvTemp))
+                } else {
+                    val c2Hsv = floatArrayOf((hue + 15f) % 360f, (sat * 0.9f).coerceIn(0.3f, 0.65f), (c1Hsv[2] * 1.2f).coerceAtMost(0.55f))
+                    c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+                }
+            } else {
+                val c2Hsv = floatArrayOf((hue + 15f) % 360f, (sat * 0.9f).coerceIn(0.3f, 0.65f), (c1Hsv[2] * 1.2f).coerceAtMost(0.55f))
+                c2 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c2Hsv))
+            }
+            
+            // C3 托底暗色：反向色相偏移，进一步压低亮度
+            val c3Hsv = floatArrayOf((hue - 15f + 360f) % 360f, (sat * 1.1f).coerceIn(0.3f, 0.7f), (c1Hsv[2] * 0.8f).coerceAtLeast(0.15f))
+            c3 = androidx.compose.ui.graphics.Color(android.graphics.Color.HSVToColor(c3Hsv))
+        }
+
+        return listOf(c1, c2, c3)
     }
 }
