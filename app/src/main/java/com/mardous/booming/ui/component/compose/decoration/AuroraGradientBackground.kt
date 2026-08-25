@@ -37,45 +37,59 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// 🚀 终极架构：纯数学网格渐变引擎 (Warped Bilinear Mesh Gradient)
-// 绝对 0 纹理采样，100% 杜绝马赛克，完美契合 H.264 视频流编码器
+// 🚀 核心架构落地：纯数学计算的高斯网格流体 (Gaussian Mesh Fluid)
+// 原理：4 个色彩点在空间游走，像素的颜色由它到这 4 个点的"指数距离"决定。
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
     
-    layout(color) uniform half4 c1; // 左上角色彩
-    layout(color) uniform half4 c2; // 右上角色彩
-    layout(color) uniform half4 c3; // 左下角色彩
-    layout(color) uniform half4 c4; // 右下角色彩
-    layout(color) uniform half4 darkOverlay; // 护眼遮罩
+    layout(color) uniform half4 c1;
+    layout(color) uniform half4 c2;
+    layout(color) uniform half4 c3;
+    layout(color) uniform half4 c4;
+    layout(color) uniform half4 darkOverlay;
 
     half4 main(in float2 fragCoord) {
-        // 1. 标准化坐标 [0.0, 1.0]
         float2 uv = fragCoord / resolution.xy;
         float t = time * 0.15; 
         
-        // 2. 空间流体力学扭曲 (Domain Warping)
-        // 使用低频正余弦波模拟流体的搅动。这种扭曲不会产生任何尖锐边缘，对车机硬件编码极度友好。
+        // 1. 空间域扭曲：加入非常柔和的正弦波漩涡
         float2 warp;
-        warp.x = sin(uv.y * 2.0 + t) * 0.2 + cos(uv.x * 1.5 - t * 0.5) * 0.15;
-        warp.y = cos(uv.x * 2.5 + t * 0.8) * 0.2 - sin(uv.y * 1.5 - t * 0.4) * 0.15;
+        warp.x = sin(uv.y * 3.0 + t) * 0.1;
+        warp.y = cos(uv.x * 3.0 - t * 0.8) * 0.1;
+        float2 wuv = uv + warp;
         
-        // 将坐标进行扭曲，并通过 smoothstep 防止边缘硬切断
-        float2 wuv = smoothstep(0.0, 1.0, uv + warp);
+        // 2. 运动学：4 个色彩流体核心 (Blobs) 在空间中呈李萨如曲线运动
+        float2 p1 = float2(0.3 + sin(t)*0.2, 0.3 + cos(t*0.7)*0.2);
+        float2 p2 = float2(0.7 + cos(t*1.1)*0.2, 0.3 + sin(t*0.8)*0.2);
+        float2 p3 = float2(0.3 + sin(t*0.9)*0.2, 0.7 + cos(t*1.2)*0.2);
+        float2 p4 = float2(0.7 + cos(t*0.8)*0.2, 0.7 + sin(t*0.9)*0.2);
         
-        // 3. Apple Music 级数学平滑：双线性插值 (Bilinear Interpolation)
-        // 纯靠数学公式在四个角落的颜色之间进行无极融合，分辨率无限大，永远不可能有像素块！
-        half3 topColor = mix(c1.rgb, c2.rgb, wuv.x);
-        half3 bottomColor = mix(c3.rgb, c4.rgb, wuv.x);
-        half3 meshColor = mix(topColor, bottomColor, wuv.y);
+        // 计算当前像素到 4 个核心的距离
+        float d1 = length(wuv - p1);
+        float d2 = length(wuv - p2);
+        float d3 = length(wuv - p3);
+        float d4 = length(wuv - p4);
         
-        // 4. 色彩提纯防灰暗
-        half luminance = dot(meshColor, half3(0.2126, 0.7152, 0.0722));
-        half3 vibrantColor = mix(half3(luminance), meshColor, 1.35); 
+        // 3. Apple 级融合算法：高斯指数衰减 (Exponential Falloff)
+        // 纯数学推算，绝对无限平滑，从根源上歼灭所有马赛克像素块
+        float w1 = exp(-d1 * 2.5);
+        float w2 = exp(-d2 * 2.5);
+        float w3 = exp(-d3 * 2.5);
+        float w4 = exp(-d4 * 2.5);
         
-        // 5. 65% 暗色压罩混合
-        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.65);
+        float sum = w1 + w2 + w3 + w4;
+        
+        // 算出当前像素在此数学场中的精确颜色
+        half3 meshColor = (c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3 + c4.rgb * w4) / sum;
+        
+        // 4. 色彩亮度恢复：抗发灰
+        half lum = dot(meshColor, half3(0.299, 0.587, 0.114));
+        half3 vibrantColor = mix(half3(lum), meshColor, 1.35); 
+        
+        // 5. 护眼遮罩融合 (透明度严格控制在 0.45)
+        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.45);
         
         return half4(finalColor, 1.0);
     }
@@ -83,7 +97,7 @@ private const val FLUID_SHADER = """
 
 @Composable
 fun AuroraGradientBackground(
-    colors: List<Color>,
+    colors: List<Color>, // 🌟 只接收 4 种控制色
     isPlaying: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -183,7 +197,7 @@ private fun AgslFluidBackground(
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     val brush = remember(shader) { ShaderBrush(shader) }
     
-    // 护眼深色压罩
+    // 护眼压暗遮罩色
     val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
     
     Box(
