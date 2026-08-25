@@ -5,9 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.BitmapShader
 import android.graphics.RuntimeShader
-import android.graphics.Shader
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -28,10 +26,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
@@ -41,52 +37,44 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// 🚀 CarWith 终极定制版 AGSL 流体引擎 (The Apple Music Warp)
+// 🚀 终极架构：纯数学网格渐变引擎 (Warped Bilinear Mesh Gradient)
+// 绝对 0 纹理采样，100% 杜绝马赛克，完美契合 H.264 视频流编码器
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
-    uniform float2 bitmapSize; // 接收真实的贴图尺寸 (64x64)
-    uniform shader imageTexture;
+    
+    layout(color) uniform half4 c1; // 左上角色彩
+    layout(color) uniform half4 c2; // 右上角色彩
+    layout(color) uniform half4 c3; // 左下角色彩
+    layout(color) uniform half4 c4; // 右下角色彩
     layout(color) uniform half4 darkOverlay; // 护眼遮罩
 
     half4 main(in float2 fragCoord) {
-        // 1. 将屏幕坐标归一化到 [0.0, 1.0]
+        // 1. 标准化坐标 [0.0, 1.0]
         float2 uv = fragCoord / resolution.xy;
+        float t = time * 0.15; 
         
-        // 降低时间流速，适应 CarWith 的 H.264 视频流编码，避免引发高频马赛克
-        float t = time * 0.08; 
+        // 2. 空间流体力学扭曲 (Domain Warping)
+        // 使用低频正余弦波模拟流体的搅动。这种扭曲不会产生任何尖锐边缘，对车机硬件编码极度友好。
+        float2 warp;
+        warp.x = sin(uv.y * 2.0 + t) * 0.2 + cos(uv.x * 1.5 - t * 0.5) * 0.15;
+        warp.y = cos(uv.x * 2.5 + t * 0.8) * 0.2 - sin(uv.y * 1.5 - t * 0.4) * 0.15;
         
-        // 2. 伪分形布朗运动 (Pseudo-FBM) 域扭曲
-        // 利用低频三角函数叠加，模拟极具粘稠感的有机液体漩涡
+        // 将坐标进行扭曲，并通过 smoothstep 防止边缘硬切断
+        float2 wuv = smoothstep(0.0, 1.0, uv + warp);
         
-        // 第一阶 (Octave 1)：大面积的基础流动
-        float2 q;
-        q.x = sin(uv.y * 2.5 + t) * 0.15 + cos(uv.x * 1.5 - t * 0.5) * 0.1;
-        q.y = cos(uv.x * 2.5 + t * 0.8) * 0.15 - sin(uv.y * 1.5 - t * 0.4) * 0.1;
+        // 3. Apple Music 级数学平滑：双线性插值 (Bilinear Interpolation)
+        // 纯靠数学公式在四个角落的颜色之间进行无极融合，分辨率无限大，永远不可能有像素块！
+        half3 topColor = mix(c1.rgb, c2.rgb, wuv.x);
+        half3 bottomColor = mix(c3.rgb, c4.rgb, wuv.x);
+        half3 meshColor = mix(topColor, bottomColor, wuv.y);
         
-        // 第二阶 (Octave 2)：在第一阶的基础上叠加细微的局部干涉，产生漩涡感
-        float2 r;
-        r.x = sin((uv.y + q.y) * 3.0 - t * 1.2) * 0.1;
-        r.y = cos((uv.x + q.x) * 3.0 + t * 1.5) * 0.1;
+        // 4. 色彩提纯防灰暗
+        half luminance = dot(meshColor, half3(0.2126, 0.7152, 0.0722));
+        half3 vibrantColor = mix(half3(luminance), meshColor, 1.35); 
         
-        // 合并坐标扭曲
-        float2 distortedUV = uv + q + r;
-        
-        // 3. 硬件级双线性采样
-        // 坐标系闭环：扭曲后的 UV (约-0.2~1.2) 乘以实际图片尺寸 (64x64)。
-        // 借助底层的 TileMode.MIRROR，越界坐标将被完美折返成平滑的镜面流体。
-        half4 fluidColor = imageTexture.eval(distortedUV * bitmapSize);
-        
-        // 4. Rec. 709 视网膜级色彩提纯
-        // 解决 64x64 极度压缩带来的“泥浆/发灰”效应。
-        // 采用国际标准 Rec.709 的人眼亮度权重计算法：
-        half luminance = dot(fluidColor.rgb, half3(0.2126, 0.7152, 0.0722));
-        // 将原色推离灰度轴心 1.5 倍，爆发极致绚丽的色彩
-        half3 vibrantColor = mix(half3(luminance), fluidColor.rgb, 1.5);
-        
-        // 5. 强光护眼压罩
-        // 无论流体多么鲜艳，强制覆盖 65% 的深色，确保车机界面的白色 UI/歌词永远处于高对比度
+        // 5. 65% 暗色压罩混合
         half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.65);
         
         return half4(finalColor, 1.0);
@@ -95,8 +83,7 @@ private const val FLUID_SHADER = """
 
 @Composable
 fun AuroraGradientBackground(
-    fluidTexture: ImageBitmap?,
-    fallbackColors: List<Color>,
+    colors: List<Color>,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -173,12 +160,14 @@ fun AuroraGradientBackground(
         }
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && fluidTexture != null) {
-        AgslFluidBackground(fluidTexture, { timeState }, modifier)
+    val c1 = colors.getOrNull(0) ?: Color(0xFF1E1E22)
+    val c2 = colors.getOrNull(1) ?: Color(0xFF121215)
+    val c3 = colors.getOrNull(2) ?: Color(0xFF25252A)
+    val c4 = colors.getOrNull(3) ?: Color(0xFF0F0F12)
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        AgslFluidBackground(c1, c2, c3, c4, { timeState }, modifier)
     } else {
-        val c1 = fallbackColors.getOrNull(0) ?: Color(0xFF1E1E22)
-        val c2 = fallbackColors.getOrNull(1) ?: Color(0xFF121215)
-        val c3 = fallbackColors.getOrNull(2) ?: Color(0xFF25252A)
         val baseBgColor = remember { Color(0xFF0C0C0F) }
         CanvasAuroraBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
     }
@@ -187,32 +176,26 @@ fun AuroraGradientBackground(
 @SuppressLint("NewApi")
 @Composable
 private fun AgslFluidBackground(
-    fluidTexture: ImageBitmap,
+    c1: Color, c2: Color, c3: Color, c4: Color,
     timeProvider: () -> Float,
     modifier: Modifier
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
+    val brush = remember(shader) { ShaderBrush(shader) }
     
-    val bitmapShader = remember(fluidTexture) {
-        BitmapShader(fluidTexture.asAndroidBitmap(), Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
-    }
-    
-    val brush = remember(shader, bitmapShader) { 
-        shader.setInputShader("imageTexture", bitmapShader)
-        ShaderBrush(shader) 
-    }
-    
-    // 极深高级灰底图：防止在亮色封面下车主视线被干扰
-    val darkOverlayColor = remember { Color(0xFF070709).toArgb() }
+    // 护眼深色压罩
+    val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
     
     Box(
         modifier = modifier
             .fillMaxSize()
             .drawBehind {
                 shader.setFloatUniform("resolution", size.width, size.height)
-                // 严密对接：将图片真实尺寸精确传导给 AGSL
-                shader.setFloatUniform("bitmapSize", fluidTexture.width.toFloat(), fluidTexture.height.toFloat())
                 shader.setFloatUniform("time", timeProvider())
+                shader.setColorUniform("c1", c1.toArgb())
+                shader.setColorUniform("c2", c2.toArgb())
+                shader.setColorUniform("c3", c3.toArgb())
+                shader.setColorUniform("c4", c4.toArgb())
                 shader.setColorUniform("darkOverlay", darkOverlayColor)
                 drawRect(brush)
             }
