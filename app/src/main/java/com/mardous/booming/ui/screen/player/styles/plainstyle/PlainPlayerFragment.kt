@@ -189,8 +189,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 
                                 // 🚀 CarWith 性能核心 1：将封面暴力压缩为 32x32 像素
                                 // 内存占用几乎为 0，抹除所有尖锐细节，天生防 H.264 编码马赛克！
-                                val tinyBitmap = android.graphics.Bitmap.createScaledBitmap(rawBitmap, 32, 32, true)
-                                fluidTexture = androidx.compose.ui.graphics.asImageBitmap(tinyBitmap)
+                                val tinyBitmap = android.graphics.Bitmap.createScaledBitmap(rawBitmap, 64, 64, true)
+                                fluidTexture = tinyBitmap.asImageBitmap()
                                 
                                 // 降级兼容：从 32x32 的小图中提取颜色，速度快 100 倍
                                 fallbackColors = synthesizeAuroraPalette(

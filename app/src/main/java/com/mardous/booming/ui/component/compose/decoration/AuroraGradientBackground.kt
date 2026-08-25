@@ -41,41 +41,51 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// ?? CarWith ÖÕ¼«ÓÅ»¯°æ Shader (The Apple Music Twist)
+// ?? CarWith ç»ˆæä¼˜åŒ–ç‰ˆ Shader (The Apple Music Twist)
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
-    uniform shader imageTexture; // ½ÓÊÕ 32x32 ¼«µÍ·Ö±çÂÊ·âÃæÍ¼
-    layout(color) uniform half4 darkOverlay; // »¤ÑÛÑ¹°µ²ã
+    uniform shader imageTexture;
+    layout(color) uniform half4 darkOverlay;
 
     half4 main(in float2 fragCoord) {
         float2 uv = fragCoord / resolution.xy;
+        float t = time * 0.15; 
         
-        // 1. ¼«ÖÂµÍÆµµÄÓòÅ¤Çú (Domain Warping)
-        // ÆµÂÊ¼«µÍ£¬Õñ·ùÆ½»º¡£¶Ô H.264 ±àÂëÆ÷¼«ÆäÓÑºÃ£¬¾ø²»»á²úÉúÂíÈü¿ËËéÆ¬¡£
-        float t = time * 0.12; 
+        // ?? è¿›åŒ– 1ï¼šåŒé˜¶æµä½“æ‰­æ›² (Dual-Octave Domain Warping)
+        // ç¬¬ä¸€é˜¶ï¼šåˆ¶é€ å¤§é¢ç§¯çš„ç¼“æ…¢æ°´æ³¢åç§»
+        float2 warp1;
+        warp1.x = sin(uv.y * 2.0 + t) * 0.15;
+        warp1.y = cos(uv.x * 2.0 - t * 0.8) * 0.15;
         
-        float2 warp;
-        // Ä£ÄâÉîº£äöÎĞµÄµÍËÙÀ­³¶¸Ğ
-        warp.x = sin(uv.y * 1.5 + t) * 0.15 + cos(uv.x * 1.0 - t * 0.5) * 0.1;
-        warp.y = cos(uv.x * 1.5 + t * 0.8) * 0.15 - sin(uv.y * 1.0 - t * 0.4) * 0.1;
+        // ç¬¬äºŒé˜¶ï¼šåˆ©ç”¨ç¬¬ä¸€é˜¶çš„ç»“æœå†æ¬¡æ‰­æ›²ï¼Œæ¨¡æ‹Ÿ Apple Music å¤šå›¾å±‚å¹²æ¶‰äº§ç”Ÿçš„â€œæ¼©æ¶¡æ„Ÿâ€
+        float2 warp2;
+        warp2.x = sin((uv.y + warp1.y) * 3.0 - t * 1.2) * 0.1;
+        warp2.y = cos((uv.x + warp1.x) * 3.0 + t * 1.5) * 0.1;
         
-        float2 distortedUV = uv + warp;
-        
-        // 2. Ó²¼ş²ÉÑù»ñÈ¡¼«ÖÂÈáºÍµÄÁ÷ÌåÉ«²Ê
-        // µÃÒæÓÚ Android µ×²ãµÄ TileMode.MIRROR£¬UV Ô½½ç»á×Ô¶¯ÍêÃÀÕÛ·µ£¬ÎŞĞèÔÚ Shader ÖĞĞ´ÈÎºÎ if ÅĞ¶Ï£¡
+        // åˆå¹¶åæ ‡æ‰­æ›² (åˆ©ç”¨ MIRROR ç‰¹æ€§ï¼Œè¶Šç•Œè‡ªåŠ¨å®Œç¾æŠ˜è¿”)
+        float2 distortedUV = uv + warp1 + warp2;
         half4 fluidColor = imageTexture.eval(distortedUV * resolution.xy);
         
-        // 3. ³µ»ú»¤ÑÛ¼¶ÈÚºÏ
-        // ½«Á÷ÌåÑ¹°µ£¬È·±£ÔÚ³µÄÚ¹âÏßÍ»±äÊ±£¬°×É«¸è´ÊºÍ UI ÓÀÔ¶±£³Ö×î¸ß¿É¶ÁĞÔ¡£
-        return mix(fluidColor, darkOverlay, 0.65);
+        // ?? è¿›åŒ– 2ï¼šç¡¬ä»¶çº§é¥±å’Œåº¦è¡¥å¿ (Saturation Recovery)
+        // çªç ´å‹ç¼©å¸¦æ¥çš„â€œè‰²å½©å‘ç°/æ³¥æµ†æ„Ÿâ€ï¼Œè®©æµä½“æ¢å¤ä¸“è¾‘å°é¢åŸæœ¬çš„é€šé€è‰³ä¸½ï¼
+        // 1. æå–å½“å‰åƒç´ çš„äº®åº¦ (Luminance)
+        half luminance = dot(fluidColor.rgb, half3(0.299, 0.587, 0.114));
+        // 2. å°†åŸè‰²æ¨ç¦»ç°åº¦ä¸­å¿ƒï¼Œå€ç‡ 1.45 (é¥±å’Œåº¦å¢åŠ  45%)
+        half3 vibrantColor = mix(half3(luminance), fluidColor.rgb, 1.45);
+        
+        // ?? è¿›åŒ– 3ï¼šæ™ºèƒ½æŠ¤çœ¼å‹æš—
+        // å°†æçº¯åçš„è‰³ä¸½æµä½“ä¸æš—è‰²é®ç½©æ··åˆï¼Œä¿è¯è½¦æœºæ­Œè¯é«˜å¯¹æ¯”åº¦æ¸…æ™°å¯è§
+        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, darkOverlay.a);
+        
+        return half4(finalColor, 1.0);
     }
 """
 
 @Composable
 fun AuroraGradientBackground(
-    fluidTexture: ImageBitmap?, // ?? ½ÓÊÕÍ¼Æ¬ÌùÍ¼
+    fluidTexture: ImageBitmap?, // ?? æ¥æ”¶å›¾ç‰‡è´´å›¾
     fallbackColors: List<Color>,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
@@ -153,7 +163,7 @@ fun AuroraGradientBackground(
         }
     }
 
-    // API 33+ Ê¹ÓÃ Apple Music ¼¶ÌùÍ¼ÎïÀíÁ÷Ìå£¬µÍ°æ±¾±£ÁôÔ­ÊıÑ§Á÷Ìå½µ¼¶
+    // API 33+ ä½¿ç”¨ Apple Music çº§è´´å›¾ç‰©ç†æµä½“ï¼Œä½ç‰ˆæœ¬ä¿ç•™åŸæ•°å­¦æµä½“é™çº§
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && fluidTexture != null) {
         AgslFluidBackground(fluidTexture, { timeState }, modifier)
     } else {
@@ -174,7 +184,7 @@ private fun AgslFluidBackground(
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     
-    // ?? ºËĞÄ£º¿ªÆôµ×²ãÓ²¼şµÄ MIRROR Ä£Ê½£¬ÎŞ·ì¶Ô½Ó AGSL ¿Õ¼äÈàÄó£¬¶Å¾øºÚ±ß
+    // ?? æ ¸å¿ƒï¼šå¼€å¯åº•å±‚ç¡¬ä»¶çš„ MIRROR æ¨¡å¼ï¼Œæ— ç¼å¯¹æ¥ AGSL ç©ºé—´æ‰æï¼Œæœç»é»‘è¾¹
     val bitmapShader = remember(fluidTexture) {
         BitmapShader(fluidTexture.asAndroidBitmap(), Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
     }
@@ -184,7 +194,7 @@ private fun AgslFluidBackground(
         ShaderBrush(shader) 
     }
     
-    // »¤ÑÛÑ¹°µÉ«£¨¿É¸ù¾İ¸öÈËÏ²ºÃÎ¢µ÷ÉîÇ³£©
+    // æŠ¤çœ¼å‹æš—è‰²ï¼ˆå¯æ ¹æ®ä¸ªäººå–œå¥½å¾®è°ƒæ·±æµ…ï¼‰
     val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
     
     Box(
