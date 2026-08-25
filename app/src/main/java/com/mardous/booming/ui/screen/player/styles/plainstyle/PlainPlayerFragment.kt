@@ -4,6 +4,9 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+android.view.WindowManager
+androidx.compose.animation.core.tween
+androidx.compose.animation.animateColorAsState
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.BatteryManager
