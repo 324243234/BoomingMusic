@@ -165,11 +165,15 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             )
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
-                val isAuroraEnabled = lyricsSettings.backgroundEffect == com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect.Aurora
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
                 
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-                var gradientColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
+                
+                // 🌟 新增：存储给底层 Shader 用的纳米级压缩贴图
+                var fluidTexture by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+                // 保留：给低版本 Android 降级使用的颜色
+                var fallbackColors by remember { mutableStateOf<List<androidx.compose.ui.graphics.Color>>(emptyList()) }
 
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -178,29 +182,35 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                         withContext(Dispatchers.Default) {
                             val result = SingletonImageLoader.get(currentContext).execute(
                                 ImageRequest.Builder(currentContext).data(song).build()
-								
                             )
                             if (result is SuccessResult) {
-                                gradientColors = result.image.toBitmap().extractGradientColors(
-                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
+                                val rawBitmap = result.image.toBitmap()
+                                
+                                // 🚀 CarWith 性能核心 1：将封面暴力压缩为 32x32 像素
+                                // 内存占用几乎为 0，抹除所有尖锐细节，天生防 H.264 编码马赛克！
+                                val tinyBitmap = android.graphics.Bitmap.createScaledBitmap(rawBitmap, 32, 32, true)
+                                fluidTexture = androidx.compose.ui.graphics.asImageBitmap(tinyBitmap)
+                                
+                                // 降级兼容：从 32x32 的小图中提取颜色，速度快 100 倍
+                                fallbackColors = synthesizeAuroraPalette(
+                                    tinyBitmap.extractGradientColors(currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR))
                                 )
                             } else {
-                                gradientColors = emptyList() 
+                                fluidTexture = null
+                                fallbackColors = emptyList() 
                             }
                         }
                     }
                 }
 
                 if (isAuroraEnabled) {
-                    // 🌟 核心升级：调用色彩同系裂变引擎，彻底解决纯色封面不流动问题！
-                    val targetColors = synthesizeAuroraPalette(gradientColors)
-
-                    val animatedC1 by animateColorAsState(targetValue = targetColors[0], animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = targetColors[1], animationSpec = tween(1500), label = "c2")
-                    val animatedC3 by animateColorAsState(targetValue = targetColors[2], animationSpec = tween(1500), label = "c3")
+                    val animatedC1 by animateColorAsState(targetValue = fallbackColors.getOrElse(0) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c1")
+                    val animatedC2 by animateColorAsState(targetValue = fallbackColors.getOrElse(1) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c2")
+                    val animatedC3 by animateColorAsState(targetValue = fallbackColors.getOrElse(2) { androidx.compose.ui.graphics.Color.Black }, animationSpec = tween(1500), label = "c3")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                        colors = listOf(animatedC1, animatedC2, animatedC3),
+                        fluidTexture = fluidTexture, // 🌟 传入贴图
+                        fallbackColors = listOf(animatedC1, animatedC2, animatedC3),
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )

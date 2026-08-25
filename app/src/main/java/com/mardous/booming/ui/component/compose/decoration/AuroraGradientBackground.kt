@@ -5,7 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.BitmapShader
 import android.graphics.RuntimeShader
+import android.graphics.Shader
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -26,8 +28,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
@@ -37,43 +41,42 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
+// ?? CarWith ÖÕ¼«ÓÅ»¯°æ Shader (The Apple Music Twist)
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
-    
-    layout(color) uniform half4 c1;
-    layout(color) uniform half4 c2;
-    layout(color) uniform half4 c3;
-    layout(color) uniform half4 bg;
+    uniform shader imageTexture; // ½ÓÊÕ 32x32 ¼«µÍ·Ö±çÂÊ·âÃæÍ¼
+    layout(color) uniform half4 darkOverlay; // »¤ÑÛÑ¹°µ²ã
 
     half4 main(in float2 fragCoord) {
         float2 uv = fragCoord / resolution.xy;
-        float2 p = uv * 2.0 - 1.0; 
-        p.x *= resolution.x / resolution.y; 
         
-        float t = time * 0.15; 
+        // 1. ¼«ÖÂµÍÆµµÄÓòÅ¤Çú (Domain Warping)
+        // ÆµÂÊ¼«µÍ£¬Õñ·ùÆ½»º¡£¶Ô H.264 ±àÂëÆ÷¼«ÆäÓÑºÃ£¬¾ø²»»á²úÉúÂíÈü¿ËËéÆ¬¡£
+        float t = time * 0.12; 
         
-        for(float i = 1.0; i < 4.0; i += 1.0) {
-            float2 newP = p;
-            newP.x += 0.4 / i * sin(i * 2.0 * p.y + t);
-            newP.y += 0.4 / i * cos(i * 1.5 * p.x - t * 0.8);
-            p = newP;
-        }
+        float2 warp;
+        // Ä£ÄâÉîº£äöÎÐµÄµÍËÙÀ­³¶¸Ð
+        warp.x = sin(uv.y * 1.5 + t) * 0.15 + cos(uv.x * 1.0 - t * 0.5) * 0.1;
+        warp.y = cos(uv.x * 1.5 + t * 0.8) * 0.15 - sin(uv.y * 1.0 - t * 0.4) * 0.1;
         
-        float w1 = 0.5 + 0.5 * sin(p.x * 2.5 + t);
-        float w2 = 0.5 + 0.5 * cos(p.y * 2.0 - t);
+        float2 distortedUV = uv + warp;
         
-        half4 color = mix(c1, c2, w1);
-        color = mix(color, c3, w2);
+        // 2. Ó²¼þ²ÉÑù»ñÈ¡¼«ÖÂÈáºÍµÄÁ÷ÌåÉ«²Ê
+        // µÃÒæÓÚ Android µ×²ãµÄ TileMode.MIRROR£¬UV Ô½½ç»á×Ô¶¯ÍêÃÀÕÛ·µ£¬ÎÞÐèÔÚ Shader ÖÐÐ´ÈÎºÎ if ÅÐ¶Ï£¡
+        half4 fluidColor = imageTexture.eval(distortedUV * resolution.xy);
         
-        return mix(bg, color, 0.85);
+        // 3. ³µ»ú»¤ÑÛ¼¶ÈÚºÏ
+        // ½«Á÷ÌåÑ¹°µ£¬È·±£ÔÚ³µÄÚ¹âÏßÍ»±äÊ±£¬°×É«¸è´ÊºÍ UI ÓÀÔ¶±£³Ö×î¸ß¿É¶ÁÐÔ¡£
+        return mix(fluidColor, darkOverlay, 0.65);
     }
 """
 
 @Composable
 fun AuroraGradientBackground(
-    colors: List<Color>,
+    fluidTexture: ImageBitmap?, // ?? ½ÓÊÕÍ¼Æ¬ÌùÍ¼
+    fallbackColors: List<Color>,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -132,14 +135,7 @@ fun AuroraGradientBackground(
         }
     }
 
-    // ðŸŒŸ æ ¸å¿ƒä¿®å¤ 1ï¼šä¸Ž isPlaying å½»åº•è§£ç»‘ï¼
-    // ä¸å†å› ä¸ºç¼“å†²å¯¼è‡´çš„ isPlaying=false è€Œåœæ­¢æµä½“åŠ¨ç”»ï¼Œå½»åº•è§£å†³â€œæ€¥åˆ¹è½¦å¼é—ªå˜â€ï¼
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
-
-    val c1 = colors.getOrNull(0) ?: Color(0xFF2C3E50)
-    val c2 = colors.getOrNull(1) ?: Color(0xFF3498DB)
-    val c3 = colors.getOrNull(2) ?: c1
-    val baseBgColor = remember { Color(0xFF0C0C0F) }
 
     var timeState by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
@@ -157,9 +153,14 @@ fun AuroraGradientBackground(
         }
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        AgslFluidBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
+    // API 33+ Ê¹ÓÃ Apple Music ¼¶ÌùÍ¼ÎïÀíÁ÷Ìå£¬µÍ°æ±¾±£ÁôÔ­ÊýÑ§Á÷Ìå½µ¼¶
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && fluidTexture != null) {
+        AgslFluidBackground(fluidTexture, { timeState }, modifier)
     } else {
+        val c1 = fallbackColors.getOrNull(0) ?: Color(0xFF1E1E22)
+        val c2 = fallbackColors.getOrNull(1) ?: Color(0xFF121215)
+        val c3 = fallbackColors.getOrNull(2) ?: Color(0xFF25252A)
+        val baseBgColor = remember { Color(0xFF0C0C0F) }
         CanvasAuroraBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
     }
 }
@@ -167,12 +168,24 @@ fun AuroraGradientBackground(
 @SuppressLint("NewApi")
 @Composable
 private fun AgslFluidBackground(
-    c1: Color, c2: Color, c3: Color, baseBgColor: Color,
+    fluidTexture: ImageBitmap,
     timeProvider: () -> Float,
     modifier: Modifier
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
-    val brush = remember(shader) { ShaderBrush(shader) }
+    
+    // ?? ºËÐÄ£º¿ªÆôµ×²ãÓ²¼þµÄ MIRROR Ä£Ê½£¬ÎÞ·ì¶Ô½Ó AGSL ¿Õ¼äÈàÄó£¬¶Å¾øºÚ±ß
+    val bitmapShader = remember(fluidTexture) {
+        BitmapShader(fluidTexture.asAndroidBitmap(), Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
+    }
+    
+    val brush = remember(shader, bitmapShader) { 
+        shader.setInputShader("imageTexture", bitmapShader)
+        ShaderBrush(shader) 
+    }
+    
+    // »¤ÑÛÑ¹°µÉ«£¨¿É¸ù¾Ý¸öÈËÏ²ºÃÎ¢µ÷ÉîÇ³£©
+    val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
     
     Box(
         modifier = modifier
@@ -180,10 +193,7 @@ private fun AgslFluidBackground(
             .drawBehind {
                 shader.setFloatUniform("resolution", size.width, size.height)
                 shader.setFloatUniform("time", timeProvider())
-                shader.setColorUniform("c1", c1.toArgb())
-                shader.setColorUniform("c2", c2.toArgb())
-                shader.setColorUniform("c3", c3.toArgb())
-                shader.setColorUniform("bg", baseBgColor.toArgb())
+                shader.setColorUniform("darkOverlay", darkOverlayColor)
                 drawRect(brush)
             }
     )
