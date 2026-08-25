@@ -4,6 +4,7 @@
 
 package com.mardous.booming.ui.screen.player.styles.plainstyle
 
+import androidx.compose.ui.graphics.asImageBitmap
 import android.view.WindowManager
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
