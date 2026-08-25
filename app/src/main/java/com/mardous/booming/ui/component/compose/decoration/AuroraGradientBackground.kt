@@ -41,40 +41,52 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// 🚀 CarWith 终极优化版 Shader (The Apple Music Twist)
+// 🚀 CarWith 终极定制版 AGSL 流体引擎 (The Apple Music Warp)
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
     uniform float time;
+    uniform float2 bitmapSize; // 接收真实的贴图尺寸 (64x64)
     uniform shader imageTexture;
-    layout(color) uniform half4 darkOverlay;
+    layout(color) uniform half4 darkOverlay; // 护眼遮罩
 
     half4 main(in float2 fragCoord) {
+        // 1. 将屏幕坐标归一化到 [0.0, 1.0]
         float2 uv = fragCoord / resolution.xy;
-        float t = time * 0.15; 
         
-        // 1. 双阶域扭曲 (Dual-Octave Domain Warping)
-        // 第一阶大漩涡
-        float2 warp1;
-        warp1.x = sin(uv.y * 2.0 + t) * 0.15;
-        warp1.y = cos(uv.x * 2.0 - t * 0.8) * 0.15;
+        // 降低时间流速，适应 CarWith 的 H.264 视频流编码，避免引发高频马赛克
+        float t = time * 0.08; 
         
-        // 第二阶微干涉
-        float2 warp2;
-        warp2.x = sin((uv.y + warp1.y) * 3.0 - t * 1.2) * 0.1;
-        warp2.y = cos((uv.x + warp1.x) * 3.0 + t * 1.5) * 0.1;
+        // 2. 伪分形布朗运动 (Pseudo-FBM) 域扭曲
+        // 利用低频三角函数叠加，模拟极具粘稠感的有机液体漩涡
         
-        // 合并揉捏
-        float2 distortedUV = uv + warp1 + warp2;
-        half4 fluidColor = imageTexture.eval(distortedUV * resolution.xy);
+        // 第一阶 (Octave 1)：大面积的基础流动
+        float2 q;
+        q.x = sin(uv.y * 2.5 + t) * 0.15 + cos(uv.x * 1.5 - t * 0.5) * 0.1;
+        q.y = cos(uv.x * 2.5 + t * 0.8) * 0.15 - sin(uv.y * 1.5 - t * 0.4) * 0.1;
         
-        // 2. 硬件级色彩提纯 (对抗过度模糊导致的色彩发灰)
-        half luminance = dot(fluidColor.rgb, half3(0.299, 0.587, 0.114));
-        half3 vibrantColor = mix(half3(luminance), fluidColor.rgb, 1.45);
+        // 第二阶 (Octave 2)：在第一阶的基础上叠加细微的局部干涉，产生漩涡感
+        float2 r;
+        r.x = sin((uv.y + q.y) * 3.0 - t * 1.2) * 0.1;
+        r.y = cos((uv.x + q.x) * 3.0 + t * 1.5) * 0.1;
         
-        // 🌟 3. 致命 BUG 修复区：强制写死 0.65 的混合比例！
-        // 0.65 代表：保留 35% 的极致艳丽流体色彩，混合 65% 的暗黑护眼底色
-        // 这样既能保证车机上的歌词清晰可见，又能透出深邃的封面色彩
+        // 合并坐标扭曲
+        float2 distortedUV = uv + q + r;
+        
+        // 3. 硬件级双线性采样
+        // 坐标系闭环：扭曲后的 UV (约-0.2~1.2) 乘以实际图片尺寸 (64x64)。
+        // 借助底层的 TileMode.MIRROR，越界坐标将被完美折返成平滑的镜面流体。
+        half4 fluidColor = imageTexture.eval(distortedUV * bitmapSize);
+        
+        // 4. Rec. 709 视网膜级色彩提纯
+        // 解决 64x64 极度压缩带来的“泥浆/发灰”效应。
+        // 采用国际标准 Rec.709 的人眼亮度权重计算法：
+        half luminance = dot(fluidColor.rgb, half3(0.2126, 0.7152, 0.0722));
+        // 将原色推离灰度轴心 1.5 倍，爆发极致绚丽的色彩
+        half3 vibrantColor = mix(half3(luminance), fluidColor.rgb, 1.5);
+        
+        // 5. 强光护眼压罩
+        // 无论流体多么鲜艳，强制覆盖 65% 的深色，确保车机界面的白色 UI/歌词永远处于高对比度
         half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.65);
         
         return half4(finalColor, 1.0);
@@ -161,7 +173,6 @@ fun AuroraGradientBackground(
         }
     }
 
-    // API 33+ 使用 Apple Music 级贴图物理流体，低版本保留原数学流体降级
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && fluidTexture != null) {
         AgslFluidBackground(fluidTexture, { timeState }, modifier)
     } else {
@@ -182,7 +193,6 @@ private fun AgslFluidBackground(
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     
-    // 🌟 核心：开启底层硬件的 MIRROR 模式，无缝对接 AGSL 空间揉捏，杜绝黑边
     val bitmapShader = remember(fluidTexture) {
         BitmapShader(fluidTexture.asAndroidBitmap(), Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
     }
@@ -192,14 +202,16 @@ private fun AgslFluidBackground(
         ShaderBrush(shader) 
     }
     
-    // 护眼压暗色：极其深邃的高级灰黑
-    val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
+    // 极深高级灰底图：防止在亮色封面下车主视线被干扰
+    val darkOverlayColor = remember { Color(0xFF070709).toArgb() }
     
     Box(
         modifier = modifier
             .fillMaxSize()
             .drawBehind {
                 shader.setFloatUniform("resolution", size.width, size.height)
+                // 严密对接：将图片真实尺寸精确传导给 AGSL
+                shader.setFloatUniform("bitmapSize", fluidTexture.width.toFloat(), fluidTexture.height.toFloat())
                 shader.setFloatUniform("time", timeProvider())
                 shader.setColorUniform("darkOverlay", darkOverlayColor)
                 drawRect(brush)
