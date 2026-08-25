@@ -37,43 +37,40 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// 🚀 核心架构落地：纯数学计算的高斯网格流体 (Gaussian Mesh Fluid)
-// 原理：4 个色彩点在空间游走，像素的颜色由它到这 4 个点的"指数距离"决定。
+// 🚀 彻底修复编译崩溃：全局使用标准 vec/float 类型，杜绝任何类型转换异常！
 @Language("AGSL")
 private const val FLUID_SHADER = """
-    uniform float2 resolution;
+    uniform vec2 resolution;
     uniform float time;
     
-    layout(color) uniform half4 c1;
-    layout(color) uniform half4 c2;
-    layout(color) uniform half4 c3;
-    layout(color) uniform half4 c4;
-    layout(color) uniform half4 darkOverlay;
+    layout(color) uniform vec4 c1;
+    layout(color) uniform vec4 c2;
+    layout(color) uniform vec4 c3;
+    layout(color) uniform vec4 c4;
+    layout(color) uniform vec4 darkOverlay;
 
-    half4 main(in float2 fragCoord) {
-        float2 uv = fragCoord / resolution.xy;
+    vec4 main(in vec2 fragCoord) {
+        vec2 uv = fragCoord / resolution.xy;
         float t = time * 0.15; 
         
-        // 1. 空间域扭曲：加入非常柔和的正弦波漩涡
-        float2 warp;
+        // 1. 空间域扭曲：柔和正弦波漩涡
+        vec2 warp;
         warp.x = sin(uv.y * 3.0 + t) * 0.1;
         warp.y = cos(uv.x * 3.0 - t * 0.8) * 0.1;
-        float2 wuv = uv + warp;
+        vec2 wuv = uv + warp;
         
-        // 2. 运动学：4 个色彩流体核心 (Blobs) 在空间中呈李萨如曲线运动
-        float2 p1 = float2(0.3 + sin(t)*0.2, 0.3 + cos(t*0.7)*0.2);
-        float2 p2 = float2(0.7 + cos(t*1.1)*0.2, 0.3 + sin(t*0.8)*0.2);
-        float2 p3 = float2(0.3 + sin(t*0.9)*0.2, 0.7 + cos(t*1.2)*0.2);
-        float2 p4 = float2(0.7 + cos(t*0.8)*0.2, 0.7 + sin(t*0.9)*0.2);
+        // 2. 4 个色彩流体核心的运动轨迹
+        vec2 p1 = vec2(0.3 + sin(t)*0.2, 0.3 + cos(t*0.7)*0.2);
+        vec2 p2 = vec2(0.7 + cos(t*1.1)*0.2, 0.3 + sin(t*0.8)*0.2);
+        vec2 p3 = vec2(0.3 + sin(t*0.9)*0.2, 0.7 + cos(t*1.2)*0.2);
+        vec2 p4 = vec2(0.7 + cos(t*0.8)*0.2, 0.7 + sin(t*0.9)*0.2);
         
-        // 计算当前像素到 4 个核心的距离
         float d1 = length(wuv - p1);
         float d2 = length(wuv - p2);
         float d3 = length(wuv - p3);
         float d4 = length(wuv - p4);
         
-        // 3. Apple 级融合算法：高斯指数衰减 (Exponential Falloff)
-        // 纯数学推算，绝对无限平滑，从根源上歼灭所有马赛克像素块
+        // 3. 高斯指数衰减 (Exponential Falloff)
         float w1 = exp(-d1 * 2.5);
         float w2 = exp(-d2 * 2.5);
         float w3 = exp(-d3 * 2.5);
@@ -81,23 +78,23 @@ private const val FLUID_SHADER = """
         
         float sum = w1 + w2 + w3 + w4;
         
-        // 算出当前像素在此数学场中的精确颜色
-        half3 meshColor = (c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3 + c4.rgb * w4) / sum;
+        // 🌟 核心修复：纯 vec3 与 float 运算，绝对不会发生编译崩溃！
+        vec3 meshColor = (c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3 + c4.rgb * w4) / sum;
         
         // 4. 色彩亮度恢复：抗发灰
-        half lum = dot(meshColor, half3(0.299, 0.587, 0.114));
-        half3 vibrantColor = mix(half3(lum), meshColor, 1.35); 
+        float lum = dot(meshColor, vec3(0.299, 0.587, 0.114));
+        vec3 vibrantColor = mix(vec3(lum), meshColor, 1.35); 
         
-        // 5. 护眼遮罩融合 (透明度严格控制在 0.45)
-        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.45);
+        // 5. 护眼遮罩融合
+        vec3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.45);
         
-        return half4(finalColor, 1.0);
+        return vec4(finalColor, 1.0);
     }
 """
 
 @Composable
 fun AuroraGradientBackground(
-    colors: List<Color>, // 🌟 只接收 4 种控制色
+    colors: List<Color>,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -197,8 +194,8 @@ private fun AgslFluidBackground(
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     val brush = remember(shader) { ShaderBrush(shader) }
     
-    // 护眼压暗遮罩色
-    val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
+    // 护眼压暗底色（高级深黑）
+    val darkOverlayColor = remember { Color(0xFF07070A).toArgb() }
     
     Box(
         modifier = modifier
