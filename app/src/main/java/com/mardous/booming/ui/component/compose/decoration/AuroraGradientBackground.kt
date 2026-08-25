@@ -41,7 +41,7 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// ?? CarWith 终极优化版 Shader (The Apple Music Twist)
+// 🚀 CarWith 终极优化版 Shader (The Apple Music Twist)
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform float2 resolution;
@@ -53,31 +53,29 @@ private const val FLUID_SHADER = """
         float2 uv = fragCoord / resolution.xy;
         float t = time * 0.15; 
         
-        // ?? 进化 1：双阶流体扭曲 (Dual-Octave Domain Warping)
-        // 第一阶：制造大面积的缓慢水波偏移
+        // 1. 双阶域扭曲 (Dual-Octave Domain Warping)
+        // 第一阶大漩涡
         float2 warp1;
         warp1.x = sin(uv.y * 2.0 + t) * 0.15;
         warp1.y = cos(uv.x * 2.0 - t * 0.8) * 0.15;
         
-        // 第二阶：利用第一阶的结果再次扭曲，模拟 Apple Music 多图层干涉产生的“漩涡感”
+        // 第二阶微干涉
         float2 warp2;
         warp2.x = sin((uv.y + warp1.y) * 3.0 - t * 1.2) * 0.1;
         warp2.y = cos((uv.x + warp1.x) * 3.0 + t * 1.5) * 0.1;
         
-        // 合并坐标扭曲 (利用 MIRROR 特性，越界自动完美折返)
+        // 合并揉捏
         float2 distortedUV = uv + warp1 + warp2;
         half4 fluidColor = imageTexture.eval(distortedUV * resolution.xy);
         
-        // ?? 进化 2：硬件级饱和度补偿 (Saturation Recovery)
-        // 突破压缩带来的“色彩发灰/泥浆感”，让流体恢复专辑封面原本的通透艳丽！
-        // 1. 提取当前像素的亮度 (Luminance)
+        // 2. 硬件级色彩提纯 (对抗过度模糊导致的色彩发灰)
         half luminance = dot(fluidColor.rgb, half3(0.299, 0.587, 0.114));
-        // 2. 将原色推离灰度中心，倍率 1.45 (饱和度增加 45%)
         half3 vibrantColor = mix(half3(luminance), fluidColor.rgb, 1.45);
         
-        // ?? 进化 3：智能护眼压暗
-        // 将提纯后的艳丽流体与暗色遮罩混合，保证车机歌词高对比度清晰可见
-        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, darkOverlay.a);
+        // 🌟 3. 致命 BUG 修复区：强制写死 0.65 的混合比例！
+        // 0.65 代表：保留 35% 的极致艳丽流体色彩，混合 65% 的暗黑护眼底色
+        // 这样既能保证车机上的歌词清晰可见，又能透出深邃的封面色彩
+        half3 finalColor = mix(vibrantColor, darkOverlay.rgb, 0.65);
         
         return half4(finalColor, 1.0);
     }
@@ -85,7 +83,7 @@ private const val FLUID_SHADER = """
 
 @Composable
 fun AuroraGradientBackground(
-    fluidTexture: ImageBitmap?, // ?? 接收图片贴图
+    fluidTexture: ImageBitmap?,
     fallbackColors: List<Color>,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
@@ -184,7 +182,7 @@ private fun AgslFluidBackground(
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     
-    // ?? 核心：开启底层硬件的 MIRROR 模式，无缝对接 AGSL 空间揉捏，杜绝黑边
+    // 🌟 核心：开启底层硬件的 MIRROR 模式，无缝对接 AGSL 空间揉捏，杜绝黑边
     val bitmapShader = remember(fluidTexture) {
         BitmapShader(fluidTexture.asAndroidBitmap(), Shader.TileMode.MIRROR, Shader.TileMode.MIRROR)
     }
@@ -194,7 +192,7 @@ private fun AgslFluidBackground(
         ShaderBrush(shader) 
     }
     
-    // 护眼压暗色（可根据个人喜好微调深浅）
+    // 护眼压暗色：极其深邃的高级灰黑
     val darkOverlayColor = remember { Color(0xFF09090C).toArgb() }
     
     Box(
