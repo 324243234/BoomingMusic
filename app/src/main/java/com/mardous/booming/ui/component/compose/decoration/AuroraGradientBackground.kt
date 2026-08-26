@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb // 🌟 修复: 补回扩展函数导包
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -106,7 +107,8 @@ fun AuroraGradientBackground(
             }
         } else null
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_Q && thermalListener != null && powerManager != null) {
+        // 🌟 修复: 更正 Android 版本常量名为 Build.VERSION_CODES.Q
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null && powerManager != null) {
             isOverheating = powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
             powerManager.addThermalStatusListener(thermalListener)
         }
