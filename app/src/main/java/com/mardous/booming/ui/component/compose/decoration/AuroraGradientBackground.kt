@@ -9,6 +9,9 @@ import android.graphics.ColorMatrix
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -37,13 +40,12 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-// 🌟 依然保留 24fps 的节流逻辑，因为慢动作流体不需要 60fps 的过剩渲染
+// 🌟 保留 24fps 节流逻辑，节省运算资源
 private const val FRAME_INTERVAL_MS = 42L
 
 /**
- * 🚀 Apple Music 级动态流体背景 (GPU 硬件加速版 - CarWith 终极状态)
- * 完美保留原版视觉逻辑：原图放大 + 3层错位旋转 + 2.5倍高饱和 + 硬件级高斯模糊
- * 彻底消灭 CPU 像素计算与 Bitmap 内存抖动！
+ * 🚀 Apple Music 级动态流体背景 (支持切歌无缝溶解过渡)
+ * 完全 GPU 硬件加速，极低功耗，绝佳沉浸感
  */
 @Composable
 fun AuroraGradientBackground(
@@ -114,81 +116,91 @@ fun AuroraGradientBackground(
     val sharedClockMs = rememberThrottledFlowTimeMs(coverBitmap, shouldAnimate)
     val timeMs = scaledAppleFlowTimeMs(sharedClockMs, 10)
 
-    // 2. 核心技术：通过 ColorFilter 强行拉升 GPU 渲染管线的饱和度至 2.5 倍
+    // 2. ColorFilter 强行拉升饱和度至 2.5 倍
     val colorFilter = remember {
         ColorFilter.colorMatrix(androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(2.5f) })
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0E)).clipToBounds()) {
-        if (coverBitmap != null) {
-            val imageBitmap = remember(coverBitmap) { coverBitmap.asImageBitmap() }
+        
+        // 🌟 核心：将 blur 滤镜放在最外层，保证切歌渐变时 GPU 只需渲染 1 次模糊，性能极致拉满！
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(80.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+        ) {
+            // 计算旋转角度 (提取到 Crossfade 外部，保证切歌过渡时新旧封面完美同步旋转，形状不发生突变)
+            val rot1 = (timeMs % 120_000L) / 120_000f * -360f
+            val rot2 = (timeMs % 90_000L) / 90_000f * 360f
+            val rot3 = (timeMs % 70_000L) / 70_000f * 360f
 
-            // 🌟 核心渲染引擎：交由 GPU 硬件级处理模糊 (RenderEffect)
-            // 80.dp 的重度模糊足以将下方的旋转图层融化成毫无边界的流光
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(80.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-            ) {
-                // 计算三个图层的缓慢旋转角度 (完美复刻 120s, 90s, 70s 周期)
-                val rot1 = (timeMs % 120_000L) / 120_000f * -360f
-                val rot2 = (timeMs % 90_000L) / 90_000f * 360f
-                val rot3 = (timeMs % 70_000L) / 70_000f * 360f
+            // 🌟 引入 1.2 秒高级缓动交叉溶解 (Crossfade)
+            Crossfade(
+                targetState = coverBitmap,
+                animationSpec = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
+                label = "CoverFluidCrossfade"
+            ) { currentCover ->
+                if (currentCover != null) {
+                    val imageBitmap = remember(currentCover) { currentCover.asImageBitmap() }
 
-                // 图层 1：底层慢速基底
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = colorFilter,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scale(1.6f) // 放大 1.6 倍，防止旋转时露出屏幕边角
-                        .graphicsLayer { rotationZ = rot1 }
-                )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // 图层 1：底层慢速基底
+                        Image(
+                            bitmap = imageBitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            colorFilter = colorFilter,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .scale(1.6f)
+                                .graphicsLayer { rotationZ = rot1 }
+                        )
 
-                // 图层 2：中层偏移旋转 (加 0.7f 透明度，使其与底层像水彩一样交融)
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = colorFilter,
-                    alpha = 0.7f,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scale(1.6f)
-                        .graphicsLayer {
-                            rotationZ = rot2
-                            // 产生微小的位移差，形成漩涡感
-                            translationX = -size.width * 0.15f
-                            translationY = -size.height * 0.15f
-                        }
-                )
+                        // 图层 2：中层偏移旋转
+                        Image(
+                            bitmap = imageBitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            colorFilter = colorFilter,
+                            alpha = 0.7f,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .scale(1.6f)
+                                .graphicsLayer {
+                                    rotationZ = rot2
+                                    translationX = -size.width * 0.15f
+                                    translationY = -size.height * 0.15f
+                                }
+                        )
 
-                // 图层 3：顶层极速叠加
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = colorFilter,
-                    alpha = 0.5f,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scale(1.6f)
-                        .graphicsLayer {
-                            rotationZ = rot3 * 1.5f
-                            translationX = size.width * 0.15f
-                            translationY = size.height * 0.1f
-                        }
-                )
+                        // 图层 3：顶层极速叠加
+                        Image(
+                            bitmap = imageBitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            colorFilter = colorFilter,
+                            alpha = 0.5f,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .scale(1.6f)
+                                .graphicsLayer {
+                                    rotationZ = rot3 * 1.5f
+                                    translationX = size.width * 0.15f
+                                    translationY = size.height * 0.1f
+                                }
+                        )
+                    }
+                } else {
+                    // 封面为空时，平滑过渡到透明
+                    Box(modifier = Modifier.fillMaxSize())
+                }
             }
         }
 
         // --- 🛡️ 护眼与 UI 隔离层 ---
-        // 覆盖一层 30% 透明度的暗黑膜，压制过于刺眼的霓虹色
         Box(modifier = Modifier.fillMaxSize().background(Color(0x4C000000)))
         
-        // 上下边缘叠加额外黑色渐变遮罩，确保歌词和状态栏文字绝对清晰
+        // 上下边缘黑色渐变遮罩
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -202,7 +214,7 @@ fun AuroraGradientBackground(
 }
 
 // ============================================================================
-// 🛠️ 时间控制底层工具 (依然使用 Halcyon 优雅的节流时钟)
+// 🛠️ 时间控制底层工具 
 // ============================================================================
 
 internal fun scaledAppleFlowTimeMs(elapsedMs: Long, speedTenths: Int): Long =
