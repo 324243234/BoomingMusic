@@ -171,8 +171,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
                 
-                // 🌟 数据层：彻底抛弃 Bitmap，仅提取高质量的流体核心色
-                var auroraColors by remember { mutableStateOf<List<Color>>(emptyList()) }
+                var fluidColors by remember { mutableStateOf<List<Color>>(emptyList()) }
 
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -186,20 +185,19 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 val rawColors = result.image.toBitmap().extractGradientColors(
                                     currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
-                                // 交给提纯器，强制拔高亮度与饱和度，防黑屏
-                                auroraColors = purifyAuroraColors(rawColors)
+                                fluidColors = synthesizeAuroraPalette(rawColors)
                             } else {
-                                auroraColors = emptyList() 
+                                fluidColors = emptyList() 
                             }
                         }
                     }
                 }
 
                 if (isAuroraEnabled) {
-                    val animatedC1 by animateColorAsState(targetValue = auroraColors.getOrElse(0) { Color.Black }, animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = auroraColors.getOrElse(1) { Color.Black }, animationSpec = tween(1500), label = "c2")
-                    val animatedC3 by animateColorAsState(targetValue = auroraColors.getOrElse(2) { Color.Black }, animationSpec = tween(1500), label = "c3")
-                    val animatedC4 by animateColorAsState(targetValue = auroraColors.getOrElse(3) { Color.Black }, animationSpec = tween(1500), label = "c4")
+                    val animatedC1 by animateColorAsState(targetValue = fluidColors.getOrElse(0) { Color.Black }, animationSpec = tween(1500), label = "c1")
+                    val animatedC2 by animateColorAsState(targetValue = fluidColors.getOrElse(1) { Color.Black }, animationSpec = tween(1500), label = "c2")
+                    val animatedC3 by animateColorAsState(targetValue = fluidColors.getOrElse(2) { Color.Black }, animationSpec = tween(1500), label = "c3")
+                    val animatedC4 by animateColorAsState(targetValue = fluidColors.getOrElse(3) { Color.Black }, animationSpec = tween(1500), label = "c4")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
                         colors = listOf(animatedC1, animatedC2, animatedC3, animatedC4),
@@ -708,26 +706,24 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         canvasExoPlayer?.pause() 
     }
 
-    // 🌟 Apple Music 级色彩提纯器
-    // 任务：无论专辑多黑，必须提取出 4 种具备极高活力（Vibrancy）的色彩
-    private fun purifyAuroraColors(extractedColors: List<Color>): List<Color> {
+    // 🌟 控制色提纯器：杜绝死黑，制造渐变差异
+    private fun synthesizeAuroraPalette(extractedColors: List<Color>): List<Color> {
         val fallbackPalette = listOf(Color(0xFF2C3E50), Color(0xFF8E44AD), Color(0xFFE74C3C), Color(0xFF3498DB))
         if (extractedColors.isEmpty()) return fallbackPalette
 
         fun boost(color: Color, hueShift: Float = 0f): Color {
             val hsv = FloatArray(3)
             android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-            // 强制拉升亮度至 45%，饱和度至 55%，彻底根治黑屏和发灰
             hsv[0] = (hsv[0] + hueShift + 360f) % 360f
-            hsv[1] = hsv[1].coerceAtLeast(0.55f) 
-            hsv[2] = hsv[2].coerceAtLeast(0.45f)
+            hsv[1] = hsv[1].coerceIn(0.4f, 0.8f) // 防止刺眼，拒绝发灰
+            hsv[2] = hsv[2].coerceIn(0.4f, 0.8f) // 杜绝暗色封面导致黑屏
             return Color(android.graphics.Color.HSVToColor(hsv))
         }
 
         val c1 = boost(extractedColors[0])
-        val c2 = if (extractedColors.size > 1) boost(extractedColors[1]) else boost(c1, 45f)
-        val c3 = if (extractedColors.size > 2) boost(extractedColors[2]) else boost(c1, -45f)
-        val c4 = if (extractedColors.size > 3) boost(extractedColors[3]) else boost(c2, 60f)
+        val c2 = if (extractedColors.size > 1) boost(extractedColors[1]) else boost(c1, 40f)
+        val c3 = if (extractedColors.size > 2) boost(extractedColors[2]) else boost(c1, -30f)
+        val c4 = if (extractedColors.size > 3) boost(extractedColors[3]) else boost(c2, 50f)
 
         return listOf(c1, c2, c3, c4)
     }
