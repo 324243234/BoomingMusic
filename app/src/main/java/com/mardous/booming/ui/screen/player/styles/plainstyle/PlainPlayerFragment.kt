@@ -185,7 +185,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 val rawColors = result.image.toBitmap().extractGradientColors(
                                     currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
-                                fluidColors = synthesizeAuroraPalette(rawColors)
+                                // 交给反发脏提纯器
+                                fluidColors = purifyAuroraColors(rawColors)
                             } else {
                                 fluidColors = emptyList() 
                             }
@@ -464,7 +465,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         lyricsRepository.clearMemoryCache()
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
-        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
+        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
         updateFormatIcon(playerToolbar.menu.findItem(R.id.action_toggle_lyrics_format))
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
@@ -706,24 +707,39 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         canvasExoPlayer?.pause() 
     }
 
-    // 🌟 控制色提纯器：杜绝死黑，制造渐变差异
-    private fun synthesizeAuroraPalette(extractedColors: List<Color>): List<Color> {
+    // 🌟 终极防发脏提纯器：锁死明暗度和饱和度，保证色彩混合时绝对通透
+    private fun purifyAuroraColors(extractedColors: List<Color>): List<Color> {
         val fallbackPalette = listOf(Color(0xFF2C3E50), Color(0xFF8E44AD), Color(0xFFE74C3C), Color(0xFF3498DB))
         if (extractedColors.isEmpty()) return fallbackPalette
 
-        fun boost(color: Color, hueShift: Float = 0f): Color {
+        // 获取封面的主色调基准
+        val baseHsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(extractedColors[0].toArgb(), baseHsv)
+        val baseHue = baseHsv[0]
+
+        // 强力匀光函数：让所有送入 Shader 的颜色都处于同一个“高能量状态”
+        fun boost(color: Color, hueFallback: Float): Color {
             val hsv = FloatArray(3)
             android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-            hsv[0] = (hsv[0] + hueShift + 360f) % 360f
-            hsv[1] = hsv[1].coerceIn(0.4f, 0.8f) // 防止刺眼，拒绝发灰
-            hsv[2] = hsv[2].coerceIn(0.4f, 0.8f) // 杜绝暗色封面导致黑屏
+
+            // 如果提取出来的颜色是纯黑、纯白或纯灰，强行赋予它主色调的偏移色相
+            if (hsv[1] < 0.1f || hsv[2] < 0.1f) {
+                hsv[0] = hueFallback
+            }
+
+            // ⚠️ 反发脏核心机密：
+            // 将饱和度死死卡在 60%~90%，亮度卡在 50%~85%！
+            // 只要没有暗色混进来，AGSL 里的线性混合就永远不可能算出“泥浆色”。
+            hsv[1] = hsv[1].coerceIn(0.6f, 0.9f) 
+            hsv[2] = hsv[2].coerceIn(0.5f, 0.85f) 
+            
             return Color(android.graphics.Color.HSVToColor(hsv))
         }
 
-        val c1 = boost(extractedColors[0])
-        val c2 = if (extractedColors.size > 1) boost(extractedColors[1]) else boost(c1, 40f)
-        val c3 = if (extractedColors.size > 2) boost(extractedColors[2]) else boost(c1, -30f)
-        val c4 = if (extractedColors.size > 3) boost(extractedColors[3]) else boost(c2, 50f)
+        val c1 = boost(extractedColors[0], baseHue)
+        val c2 = if (extractedColors.size > 1) boost(extractedColors[1], (baseHue + 40f) % 360f) else boost(c1, (baseHue + 40f) % 360f)
+        val c3 = if (extractedColors.size > 2) boost(extractedColors[2], (baseHue - 30f + 360f) % 360f) else boost(c1, (baseHue - 30f + 360f) % 360f)
+        val c4 = if (extractedColors.size > 3) boost(extractedColors[3], (baseHue + 60f) % 360f) else boost(c2, (baseHue + 50f) % 360f)
 
         return listOf(c1, c2, c3, c4)
     }
