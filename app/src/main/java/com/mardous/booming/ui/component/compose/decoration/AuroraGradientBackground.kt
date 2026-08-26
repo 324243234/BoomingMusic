@@ -1,5 +1,6 @@
 package com.mardous.booming.ui.component.compose.decoration
 
+import androidx.compose.ui.unit.dp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
