@@ -30,9 +30,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -45,20 +45,24 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-// 🌟 移植自 Halcyon：严格控制刷新率在 24fps，节省大量运算资源
+// 🌟 专为 CarWith 视频流优化的节流时钟 (约 24 FPS)
+// 极致省电，降低 H.264 编码压力，防止车机互联时手机发热降频
 private const val FRAME_INTERVAL_MS = 42L
 
 /**
- * 🚀 终极架构：基于微缩 Bitmap 多重旋转模糊的 Apple Music 流体动效
- * 完美移植自 Halcyon 开源架构，抛弃 AGSL，带来 100% 不发脏的原图级流体
+ * 🚀 Apple Music 级动态流体背景 (CarWith 终极性能版)
+ * 核心逻辑：基于 Halcyon 的极小分辨率离屏渲染 + 多轨道错位旋转 + 重度均值模糊
  */
 @Composable
 fun AuroraGradientBackground(
-    coverBitmap: Bitmap?, // 直接接收原图 Bitmap，不再接收离散颜色
+    coverBitmap: Bitmap?,
     isPlaying: Boolean,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val densityDpi = context.resources.displayMetrics.densityDpi
+
+    // --- 🛡️ 硬件工况熔断机制 (专为车机环境设计) ---
     var isPowerSaveMode by remember { mutableStateOf(false) }
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
@@ -102,7 +106,7 @@ fun AuroraGradientBackground(
             }
         } else null
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null && powerManager != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_Q && thermalListener != null && powerManager != null) {
             isOverheating = powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
             powerManager.addThermalStatusListener(thermalListener)
         }
@@ -113,26 +117,24 @@ fun AuroraGradientBackground(
         }
     }
 
+    // 只有在非省电、未过热、电量充足时才播放动态效果
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    val densityDpi = context.resources.displayMetrics.densityDpi
+    // --- 🎨 核心渲染管线 ---
     
-    // 1. 原图首次降采样，降低内存带宽浪费
+    // 1. 初次降采样：将原图压缩至 256x256，避免浪费内存带宽
     val sourceBitmap = remember(coverBitmap) { coverBitmap?.scaledForFlowSource() }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // 2. Halcyon 同款全局时间戳，与 isPlaying 解绑，保证无缝平滑
+    // 2. 挂载全局节流时钟 (24fps 步进)
     val sharedClockMs = rememberThrottledFlowTimeMs(sourceBitmap, shouldAnimate)
-    // 默认速度因子 10
-    val scaledTimeMs = scaledAppleFlowTimeMs(sharedClockMs, 10) 
-    val frameTimeMs = (scaledTimeMs / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS
+    val frameTimeMs = (sharedClockMs / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS
 
-    // 写死 60f 模糊度和深色压罩
-    val normalizedBlur = 60f
-    val washPrimary = Color(0x33000000).toArgb() // 护眼深色压罩
-    val washSecondary = Color(0x2E000000).toArgb() 
+    // 3. 定义模糊度与护眼压层 (保证车机歌词的高对比度可读性)
+    val normalizedBlur = 65f 
+    val washColor = Color(0x35000005).toArgb() // 浅浅的深色压层
 
-    // 3. 在后台线程异步生成微缩模糊帧
+    // 4. 异步生产微缩模糊帧 (CPU 密集型操作，放在 Default 线程)
     val frameBitmap by produceState<Bitmap?>(
         initialValue = null,
         sourceBitmap,
@@ -140,8 +142,7 @@ fun AuroraGradientBackground(
         frameTimeMs,
         normalizedBlur,
         densityDpi,
-        washPrimary,
-        washSecondary
+        washColor
     ) {
         val cover = sourceBitmap
         val w = viewportSize.width
@@ -151,47 +152,61 @@ fun AuroraGradientBackground(
             return@produceState
         }
         value = withContext(Dispatchers.Default) {
-            createAppleFlowFrameBitmap(cover, w, h, frameTimeMs, densityDpi, normalizedBlur, washPrimary, washSecondary)
+            createAppleFlowFrameBitmap(cover, w, h, frameTimeMs, densityDpi, normalizedBlur, washColor)
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF0A0A0E))
-            .clipToBounds()
-            .onSizeChanged { viewportSize = it }
-    ) {
-        val ready = frameBitmap
-        val source = sourceBitmap
-        when {
-            // 将微缩渲染出来的模糊帧拉伸铺满全屏，形成高级奶油流光
-            ready != null -> Image(
-                bitmap = ready.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds
-            )
-            // 降级：如果正在计算，直接显示极度模糊的原图
-            source != null -> Image(
-                bitmap = source.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur((normalizedBlur * 0.45f).dp),
-                contentScale = ContentScale.Crop,
-                alpha = 0.72f
-            )
+    // --- 🖥️ UI 上屏显示 ---
+    Box(modifier = modifier.background(Color(0xFF0C0C0F))) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .onSizeChanged { viewportSize = it }
+        ) {
+            val ready = frameBitmap
+            val source = sourceBitmap
+            when {
+                // 首选：展示异步渲染好的超柔和流体帧
+                ready != null -> Image(
+                    bitmap = ready.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds // 利用硬件进行最后一次平滑放大
+                )
+                // 降级兜底：在计算出第一帧之前，或者因为性能熔断关闭了动画时，显示纯静态高斯模糊
+                source != null -> Image(
+                    bitmap = source.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur((normalizedBlur * 0.45f).dp),
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.8f
+                )
+            }
         }
+        
+        // 🌟 护城河：屏幕上下边缘柔和黑色渐变，确保状态栏和底部控制栏文字清晰
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0x35000000),
+                            Color.Transparent,
+                            Color(0x45000000)
+                        )
+                    )
+                )
+        )
     }
 }
 
 // ============================================================================
-// 🌟 下方全量移植 Halcyon 源码中的工具函数，确保像素级一比一复刻
+// 🛠️ Halcyon 核心底层算法 (纯净移植版)
 // ============================================================================
-
-internal fun scaledAppleFlowTimeMs(elapsedMs: Long, speedTenths: Int): Long =
-    elapsedMs.coerceAtLeast(0L) * speedTenths.coerceIn(5, 60) / 10L
 
 @Composable
 private fun rememberThrottledFlowTimeMs(key: Any?, animate: Boolean): Long {
@@ -221,6 +236,9 @@ private fun Bitmap.scaledForFlowSource(maxDimension: Int = 256): Bitmap {
 
 private fun appleFlowDownsampleFactor(densityDpi: Int): Float = if (densityDpi >= 420) 24f else 16f
 
+/**
+ * 在极小分辨率的 Bitmap 上，利用 CPU 绘制多层旋转叠加，并执行均值模糊
+ */
 private fun createAppleFlowFrameBitmap(
     cover: Bitmap,
     viewportW: Int,
@@ -228,15 +246,16 @@ private fun createAppleFlowFrameBitmap(
     timeMs: Long,
     densityDpi: Int,
     blur: Float,
-    washPrimaryArgb: Int,
-    washSecondaryArgb: Int
+    washColor: Int
 ): Bitmap {
+    // 1. 极致降维：屏幕尺寸缩小 16 或 24 倍
     val downsample = appleFlowDownsampleFactor(densityDpi)
     val w = ((viewportW * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
     val h = ((viewportH * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
     val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(frame)
 
+    // 2. 防露底计算：放大 1.3 倍以保证无论怎么旋转都不会露出边界
     val diagonal = (max(w, h) * 1.3f).roundToInt().coerceAtLeast(1).toFloat()
     val coverScale = diagonal / max(cover.height, 1)
     val translateX = -(diagonal - w) / 2f
@@ -245,39 +264,43 @@ private fun createAppleFlowFrameBitmap(
     val centerX = w / 2f
     val centerY = h / 2f
 
+    // 3. Apple Music 灵魂：2.5倍色彩饱和度提纯，让所有颜色极其鲜艳通透
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         isFilterBitmap = true
-        // 核心技术：强行拉升原图饱和度至 2.5 倍，防止多层叠加后变灰
         colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(2.5f) })
     }
 
+    // 4. 三轨流体力学重构：
+    // 通过三个图层极度缓慢（70秒-120秒）的反向及偏移旋转，视觉上形成有机液体的揉捏感
     val rot = (timeMs % 70_000L) / 70_000f * 360f
     
-    // 第一层：慢速逆向旋转
+    // 图层 1 (底层)
     drawFlowLayer(
         canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
         w.toFloat(), h.toFloat(), centerX, centerY,
         rotation = (timeMs % 120_000L) / 120_000f * -360f, offsetXFactor = 0f, offsetYFactor = 0f, extraRotation = null
     )
-    // 第二层：偏移顺向旋转
+    // 图层 2 (中层交叉)
     drawFlowLayer(
         canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
         w.toFloat(), h.toFloat(), centerX, centerY,
         rotation = (timeMs % 90_000L) / 90_000f * 360f, offsetXFactor = -0.95f, offsetYFactor = -0.7f, extraRotation = null
     )
-    // 第三层：带附加角度的双重旋转
+    // 图层 3 (顶层旋涡)
     drawFlowLayer(
         canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
         w.toFloat(), h.toFloat(), centerX, centerY,
         rotation = rot, offsetXFactor = -0.5f, offsetYFactor = 0.7f, extraRotation = rot
     )
 
-    canvas.drawColor(washPrimaryArgb)
-    canvas.drawColor(washSecondaryArgb)
+    // 5. 覆盖一层统一的低亮度薄纱，保证 UI 界面在任何极其鲜艳的封面上都清晰可见
+    canvas.drawColor(washColor)
 
+    // 6. 执行 CPU 均值模糊，彻底消除图形的物理边界，化为流体
     val blurRadius = (((blur.coerceIn(30f, 100f) - 30f) / 70f) * 17f + 8f).roundToInt().coerceIn(8, 25)
     val blurred = blurBitmapFast(frame, blurRadius)
 
+    // 7. 裁掉刚才为了防露边多画的 1.3 倍冗余区
     val cropW = (blurred.width / 1.3f).roundToInt().coerceIn(1, blurred.width)
     val cropH = (blurred.height / 1.3f).roundToInt().coerceIn(1, blurred.height)
     return Bitmap.createBitmap(
@@ -319,7 +342,7 @@ private fun drawFlowLayer(
     canvas.drawBitmap(cover, matrix, paint)
 }
 
-/** 极致优化的纯 CPU 均值模糊，专治微型图像，性能损耗极低 */
+/** 极致性能：纯 CPU 实现的双通道 Box Blur (均值模糊)，专供微缩画布使用，1~2ms 内极速执行 */
 private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
     if (radius <= 0) return bitmap
     val r = radius.coerceIn(1, 25)
@@ -332,6 +355,8 @@ private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
     val window = r * 2 + 1
 
     val temp = IntArray(width * height)
+    
+    // 水平处理通道
     for (y in 0 until height) {
         val rowStart = y * width
         var a = 0; var red = 0; var green = 0; var blue = 0
@@ -355,6 +380,7 @@ private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
         }
     }
 
+    // 垂直处理通道
     for (x in 0 until width) {
         var a = 0; var red = 0; var green = 0; var blue = 0
         for (k in -r..r) {
