@@ -6,6 +6,7 @@ package com.mardous.booming.ui.screen.player.styles.plainstyle
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -18,8 +19,6 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.widget.Toolbar
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,8 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
@@ -65,13 +62,10 @@ import com.mardous.booming.data.repository.Repository
 import com.mardous.booming.databinding.FragmentPlainPlayerBinding
 import com.mardous.booming.extensions.getOnBackPressedDispatcher
 import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
-import com.mardous.booming.extensions.resolveColor
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
 import com.mardous.booming.ui.component.base.AbsPlayerFragment
-import com.mardous.booming.ui.component.compose.color.extractGradientColors
 import com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground
-import com.mardous.booming.ui.component.views.PlaceholderDrawable
 import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
 import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
 import com.mardous.booming.util.Preferences
@@ -165,10 +159,12 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
                 val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+                
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
                 
-                var fluidColors by remember { mutableStateOf<List<Color>>(emptyList()) }
+                // 🌟 核心改动：不再提取颜色，直接保存加载好的 Bitmap 原图
+                var coverBitmap by remember { mutableStateOf<Bitmap?>(null) }
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
                 LaunchedEffect(song, isAuroraEnabled) {
@@ -178,26 +174,18 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 ImageRequest.Builder(currentContext).data(song).build()
                             )
                             if (result is SuccessResult) {
-                                val rawColors = result.image.toBitmap().extractGradientColors(
-                                    currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
-                                )
-                                // 🌟 使用视频 1 同款的高能色彩提纯器
-                                fluidColors = synthesizeAuroraPalette(rawColors)
+                                coverBitmap = result.image.toBitmap()
                             } else {
-                                fluidColors = emptyList() 
+                                coverBitmap = null
                             }
                         }
                     }
                 }
 
                 if (isAuroraEnabled) {
-                    val animatedC1 by animateColorAsState(targetValue = fluidColors.getOrElse(0) { Color(0xFFE74C3C) }, animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = fluidColors.getOrElse(1) { Color(0xFFF39C12) }, animationSpec = tween(1500), label = "c2")
-                    val animatedC3 by animateColorAsState(targetValue = fluidColors.getOrElse(2) { Color(0xFF8E44AD) }, animationSpec = tween(1500), label = "c3")
-                    val animatedC4 by animateColorAsState(targetValue = fluidColors.getOrElse(3) { Color(0xFF3498DB) }, animationSpec = tween(1500), label = "c4")
-
+                    // 将完整的 Bitmap 交给全新的 Halcyon 级流体引擎
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
-                        colors = listOf(animatedC1, animatedC2, animatedC3, animatedC4),
+                        coverBitmap = coverBitmap,
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -549,6 +537,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
+                        
                         _binding?.lyricsSongTitleText?.text = song.title
                         val artistStr = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) song.albumArtistName else song.artistName
                         _binding?.lyricsSongArtistText?.text = artistStr
@@ -610,6 +599,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
         val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
+        
         val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
         val finalSurfaceColor = if (isAuroraEnabled) android.graphics.Color.TRANSPARENT else scheme.surfaceColor
 
@@ -619,9 +609,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
         )
+        
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)) }
+
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
@@ -648,31 +640,5 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onPause() { 
         super.onPause()
         canvasExoPlayer?.pause() 
-    }
-
-    // 🌟 视频 1 同款：高能色彩提纯器
-    // 目的是：让任何封面都能像 Vicetone 那样提取出足够鲜艳、对比度高的 4 个基色
-    private fun synthesizeAuroraPalette(extractedColors: List<Color>): List<Color> {
-        val fallbackPalette = listOf(Color(0xFFE74C3C), Color(0xFFF39C12), Color(0xFF8E44AD), Color(0xFF3498DB))
-        if (extractedColors.isEmpty()) return fallbackPalette
-
-        fun boostVibrancy(color: Color, hueShift: Float = 0f): Color {
-            val hsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-            // 改变色相，制造色彩反差
-            hsv[0] = (hsv[0] + hueShift + 360f) % 360f
-            // 核心：强制拉升饱和度到 65% 以上，亮度到 50% 以上。
-            // 这样即使王力宏这首歌是暗黑色，提取出来的颜色也能变成“深红”、“暗紫”这种有力量的颜色，而不是一滩泥水。
-            hsv[1] = hsv[1].coerceAtLeast(0.65f)
-            hsv[2] = hsv[2].coerceAtLeast(0.50f)
-            return Color(android.graphics.Color.HSVToColor(hsv))
-        }
-
-        val c1 = boostVibrancy(extractedColors[0])
-        val c2 = if (extractedColors.size > 1) boostVibrancy(extractedColors[1]) else boostVibrancy(c1, 45f)
-        val c3 = if (extractedColors.size > 2) boostVibrancy(extractedColors[2]) else boostVibrancy(c1, -40f)
-        val c4 = if (extractedColors.size > 3) boostVibrancy(extractedColors[3]) else boostVibrancy(c2, 60f)
-
-        return listOf(c1, c2, c3, c4)
     }
 }
