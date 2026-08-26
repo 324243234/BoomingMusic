@@ -1,6 +1,5 @@
 package com.mardous.booming.ui.component.compose.decoration
 
-import androidx.compose.ui.unit.dp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -10,9 +9,11 @@ import android.graphics.ColorMatrix
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -41,7 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-// 🌟 保留 24fps 节流逻辑，节省运算资源
+// 🌟 依然保留 24fps 的节流逻辑，因为慢动作流体不需要 60fps 的过剩渲染
 private const val FRAME_INTERVAL_MS = 42L
 
 /**
@@ -124,21 +125,31 @@ fun AuroraGradientBackground(
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0E)).clipToBounds()) {
         
-        // 🌟 核心：将 blur 滤镜放在最外层，保证切歌渐变时 GPU 只需渲染 1 次模糊，性能极致拉满！
+        // 🌟 性能大杀器：将 blur 滤镜放在最外层。切歌时 GPU 只需渲染 1 次模糊！
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .blur(80.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
         ) {
-            // 计算旋转角度 (提取到 Crossfade 外部，保证切歌过渡时新旧封面完美同步旋转，形状不发生突变)
+            // 计算旋转角度 (提取到外部，保证切歌过渡时新旧封面的流体形状完美同步旋转，绝不突变)
             val rot1 = (timeMs % 120_000L) / 120_000f * -360f
             val rot2 = (timeMs % 90_000L) / 90_000f * 360f
             val rot3 = (timeMs % 70_000L) / 70_000f * 360f
 
-            // 🌟 引入 1.2 秒高级缓动交叉溶解 (Crossfade)
-            Crossfade(
+            // 🌟 终极无缝溶解动画 (Crossfade 增强版)
+            AnimatedContent(
                 targetState = coverBitmap,
-                animationSpec = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
+                transitionSpec = {
+                    if (targetState == null) {
+                        // 场景 1：如果新歌没有封面，老封面缓缓消散
+                        fadeIn(tween(1200)) togetherWith fadeOut(tween(1200))
+                    } else {
+                        // 场景 2 (最核心)：切新歌时，新封面用 1200ms 浮现，而老封面被强行“按住”等待 1200ms 后才消失！
+                        // 这样就绝对不会发生总透明度下降漏出底色的“掉闪”现象。
+                        (fadeIn(tween(1200)) togetherWith fadeOut(tween(durationMillis = 10, delayMillis = 1200)))
+                            .apply { targetContentZIndex = 1f }
+                    }
+                },
                 label = "CoverFluidCrossfade"
             ) { currentCover ->
                 if (currentCover != null) {
@@ -192,7 +203,6 @@ fun AuroraGradientBackground(
                         )
                     }
                 } else {
-                    // 封面为空时，平滑过渡到透明
                     Box(modifier = Modifier.fillMaxSize())
                 }
             }
@@ -201,7 +211,6 @@ fun AuroraGradientBackground(
         // --- 🛡️ 护眼与 UI 隔离层 ---
         Box(modifier = Modifier.fillMaxSize().background(Color(0x4C000000)))
         
-        // 上下边缘黑色渐变遮罩
         Box(
             modifier = Modifier
                 .fillMaxSize()
