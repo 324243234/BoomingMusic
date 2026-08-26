@@ -6,9 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.os.BatteryManager
 import android.os.Build
@@ -34,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -44,20 +40,21 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.roundToInt
+import kotlin.math.sin
 
-// 🌟 移植自 Halcyon：严格控制刷新率在 24fps，对 CarWith 极度友好
+// 🌟 CarWith 工况节流时钟 (24fps，大幅降低 H.264 编码压力与发热)
 private const val FRAME_INTERVAL_MS = 42L
 
 /**
- * 🚀 终极架构：基于微缩 Bitmap 的 Apple Music 流体动效
- * 结合了 Halcyon 的完美稳定性与 Compose 高级单向溶解状态机。
+ * 🚀 Apple Music 级动态流体背景 (CarWith 终极性能版)
+ * 架构：Halcyon 源码级色彩提纯 + 纯 CPU 微缩画布色块混合 + 高度防闪烁过渡
  */
 @Composable
 fun AuroraGradientBackground(
@@ -66,6 +63,8 @@ fun AuroraGradientBackground(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    // --- 🛡️ 硬件工况熔断机制 (防断连) ---
     var isPowerSaveMode by remember { mutableStateOf(false) }
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
@@ -121,101 +120,92 @@ fun AuroraGradientBackground(
     }
 
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
-
-    // 🌟 核心修复 1：抽离全局连续时钟。
-    // 时钟不绑定 coverBitmap，切歌时时间永不重置，新旧封面的流体形状完美同步重合！
     val sharedClockMs = rememberContinuousClock(shouldAnimate)
+
+    // 🌟 步骤 1：后台异步执行 Halcyon 天才取色算法，提取 4 个高纯度颜色
+    val fluidColors by produceState<List<Color>?>(initialValue = null, coverBitmap) {
+        if (coverBitmap == null) {
+            value = null
+        } else {
+            value = withContext(Dispatchers.Default) {
+                extractHalcyonPalette(coverBitmap)
+            }
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0E)).clipToBounds()) {
         
-        // 🌟 核心修复 2：手写“盖楼式”单向溶解过渡
+        // 🌟 步骤 2：手写盖楼式单向溶解过渡 (防闪黑漏底)
         AnimatedContent(
-            targetState = coverBitmap,
+            targetState = fluidColors,
             transitionSpec = {
-                // 旧图保持 100% 透明度不动，新图用 1200ms 在旧图之上淡入，彻底消灭“闪黑、漏底”现象！
                 (fadeIn(tween(1200, easing = LinearEasing)) togetherWith fadeOut(tween(durationMillis = 10, delayMillis = 1200)))
                     .apply { targetContentZIndex = 1f }
             },
-            label = "FluidCrossfade"
-        ) { currentCover ->
-            if (currentCover != null) {
-                // 将单个封面的流体渲染逻辑封装进独立引擎
-                FluidEngine(currentCover, sharedClockMs)
+            label = "MagmaColorCrossfade"
+        ) { colors ->
+            if (colors != null && colors.size >= 4) {
+                // 将提取出的纯色交由纯 CPU 引擎绘制成岩浆
+                CPUFluidEngine(colors, sharedClockMs)
             } else {
                 Box(Modifier.fillMaxSize())
             }
         }
-        
-        // 护眼与文字隔离层
-        Box(modifier = Modifier.fillMaxSize().background(Color(0x4C000000)))
+
+        // --- 🛡️ 护眼压层：针对车机驾驶视角优化对比度 ---
+        Box(modifier = Modifier.fillMaxSize().background(Color(0x33000000)))
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0x35000000), Color.Transparent, Color(0x45000000))
+                        colors = listOf(Color(0x45000000), Color.Transparent, Color(0x55000000))
                     )
                 )
         )
     }
 }
 
-/** 剥离的单封面渲染引擎，接收外部共享的 sharedClockMs 保证同步 */
+/** 
+ * 🚀 极致省电版岩浆引擎：在微缩画布上画彩色圆圈，然后用 Box Blur 糊成流体
+ * 完美还原 Shader 的效果，但 0% GPU 负载！
+ */
 @Composable
-private fun FluidEngine(coverBitmap: Bitmap, sharedClockMs: Long) {
+private fun CPUFluidEngine(colors: List<Color>, sharedClockMs: Long) {
     val context = LocalContext.current
     val densityDpi = context.resources.displayMetrics.densityDpi
-    
-    val sourceBitmap = remember(coverBitmap) { coverBitmap.scaledForFlowSource() }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
 
     val scaledTimeMs = scaledAppleFlowTimeMs(sharedClockMs, 10)
     val frameTimeMs = (scaledTimeMs / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS
 
-    val normalizedBlur = 60f
-    val washPrimary = Color(0x33000000).toArgb() 
-    val washSecondary = Color(0x2E000000).toArgb()
-
     val frameBitmap by produceState<Bitmap?>(
         initialValue = null,
-        sourceBitmap, viewportSize, frameTimeMs, normalizedBlur, densityDpi, washPrimary, washSecondary
+        colors, viewportSize, frameTimeMs, densityDpi
     ) {
         val w = viewportSize.width
         val h = viewportSize.height
-        if (w <= 0 || h <= 0) {
-            value = null
-            return@produceState
-        }
-        value = withContext(Dispatchers.Default) {
-            createAppleFlowFrameBitmap(sourceBitmap, w, h, frameTimeMs, densityDpi, normalizedBlur, washPrimary, washSecondary)
+        if (w > 0 && h > 0) {
+            value = withContext(Dispatchers.Default) {
+                createMagmaFrameBitmap(colors, w, h, frameTimeMs, densityDpi)
+            }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }) {
-        val ready = frameBitmap
-        val source = sourceBitmap
-        when {
-            ready != null -> Image(
-                bitmap = ready.asImageBitmap(),
+        if (frameBitmap != null) {
+            Image(
+                bitmap = frameBitmap!!.asImageBitmap(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds
-            )
-            source != null -> Image(
-                bitmap = source.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur((normalizedBlur * 0.45f).dp),
-                contentScale = ContentScale.Crop,
-                alpha = 0.72f
+                contentScale = ContentScale.FillBounds // 利用系统的硬件线性过滤进行最后的平滑放大
             )
         }
     }
 }
 
 // ============================================================================
-// 🛠️ Halcyon 核心底层算法 (修正连续时钟版)
+// 🛠️ Halcyon 色彩提纯与 CPU 流体底层
 // ============================================================================
 
 internal fun scaledAppleFlowTimeMs(elapsedMs: Long, speedTenths: Int): Long =
@@ -227,7 +217,6 @@ private fun rememberContinuousClock(animate: Boolean): Long {
     LaunchedEffect(animate) {
         if (!animate) return@LaunchedEffect
         while (isActive) {
-            // 时间轴持续往前走，切歌不再重置
             sharedClockMs = withFrameNanos { it } / 1_000_000L
             delay(FRAME_INTERVAL_MS)
         }
@@ -235,112 +224,148 @@ private fun rememberContinuousClock(animate: Boolean): Long {
     return sharedClockMs
 }
 
-private fun Bitmap.scaledForFlowSource(maxDimension: Int = 256): Bitmap {
-    val longest = max(width, height)
-    if (longest <= maxDimension || longest <= 0) return this
-    val scale = maxDimension.toFloat() / longest
-    return Bitmap.createScaledBitmap(
-        this,
-        (width * scale).roundToInt().coerceAtLeast(1),
-        (height * scale).roundToInt().coerceAtLeast(1),
-        true
+/** 
+ * 100% 还原自 Halcyon 源码的提纯器：专门对付发灰、发暗的封面
+ */
+private fun extractHalcyonPalette(bitmap: Bitmap): List<Color> {
+    val sampleStep = (max(bitmap.width, bitmap.height) / 36).coerceAtLeast(1)
+    val buckets = mutableMapOf<Int, LongArray>()
+    val fallback = LongArray(4)
+    var sampled = 0
+    var brightNeutral = 0
+    var eligible = 0
+
+    val hsv = FloatArray(3)
+    for (y in 0 until bitmap.height step sampleStep) {
+        for (x in 0 until bitmap.width step sampleStep) {
+            val pixel = bitmap.getPixel(x, y)
+            val alpha = android.graphics.Color.alpha(pixel)
+            if (alpha > 24) {
+                val r = android.graphics.Color.red(pixel)
+                val g = android.graphics.Color.green(pixel)
+                val b = android.graphics.Color.blue(pixel)
+                android.graphics.Color.RGBToHSV(r, g, b, hsv)
+                val sat = hsv[1]
+                val lum = hsv[2]
+
+                sampled++
+                fallback[0]++
+                fallback[1] += r.toLong()
+                fallback[2] += g.toLong()
+                fallback[3] += b.toLong()
+
+                if (lum > 0.78f && sat < 0.18f) brightNeutral++
+
+                // 剔除纯黑和高亮死区
+                if (lum > 0.08f && !(lum > 0.94f && sat < 0.20f)) {
+                    eligible++
+                    val key = ((r ushr 4) shl 8) or ((g ushr 4) shl 4) or (b ushr 4)
+                    val bucket = buckets.getOrPut(key) { LongArray(4) }
+                    bucket[0]++
+                    bucket[1] += r.toLong()
+                    bucket[2] += g.toLong()
+                    bucket[3] += b.toLong()
+                }
+            }
+        }
+    }
+
+    val baseColor = if (fallback[0] > 0L && sampled > 0 && brightNeutral.toFloat() / sampled > 0.56f && eligible.toFloat() / sampled < 0.24f) {
+        val count = fallback[0].coerceAtLeast(1L)
+        Color((fallback[1] / count).toInt(), (fallback[2] / count).toInt(), (fallback[3] / count).toInt())
+    } else {
+        // Halcyon 核心算法：权重偏爱高饱和度色彩！
+        val best = buckets.values.maxByOrNull { bucket ->
+            val count = bucket[0].coerceAtLeast(1L)
+            val r = (bucket[1] / count).toInt()
+            val g = (bucket[2] / count).toInt()
+            val b = (bucket[3] / count).toInt()
+            android.graphics.Color.RGBToHSV(r, g, b, hsv)
+            val luminance = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
+            val balance = 1f - abs(luminance - 0.50f).coerceIn(0f, 0.50f) * 1.25f
+            count.toFloat() * (0.55f + hsv[1] * 1.65f) * (0.75f + balance * 0.55f)
+        } ?: fallback
+
+        val count = best[0].coerceAtLeast(1L)
+        Color((best[1] / count).toInt(), (best[2] / count).toInt(), (best[3] / count).toInt())
+    }
+
+    val finalHsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(baseColor.toArgb(), finalHsv)
+    
+    // 如果依然是黑白灰，赋予高级深海蓝底色，否则强行拉升鲜艳度
+    if (finalHsv[1] < 0.12f) { 
+        finalHsv[0] = 220f; finalHsv[1] = 0.65f; finalHsv[2] = 0.75f
+    } else {
+        finalHsv[1] = finalHsv[1].coerceAtLeast(0.48f) 
+        finalHsv[2] = finalHsv[2].coerceIn(0.50f, 0.90f)
+    }
+
+    val primary = Color(android.graphics.Color.HSVToColor(finalHsv))
+    
+    // 衍生出 3 个相近但有区分度的互补色，用于画流体的团块
+    fun derive(shift: Float, satMod: Float, valMod: Float): Color {
+        val dHsv = finalHsv.copyOf()
+        dHsv[0] = (dHsv[0] + shift + 360f) % 360f
+        dHsv[1] = (dHsv[1] * satMod).coerceIn(0.4f, 1f)
+        dHsv[2] = (dHsv[2] * valMod).coerceIn(0.4f, 1f)
+        return Color(android.graphics.Color.HSVToColor(dHsv))
+    }
+
+    return listOf(
+        primary,
+        derive(35f, 1.1f, 0.9f),
+        derive(-30f, 0.95f, 1.05f),
+        derive(55f, 1.05f, 0.85f)
     )
 }
 
-private fun appleFlowDownsampleFactor(densityDpi: Int): Float = if (densityDpi >= 420) 24f else 16f
-
-private fun createAppleFlowFrameBitmap(
-    cover: Bitmap,
+/** 
+ * 在微缩画布上画圆圈并进行 Box Blur，产生类似岩浆的效果 
+ */
+private fun createMagmaFrameBitmap(
+    colors: List<Color>,
     viewportW: Int,
     viewportH: Int,
     timeMs: Long,
-    densityDpi: Int,
-    blur: Float,
-    washPrimaryArgb: Int,
-    washSecondaryArgb: Int
+    densityDpi: Int
 ): Bitmap {
-    val downsample = appleFlowDownsampleFactor(densityDpi)
-    val w = ((viewportW * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
-    val h = ((viewportH * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
+    // 极致降维，全高清屏幕计算的宽高仅几十像素
+    val downsample = if (densityDpi >= 420) 24f else 16f
+    val w = (viewportW / downsample).roundToInt().coerceAtLeast(1)
+    val h = (viewportH / downsample).roundToInt().coerceAtLeast(1)
+    
     val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(frame)
 
-    val diagonal = (max(w, h) * 1.3f).roundToInt().coerceAtLeast(1).toFloat()
-    val coverScale = diagonal / max(cover.height, 1)
-    val translateX = -(diagonal - w) / 2f
-    val translateY = -(diagonal - h) / 2f
-    val rotatePivot = diagonal / 2f
-    val centerX = w / 2f
-    val centerY = h / 2f
+    // 铺底色
+    canvas.drawColor(colors[0].toArgb())
 
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        isFilterBitmap = true
-        colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(2.5f) })
-    }
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val t = timeMs / 1000f // 转换为秒
 
-    val rot = (timeMs % 70_000L) / 70_000f * 360f
-    
-    drawFlowLayer(
-        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
-        w.toFloat(), h.toFloat(), centerX, centerY,
-        rotation = (timeMs % 120_000L) / 120_000f * -360f, offsetXFactor = 0f, offsetYFactor = 0f, extraRotation = null
-    )
-    drawFlowLayer(
-        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
-        w.toFloat(), h.toFloat(), centerX, centerY,
-        rotation = (timeMs % 90_000L) / 90_000f * 360f, offsetXFactor = -0.95f, offsetYFactor = -0.7f, extraRotation = null
-    )
-    drawFlowLayer(
-        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
-        w.toFloat(), h.toFloat(), centerX, centerY,
-        rotation = rot, offsetXFactor = -0.5f, offsetYFactor = 0.7f, extraRotation = rot
-    )
+    val radius = max(w, h) * 0.75f // 超大色块互相覆盖，模糊后才会像液体
 
-    canvas.drawColor(washPrimaryArgb)
-    canvas.drawColor(washSecondaryArgb)
+    // 色块 1：逆时针画圆运动
+    paint.color = colors[1].toArgb()
+    val cx1 = w / 2f + sin(t * 0.35f) * (w * 0.4f)
+    val cy1 = h / 2f + cos(t * 0.28f) * (h * 0.4f)
+    canvas.drawCircle(cx1.toFloat(), cy1.toFloat(), radius, paint)
 
-    val blurRadius = (((blur.coerceIn(30f, 100f) - 30f) / 70f) * 17f + 8f).roundToInt().coerceIn(8, 25)
-    val blurred = blurBitmapFast(frame, blurRadius)
+    // 色块 2：顺时针画圆运动
+    paint.color = colors[2].toArgb()
+    val cx2 = w / 2f + cos(t * 0.42f) * (w * 0.45f)
+    val cy2 = h / 2f + sin(t * 0.38f) * (h * 0.45f)
+    canvas.drawCircle(cx2.toFloat(), cy2.toFloat(), radius, paint)
 
-    val cropW = (blurred.width / 1.3f).roundToInt().coerceIn(1, blurred.width)
-    val cropH = (blurred.height / 1.3f).roundToInt().coerceIn(1, blurred.height)
-    return Bitmap.createBitmap(
-        blurred,
-        ((blurred.width - cropW) / 2).coerceAtLeast(0),
-        ((blurred.height - cropH) / 2).coerceAtLeast(0),
-        cropW,
-        cropH
-    )
-}
+    // 色块 3：穿梭运动
+    paint.color = colors[3].toArgb()
+    val cx3 = w / 2f - sin(t * 0.25f) * (w * 0.35f)
+    val cy3 = h / 2f - cos(t * 0.45f) * (h * 0.35f)
+    canvas.drawCircle(cx3.toFloat(), cy3.toFloat(), radius, paint)
 
-private fun drawFlowLayer(
-    canvas: Canvas,
-    cover: Bitmap,
-    paint: Paint,
-    scale: Float,
-    rotatePivot: Float,
-    translateX: Float,
-    translateY: Float,
-    viewW: Float,
-    viewH: Float,
-    centerX: Float,
-    centerY: Float,
-    rotation: Float,
-    offsetXFactor: Float,
-    offsetYFactor: Float,
-    extraRotation: Float?
-) {
-    val matrix = Matrix()
-    matrix.setScale(scale, scale)
-    matrix.postRotate(rotation, rotatePivot, rotatePivot)
-    matrix.postTranslate(translateX, translateY)
-    if (offsetXFactor != 0f || offsetYFactor != 0f) {
-        matrix.postTranslate(viewW * offsetXFactor, viewH * offsetYFactor)
-    }
-    if (extraRotation != null) {
-        matrix.postRotate(extraRotation, centerX, centerY)
-    }
-    canvas.drawBitmap(cover, matrix, paint)
+    // 强力 CPU 均值模糊，将圆形彻底糊成不可分辨的流体
+    return blurBitmapFast(frame, 15)
 }
 
 /** 纯 CPU 双通道极速均值模糊 */
@@ -354,8 +379,8 @@ private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
     val pixels = IntArray(width * height)
     bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
     val window = r * 2 + 1
-
     val temp = IntArray(width * height)
+
     for (y in 0 until height) {
         val rowStart = y * width
         var a = 0; var red = 0; var green = 0; var blue = 0
