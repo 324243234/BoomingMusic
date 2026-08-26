@@ -513,7 +513,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
             addListener(object : Player.Listener {
                 override fun onRenderedFirstFrame() { 
-                    _binding?.canvasPlayerView?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(500).start() } 
+                    _binding?.canvasPlayerView?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(600).start() } 
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_ENDED) {
@@ -521,7 +521,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             _binding?.canvasPlayerView?.postDelayed({ 
                                 canvasExoPlayer?.seekTo(0)
                                 canvasExoPlayer?.play() 
-                            }, 700) 
+                            }, 600) 
                         }?.start()
                     }
                 }
