@@ -37,37 +37,72 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
+// 🚀 终极架构：Apple Music 逆向 Metaball 有机流体引擎
+// 通过计算像素到多个引力点的反比例距离权重，模拟极其粘稠、平滑的液体交融
 @Language("AGSL")
 private const val FLUID_SHADER = """
-    uniform float2 resolution;
+    uniform vec2 resolution;
     uniform float time;
     
-    layout(color) uniform half4 c1;
-    layout(color) uniform half4 c2;
-    layout(color) uniform half4 c3;
-    layout(color) uniform half4 bg;
+    // 严格类型安全：使用 half4 接收 Kotlin 颜色，转换 vec4 运算
+    layout(color) uniform half4 c1_in; 
+    layout(color) uniform half4 c2_in; 
+    layout(color) uniform half4 c3_in; 
+    layout(color) uniform half4 c4_in; 
+    layout(color) uniform half4 overlay_in;
 
-    half4 main(in float2 fragCoord) {
-        float2 uv = fragCoord / resolution.xy;
-        float2 p = uv * 2.0 - 1.0; 
-        p.x *= resolution.x / resolution.y; 
-        
-        float t = time * 0.15; 
-        
-        for(float i = 1.0; i < 4.0; i += 1.0) {
-            float2 newP = p;
-            newP.x += 0.4 / i * sin(i * 2.0 * p.y + t);
-            newP.y += 0.4 / i * cos(i * 1.5 * p.x - t * 0.8);
-            p = newP;
-        }
-        
-        float w1 = 0.5 + 0.5 * sin(p.x * 2.5 + t);
-        float w2 = 0.5 + 0.5 * cos(p.y * 2.0 - t);
-        
-        half4 color = mix(c1, c2, w1);
-        color = mix(color, c3, w2);
-        
-        return mix(bg, color, 0.85);
+    vec4 main(in vec2 fragCoord) {
+        vec2 uv = fragCoord / resolution.xy;
+        float aspect = resolution.x / resolution.y;
+        vec2 p = uv * 2.0 - 1.0;
+        p.x *= aspect; // 修正屏幕比例，防止流体被拉伸变形
+
+        vec4 c1 = vec4(c1_in);
+        vec4 c2 = vec4(c2_in);
+        vec4 c3 = vec4(c3_in);
+        vec4 c4 = vec4(c4_in);
+        vec4 overlay = vec4(overlay_in);
+
+        float t = time * 0.18; // 控制液体呼吸的节奏
+
+        // 1. 底层空间的水波扭曲 (让圆球产生液体的边缘)
+        vec2 warp;
+        warp.x = sin(p.y * 1.5 + t) * 0.25;
+        warp.y = cos(p.x * 1.5 - t * 0.8) * 0.25;
+        vec2 wp = p + warp;
+
+        // 2. 四个彩色引力点的李萨如运动轨迹
+        vec2 p1 = vec2(sin(t * 0.8), cos(t * 0.6)) * 0.8;
+        vec2 p2 = vec2(cos(t * 1.1), sin(t * 0.9)) * 0.8;
+        vec2 p3 = vec2(sin(t * 0.7 + 2.0), cos(t * 1.3 + 1.0)) * 0.8;
+        vec2 p4 = vec2(cos(t * 1.2 + 3.0), sin(t * 0.6 + 2.0)) * 0.8;
+
+        // 3. 计算每个像素到引力点的距离
+        float d1 = length(wp - p1);
+        float d2 = length(wp - p2);
+        float d3 = length(wp - p3);
+        float d4 = length(wp - p4);
+
+        // 4. Metaball 平滑融合法则 (Inverse Distance Weighting)
+        // 距离越近，该颜色权重呈指数级暴增，产生像岩浆/水银一样的融合效果
+        float w1 = 1.0 / pow(d1 + 0.15, 2.5);
+        float w2 = 1.0 / pow(d2 + 0.15, 2.5);
+        float w3 = 1.0 / pow(d3 + 0.15, 2.5);
+        float w4 = 1.0 / pow(d4 + 0.15, 2.5);
+
+        float sum = w1 + w2 + w3 + w4;
+
+        // 加权混合出当前像素最终的流体颜色
+        vec3 fluidColor = (c1.rgb * w1 + c2.rgb * w2 + c3.rgb * w3 + c4.rgb * w4) / sum;
+
+        // 5. 饱和度二次提纯与护眼叠层
+        // Apple Music 的质感关键在于：流体的饱和度要极高，然后上面再盖一层半透明暗色
+        float lum = dot(fluidColor, vec3(0.299, 0.587, 0.114));
+        vec3 vibrant = mix(vec3(lum), fluidColor, 1.45); 
+
+        vec3 finalColor = mix(vibrant, overlay.rgb, 0.45);
+
+        return vec4(finalColor, 1.0);
     }
 """
 
@@ -132,14 +167,13 @@ fun AuroraGradientBackground(
         }
     }
 
-    // 馃専 鏍稿績淇 1锛氫笌 isPlaying 褰诲簳瑙ｇ粦锛?
-    // 涓嶅啀鍥犱负缂撳啿瀵艰嚧鐨?isPlaying=false 鑰屽仠姝㈡祦浣撳姩鐢伙紝褰诲簳瑙ｅ喅鈥滄€ュ埞杞﹀紡闂彉鈥濓紒
+    // 独立于播放状态，保证动效流畅不断层
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
 
     val c1 = colors.getOrNull(0) ?: Color(0xFF2C3E50)
-    val c2 = colors.getOrNull(1) ?: Color(0xFF3498DB)
-    val c3 = colors.getOrNull(2) ?: c1
-    val baseBgColor = remember { Color(0xFF0C0C0F) }
+    val c2 = colors.getOrNull(1) ?: Color(0xFF8E44AD)
+    val c3 = colors.getOrNull(2) ?: Color(0xFFE74C3C)
+    val c4 = colors.getOrNull(3) ?: Color(0xFF3498DB)
 
     var timeState by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
@@ -158,21 +192,26 @@ fun AuroraGradientBackground(
     }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        AgslFluidBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
+        AgslFluidBackground(c1, c2, c3, c4, { timeState }, modifier)
     } else {
-        CanvasAuroraBackground(c1, c2, c3, baseBgColor, { timeState }, modifier)
+        // 低版本优雅降级
+        val baseBgColor = remember { Color(0xFF0C0C0F) }
+        CanvasAuroraBackground(c1, c2, c3, c4, baseBgColor, { timeState }, modifier)
     }
 }
 
 @SuppressLint("NewApi")
 @Composable
 private fun AgslFluidBackground(
-    c1: Color, c2: Color, c3: Color, baseBgColor: Color,
+    c1: Color, c2: Color, c3: Color, c4: Color,
     timeProvider: () -> Float,
     modifier: Modifier
 ) {
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     val brush = remember(shader) { ShaderBrush(shader) }
+    
+    // 护眼叠层色
+    val darkOverlayColor = remember { Color(0xFF0A0A0E).toArgb() }
     
     Box(
         modifier = modifier
@@ -180,10 +219,12 @@ private fun AgslFluidBackground(
             .drawBehind {
                 shader.setFloatUniform("resolution", size.width, size.height)
                 shader.setFloatUniform("time", timeProvider())
-                shader.setColorUniform("c1", c1.toArgb())
-                shader.setColorUniform("c2", c2.toArgb())
-                shader.setColorUniform("c3", c3.toArgb())
-                shader.setColorUniform("bg", baseBgColor.toArgb())
+                // 严谨对接 half4 类型
+                shader.setColorUniform("c1_in", c1.toArgb())
+                shader.setColorUniform("c2_in", c2.toArgb())
+                shader.setColorUniform("c3_in", c3.toArgb())
+                shader.setColorUniform("c4_in", c4.toArgb())
+                shader.setColorUniform("overlay_in", darkOverlayColor)
                 drawRect(brush)
             }
     )
@@ -191,13 +232,14 @@ private fun AgslFluidBackground(
 
 @Composable
 private fun CanvasAuroraBackground(
-    c1: Color, c2: Color, c3: Color, baseBgColor: Color,
+    c1: Color, c2: Color, c3: Color, c4: Color, baseBgColor: Color,
     timeProvider: () -> Float,
     modifier: Modifier
 ) {
-    val c1List = remember(c1) { listOf(c1.copy(alpha = 0.65f), Color.Transparent) }
-    val c2List = remember(c2) { listOf(c2.copy(alpha = 0.55f), Color.Transparent) }
-    val c3List = remember(c3) { listOf(c3.copy(alpha = 0.45f), Color.Transparent) }
+    val c1List = remember(c1) { listOf(c1.copy(alpha = 0.6f), Color.Transparent) }
+    val c2List = remember(c2) { listOf(c2.copy(alpha = 0.6f), Color.Transparent) }
+    val c3List = remember(c3) { listOf(c3.copy(alpha = 0.6f), Color.Transparent) }
+    val c4List = remember(c4) { listOf(c4.copy(alpha = 0.6f), Color.Transparent) }
     
     var maxRadius by remember { mutableFloatStateOf(0f) }
     
@@ -210,6 +252,9 @@ private fun CanvasAuroraBackground(
     val brush3 = remember(c3List, maxRadius) {
         if (maxRadius > 0f) Brush.radialGradient(c3List, Offset.Zero, maxRadius * 0.85f) else SolidColor(Color.Transparent)
     }
+    val brush4 = remember(c4List, maxRadius) {
+        if (maxRadius > 0f) Brush.radialGradient(c4List, Offset.Zero, maxRadius * 0.95f) else SolidColor(Color.Transparent)
+    }
 
     Box(
         modifier = modifier
@@ -217,7 +262,7 @@ private fun CanvasAuroraBackground(
             .onSizeChanged { size ->
                 val w = size.width.toFloat()
                 val h = size.height.toFloat()
-                maxRadius = (if (w > h) w else h) * 0.9f
+                maxRadius = (if (w > h) w else h) * 1.1f
             }
             .drawBehind {
                 if (maxRadius == 0f) return@drawBehind
@@ -239,6 +284,10 @@ private fun CanvasAuroraBackground(
                 val x3 = w * 0.5f + w * 0.25f * sin(time * 0.12f + 4f)
                 val y3 = h * 0.5f + h * 0.4f * cos(time * 0.17f + 3f)
                 translate(left = x3, top = y3) { drawCircle(brush3, maxRadius * 0.85f, Offset.Zero, blendMode = BlendMode.Screen) }
+                
+                val x4 = w * 0.5f + w * 0.3f * cos(time * 0.16f + 1f)
+                val y4 = h * 0.5f + h * 0.35f * sin(time * 0.13f + 2f)
+                translate(left = x4, top = y4) { drawCircle(brush4, maxRadius * 0.95f, Offset.Zero, blendMode = BlendMode.Screen) }
             }
     )
 }
