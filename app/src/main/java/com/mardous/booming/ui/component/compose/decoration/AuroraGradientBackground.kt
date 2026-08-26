@@ -48,7 +48,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
-import kotlin.math.roundToInt // 🌟 修复：补全浮点数转整数的导包
+import kotlin.math.roundToInt
 
 // 🌟 CarWith 工况节流时钟 (24fps，大幅降低 H.264 编码压力与发热)
 private const val FRAME_INTERVAL_MS = 42L
@@ -296,16 +296,19 @@ private fun extractHalcyonPalette(bitmap: Bitmap): List<Color> {
     
     // 如果依然是黑白灰，赋予高级深海蓝底色，否则强行拉升鲜艳度
     if (finalHsv[1] < 0.12f) { 
-        finalHsv[0] = 220f; finalHsv[1] = 0.65f; finalHsv[2] = 0.75f
+        finalHsv[0] = 220f
+        finalHsv[1] = 0.6f
+        finalHsv[2] = 0.7f
     } else {
-        finalHsv[1] = finalHsv[1].coerceAtLeast(0.48f) 
-        finalHsv[2] = finalHsv[2].coerceIn(0.50f, 0.90f)
+        // 否则强行拉升饱和度和亮度
+        finalHsv[1] = finalHsv[1].coerceAtLeast(0.45f) 
+        finalHsv[2] = finalHsv[2].coerceIn(0.46f, 0.88f)
     }
 
     val primary = Color(android.graphics.Color.HSVToColor(finalHsv))
     
-    // 衍生出 3 个相近但有区分度的互补色，用于画流体的团块
-    fun derive(shift: Float, satMod: Float, valMod: Float): Color {
+    // 通过偏移色相，强行衍生出 3 种适合构建“大块岩浆”的互补色
+    fun derive(shift: Float, satMod: Float = 1f, valMod: Float = 1f): Color {
         val dHsv = finalHsv.copyOf()
         dHsv[0] = (dHsv[0] + shift + 360f) % 360f
         dHsv[1] = (dHsv[1] * satMod).coerceIn(0.4f, 1f)
@@ -316,8 +319,8 @@ private fun extractHalcyonPalette(bitmap: Bitmap): List<Color> {
     return listOf(
         primary,
         derive(35f, 1.1f, 0.9f),
-        derive(-30f, 0.95f, 1.05f),
-        derive(55f, 1.05f, 0.85f)
+        derive(-30f, 0.9f, 1.1f),
+        derive(60f, 1.0f, 0.8f)
     )
 }
 
