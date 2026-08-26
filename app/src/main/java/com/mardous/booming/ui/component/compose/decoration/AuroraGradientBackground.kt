@@ -37,60 +37,54 @@ import org.intellij.lang.annotations.Language
 import kotlin.math.cos
 import kotlin.math.sin
 
-// 🚀 线性色彩空间域扭曲流体 (Linear Space Domain Warping Fluid)
-// 彻底解决色彩混合发脏、发灰的图形学难题！
+// 🚀 核心架构：视频 1 同款的【域扭曲双线性网格渐变 (Domain Warped Bilinear Mesh Gradient)】
+// 抛弃画圆算法，采用纯粹的空间褶皱，颜色将像丝带一样完美交织。
 @Language("AGSL")
 private const val FLUID_SHADER = """
     uniform vec2 resolution;
     uniform float time;
-
-    layout(color) uniform half4 c1_in;
-    layout(color) uniform half4 c2_in;
-    layout(color) uniform half4 c3_in;
-    layout(color) uniform half4 c4_in;
+    
+    // AGSL Android 13+ 严苛规范：layout(color) 必须为 half4
+    layout(color) uniform half4 c1_in; 
+    layout(color) uniform half4 c2_in; 
+    layout(color) uniform half4 c3_in; 
+    layout(color) uniform half4 c4_in; 
     layout(color) uniform half4 overlay_in;
-
-    // 🌟 图形学抗发脏杀招：sRGB 到线性空间转换
-    vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
-    vec3 toSRGB(vec3 c) { return pow(c, vec3(1.0 / 2.2)); }
 
     vec4 main(in vec2 fragCoord) {
         vec2 uv = fragCoord / resolution.xy;
-        vec2 p = uv * 2.0 - 1.0; 
-        p.x *= resolution.x / resolution.y; 
-
         float t = time * 0.12; 
+        
+        // 类型安全转换：转为 vec4 杜绝所有的编译崩溃
+        vec4 c1 = vec4(c1_in);
+        vec4 c2 = vec4(c2_in);
+        vec4 c3 = vec4(c3_in);
+        vec4 c4 = vec4(c4_in);
+        vec4 overlay = vec4(overlay_in);
 
-        // 1. 宏观域扭曲：扩大波浪尺度，防止高频混合产生的视觉噪点
-        for(float i = 1.0; i < 3.0; i += 1.0) {
-            vec2 newP = p;
-            newP.x += 0.45 / i * sin(i * 1.5 * p.y + t);
-            newP.y += 0.45 / i * cos(i * 1.2 * p.x - t * 0.8);
-            p = newP;
-        }
+        // 🌟 1. 视频 1 的灵魂：大尺度域扭曲 (Domain Warping)
+        // 让 UV 坐标产生巨大的、舒缓的波浪起伏
+        vec2 p = uv;
+        p.x += 0.25 * sin(uv.y * 2.2 + t);
+        p.y += 0.25 * cos(uv.x * 2.2 - t * 0.8);
+        
+        p.x += 0.15 * sin(p.y * 3.5 - t * 1.5);
+        p.y += 0.15 * cos(p.x * 3.5 + t * 1.2);
 
-        float w1 = 0.5 + 0.5 * sin(p.x * 1.5 + t * 0.5);
-        float w2 = 0.5 + 0.5 * cos(p.y * 1.5 - t * 0.4);
-        float w3 = 0.5 + 0.5 * sin((p.x + p.y) * 1.0 + t * 0.6);
+        // 平滑限制坐标边界，防止抽取颜色时出现撕裂
+        p = smoothstep(-0.2, 1.2, p);
 
-        // 2. 将传入的色彩转换至线性空间 (Linear Space)
-        // 这是让红+绿不再变成泥浆黄的唯一真理
-        vec3 l1 = toLinear(vec3(c1_in.rgb));
-        vec3 l2 = toLinear(vec3(c2_in.rgb));
-        vec3 l3 = toLinear(vec3(c3_in.rgb));
-        vec3 l4 = toLinear(vec3(c4_in.rgb));
+        // 🌟 2. 双线性网格插值 (Bilinear Interpolation)
+        // 这一步决定了它永远是无限分辨率、0 马赛克的丝滑颜色场
+        vec3 topColor = mix(c1.rgb, c2.rgb, p.x);
+        vec3 bottomColor = mix(c3.rgb, c4.rgb, p.x);
+        vec3 fluidColor = mix(topColor, bottomColor, p.y);
 
-        // 3. 线性空间混合
-        vec3 colorA = mix(l1, l2, w1);
-        vec3 colorB = mix(l3, l4, w2);
-        vec3 fluidLinear = mix(colorA, colorB, w3);
-
-        // 4. 转回屏幕的 sRGB 空间，此时你得到的流光将极致通透！
-        vec3 fluidColor = toSRGB(fluidLinear);
-
-        // 5. 护眼遮罩融合 (固定 40% 深色，确保高对比度)
-        vec3 finalColor = mix(fluidColor, vec3(overlay_in.rgb), 0.4);
-
+        // 🌟 3. 动态混入安全护眼层
+        // overlay_in 是在 Kotlin 传入的一个带 Alpha 通道的暗色 (比如透明度 25% 的纯黑)
+        // 既能保证车机歌词不晃眼，又绝不会把画面彻底搞黑
+        vec3 finalColor = mix(fluidColor, overlay.rgb, overlay.a);
+        
         return vec4(finalColor, 1.0);
     }
 """
@@ -156,12 +150,13 @@ fun AuroraGradientBackground(
         }
     }
 
+    // 解除动画绑定，杜绝切换时的急刹车卡顿
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    val c1 = colors.getOrNull(0) ?: Color(0xFF2C3E50)
-    val c2 = colors.getOrNull(1) ?: Color(0xFF3498DB)
-    val c3 = colors.getOrNull(2) ?: Color(0xFF9B59B6)
-    val c4 = colors.getOrNull(3) ?: Color(0xFFE74C3C)
+    val c1 = colors.getOrNull(0) ?: Color(0xFFE74C3C)
+    val c2 = colors.getOrNull(1) ?: Color(0xFFF39C12)
+    val c3 = colors.getOrNull(2) ?: Color(0xFF8E44AD)
+    val c4 = colors.getOrNull(3) ?: Color(0xFF3498DB)
 
     var timeState by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(shouldAnimate) {
@@ -182,6 +177,7 @@ fun AuroraGradientBackground(
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         AgslFluidBackground(c1, c2, c3, c4, { timeState }, modifier)
     } else {
+        // 软渲染降级处理
         val baseBgColor = remember { Color(0xFF0C0C0F) }
         CanvasAuroraBackground(c1, c2, c3, c4, baseBgColor, { timeState }, modifier)
     }
@@ -197,15 +193,17 @@ private fun AgslFluidBackground(
     val shader = remember { RuntimeShader(FLUID_SHADER) }
     val brush = remember(shader) { ShaderBrush(shader) }
     
-    // 固定高级黑压罩色
-    val darkOverlayColor = remember { Color(0xFF08080C).toArgb() }
-
+    // 🌟 一层若有若无的护眼层 (25% 透明度的黑)
+    // 它能稍微压住太亮刺眼的光斑，但绝不抢戏，不破坏色彩的鲜活度
+    val darkOverlayColor = remember { Color(0x40000000).toArgb() } 
+    
     Box(
         modifier = modifier
             .fillMaxSize()
             .drawBehind {
                 shader.setFloatUniform("resolution", size.width, size.height)
                 shader.setFloatUniform("time", timeProvider())
+                // 严谨：参数名一一对应
                 shader.setColorUniform("c1_in", c1.toArgb())
                 shader.setColorUniform("c2_in", c2.toArgb())
                 shader.setColorUniform("c3_in", c3.toArgb())
@@ -226,9 +224,9 @@ private fun CanvasAuroraBackground(
     val c2List = remember(c2) { listOf(c2.copy(alpha = 0.55f), Color.Transparent) }
     val c3List = remember(c3) { listOf(c3.copy(alpha = 0.45f), Color.Transparent) }
     val c4List = remember(c4) { listOf(c4.copy(alpha = 0.50f), Color.Transparent) }
-
+    
     var maxRadius by remember { mutableFloatStateOf(0f) }
-
+    
     val brush1 = remember(c1List, maxRadius) {
         if (maxRadius > 0f) Brush.radialGradient(c1List, Offset.Zero, maxRadius) else SolidColor(Color.Transparent)
     }
@@ -248,7 +246,7 @@ private fun CanvasAuroraBackground(
             .onSizeChanged { size ->
                 val w = size.width.toFloat()
                 val h = size.height.toFloat()
-                maxRadius = (if (w > h) w else h) * 0.9f
+                maxRadius = (if (w > h) w else h) * 1.1f
             }
             .drawBehind {
                 if (maxRadius == 0f) return@drawBehind
@@ -256,7 +254,7 @@ private fun CanvasAuroraBackground(
                 val w = size.width
                 val h = size.height
                 val time = timeProvider()
-
+                
                 drawRect(baseBgColor)
 
                 val x1 = w * 0.5f + w * 0.35f * sin(time * 0.15f)

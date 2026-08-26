@@ -105,7 +105,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
     private fun syncVideoCoverSizeAndCorners() {
         val binding = _binding ?: return
-        
         val coverMargin = resources.getDimensionPixelSize(R.dimen.player_cover_margin)
         val lp = binding.canvasPlayerView?.layoutParams as? ConstraintLayout.LayoutParams
         if (lp != null) {
@@ -153,7 +152,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         _binding = FragmentPlainPlayerBinding.bind(view)
         
         val rootGroup = binding.root as? ViewGroup
-        
         rootGroup?.findViewWithTag<View>("AuroraBackground")?.let { oldBg ->
             rootGroup.removeView(oldBg)
         }
@@ -167,12 +165,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             setContent {
                 val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
                 val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
-                
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
                 
                 var fluidColors by remember { mutableStateOf<List<Color>>(emptyList()) }
-
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
                 LaunchedEffect(song, isAuroraEnabled) {
@@ -185,8 +181,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 val rawColors = result.image.toBitmap().extractGradientColors(
                                     currentContext.resolveColor(PlaceholderDrawable.BACKGROUND_COLOR)
                                 )
-                                // 交给反发脏提纯器
-                                fluidColors = purifyAuroraColors(rawColors)
+                                // 🌟 使用视频 1 同款的高能色彩提纯器
+                                fluidColors = synthesizeAuroraPalette(rawColors)
                             } else {
                                 fluidColors = emptyList() 
                             }
@@ -195,10 +191,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 
                 if (isAuroraEnabled) {
-                    val animatedC1 by animateColorAsState(targetValue = fluidColors.getOrElse(0) { Color.Black }, animationSpec = tween(1500), label = "c1")
-                    val animatedC2 by animateColorAsState(targetValue = fluidColors.getOrElse(1) { Color.Black }, animationSpec = tween(1500), label = "c2")
-                    val animatedC3 by animateColorAsState(targetValue = fluidColors.getOrElse(2) { Color.Black }, animationSpec = tween(1500), label = "c3")
-                    val animatedC4 by animateColorAsState(targetValue = fluidColors.getOrElse(3) { Color.Black }, animationSpec = tween(1500), label = "c4")
+                    val animatedC1 by animateColorAsState(targetValue = fluidColors.getOrElse(0) { Color(0xFFE74C3C) }, animationSpec = tween(1500), label = "c1")
+                    val animatedC2 by animateColorAsState(targetValue = fluidColors.getOrElse(1) { Color(0xFFF39C12) }, animationSpec = tween(1500), label = "c2")
+                    val animatedC3 by animateColorAsState(targetValue = fluidColors.getOrElse(2) { Color(0xFF8E44AD) }, animationSpec = tween(1500), label = "c3")
+                    val animatedC4 by animateColorAsState(targetValue = fluidColors.getOrElse(3) { Color(0xFF3498DB) }, animationSpec = tween(1500), label = "c4")
 
                     com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground(
                         colors = listOf(animatedC1, animatedC2, animatedC3, animatedC4),
@@ -211,14 +207,12 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         
         (composeBackground.parent as? ViewGroup)?.removeView(composeBackground)
         rootGroup?.addView(composeBackground, 0)
-        
         rootGroup?.clipToPadding = false
 
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.playerLyricsViewSettings.collect { settings ->
                 val isAuroraEnabled = settings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
                 binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
-                
                 if (isAuroraEnabled) {
                     binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 } else {
@@ -229,13 +223,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         
         setupToolbar()
         inflateMenuInView(playerToolbar)
-        
         setupVideoPlayer()
         setupCanvasObserver()
         setupLyricsFavoriteButton()
-        
         syncVideoCoverSizeAndCorners()
-        
         Preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
 
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -253,16 +244,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
             val systemBars = insets.getInsets(Type.systemBars())
             val displayCutout = insets.getInsets(Type.displayCutout())
-            
             val totalLeft = Math.max(systemBars.left, displayCutout.left)
             val totalRight = Math.max(systemBars.right, displayCutout.right)
             
-            v.updatePadding(
-                top = systemBars.top, 
-                bottom = systemBars.bottom,
-                left = totalLeft, 
-                right = totalRight
-            )
+            v.updatePadding(top = systemBars.top, bottom = systemBars.bottom, left = totalLeft, right = totalRight)
 
             val displayMetrics = v.resources.displayMetrics
             composeBackground.layoutParams = composeBackground.layoutParams.apply {
@@ -288,13 +273,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun gestureDetected(gestureType: GestureType): Boolean {
         val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
-        
         if (isLandscapeOrTablet) {
             when (gestureType) {
-                is GestureType.Tap -> {
-                    handleCoverClick()
-                    return true
-                }
+                is GestureType.Tap -> { handleCoverClick(); return true }
                 is GestureType.DoubleTap -> {
                     when (gestureType.type) {
                         GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
@@ -370,69 +351,39 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
 
-            menu.findItem(R.id.action_go_to_artist)?.apply {
-                setIcon(R.drawable.ic_person_24dp)
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            }
-            menu.findItem(R.id.action_go_to_album)?.apply {
-                setIcon(R.drawable.ic_album_24dp)
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            }
-            menu.findItem(R.id.action_equalizer)?.apply {
-                setIcon(R.drawable.ic_equalizer_24dp)
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            }
-            menu.findItem(R.id.action_sound_settings)?.apply {
-                setIcon(R.drawable.ic_volume_up_24dp)
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            }
+            menu.findItem(R.id.action_go_to_artist)?.apply { setIcon(R.drawable.ic_person_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_go_to_album)?.apply { setIcon(R.drawable.ic_album_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
 
             val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 50, "动态封面开关")
             toggleVideoItem.apply {
                 setIcon(R.drawable.ic_album_24dp)
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                setOnMenuItemClickListener {
-                    toggleVideoCover()
-                    true
-                }
+                setOnMenuItemClickListener { toggleVideoCover(); true }
             }
 
             val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "↓T")
             fetchTtmlItem.apply {
                 title = "↓T"
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                setOnMenuItemClickListener { 
-                    fetchTtml()
-                    true 
-                }
+                setOnMenuItemClickListener { fetchTtml(); true }
             }
 
             val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 52, "切换歌词格式")
             toggleFormatItem.apply {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                setOnMenuItemClickListener {
-                    toggleLyricsFormat()
-                    true
-                }
+                setOnMenuItemClickListener { toggleLyricsFormat(); true }
             }
 
             val deleteTtmlItem = menu.findItem(R.id.action_delete_ttml) ?: menu.add(Menu.NONE, R.id.action_delete_ttml, 101, "删除TTML")
-            deleteTtmlItem.setOnMenuItemClickListener { 
-                playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }
-                true 
-            }
+            deleteTtmlItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }; true }
 
             val blacklistVideoItem = menu.findItem(R.id.action_blacklist_video) ?: menu.add(Menu.NONE, R.id.action_blacklist_video, 102, "动封黑名单")
-            blacklistVideoItem.setOnMenuItemClickListener { 
-                playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }
-                true 
-            }
+            blacklistVideoItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }; true }
 
             val deleteDeviceItem = menu.findItem(R.id.action_delete_from_device) ?: menu.add(Menu.NONE, R.id.action_delete_from_device, 103, "删除歌曲及关联文件")
-            deleteDeviceItem.setOnMenuItemClickListener { 
-                playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }
-                false 
-            }
+            deleteDeviceItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }; false }
 
             updateFormatIcon(toggleFormatItem)
         } else {
@@ -452,11 +403,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     private fun toggleVideoCover() {
         val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
         sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
-        
-        context?.let {
-            Toast.makeText(it, if (newState) "动态封面：已开启" else "动态封面：已关闭", Toast.LENGTH_SHORT).show()
-        }
-        
+        context?.let { Toast.makeText(it, if (newState) "动态封面：已开启" else "动态封面：已关闭", Toast.LENGTH_SHORT).show() }
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
 
@@ -465,7 +412,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
         lyricsRepository.clearMemoryCache()
         sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
-        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
+        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
         updateFormatIcon(playerToolbar.menu.findItem(R.id.action_toggle_lyrics_format))
         playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
     }
@@ -602,7 +549,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             launch {
                 playerViewModel.currentSongFlow.collect { song ->
                     if (song != null && song.id != lastProcessedSongId) {
-                        
                         _binding?.lyricsSongTitleText?.text = song.title
                         val artistStr = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) song.albumArtistName else song.artistName
                         _binding?.lyricsSongArtistText?.text = artistStr
@@ -664,7 +610,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         val oldPrimaryTextColor = binding.title.currentTextColor
         val oldSecondaryTextColor = binding.text.currentTextColor
         val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
-        
         val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
         val finalSurfaceColor = if (isAuroraEnabled) android.graphics.Color.TRANSPARENT else scheme.surfaceColor
 
@@ -674,11 +619,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
             binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
         )
-        
         binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
         binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
         binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)) }
-
         targets.addAll(playerControlsFragment.getTintTargets(scheme))
         return targets
     }
@@ -707,39 +650,28 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
         canvasExoPlayer?.pause() 
     }
 
-    // 🌟 终极防发脏提纯器：锁死明暗度和饱和度，保证色彩混合时绝对通透
-    private fun purifyAuroraColors(extractedColors: List<Color>): List<Color> {
-        val fallbackPalette = listOf(Color(0xFF2C3E50), Color(0xFF8E44AD), Color(0xFFE74C3C), Color(0xFF3498DB))
+    // 🌟 视频 1 同款：高能色彩提纯器
+    // 目的是：让任何封面都能像 Vicetone 那样提取出足够鲜艳、对比度高的 4 个基色
+    private fun synthesizeAuroraPalette(extractedColors: List<Color>): List<Color> {
+        val fallbackPalette = listOf(Color(0xFFE74C3C), Color(0xFFF39C12), Color(0xFF8E44AD), Color(0xFF3498DB))
         if (extractedColors.isEmpty()) return fallbackPalette
 
-        // 获取封面的主色调基准
-        val baseHsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(extractedColors[0].toArgb(), baseHsv)
-        val baseHue = baseHsv[0]
-
-        // 强力匀光函数：让所有送入 Shader 的颜色都处于同一个“高能量状态”
-        fun boost(color: Color, hueFallback: Float): Color {
+        fun boostVibrancy(color: Color, hueShift: Float = 0f): Color {
             val hsv = FloatArray(3)
             android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-
-            // 如果提取出来的颜色是纯黑、纯白或纯灰，强行赋予它主色调的偏移色相
-            if (hsv[1] < 0.1f || hsv[2] < 0.1f) {
-                hsv[0] = hueFallback
-            }
-
-            // ⚠️ 反发脏核心机密：
-            // 将饱和度死死卡在 60%~90%，亮度卡在 50%~85%！
-            // 只要没有暗色混进来，AGSL 里的线性混合就永远不可能算出“泥浆色”。
-            hsv[1] = hsv[1].coerceIn(0.6f, 0.9f) 
-            hsv[2] = hsv[2].coerceIn(0.5f, 0.85f) 
-            
+            // 改变色相，制造色彩反差
+            hsv[0] = (hsv[0] + hueShift + 360f) % 360f
+            // 核心：强制拉升饱和度到 65% 以上，亮度到 50% 以上。
+            // 这样即使王力宏这首歌是暗黑色，提取出来的颜色也能变成“深红”、“暗紫”这种有力量的颜色，而不是一滩泥水。
+            hsv[1] = hsv[1].coerceAtLeast(0.65f)
+            hsv[2] = hsv[2].coerceAtLeast(0.50f)
             return Color(android.graphics.Color.HSVToColor(hsv))
         }
 
-        val c1 = boost(extractedColors[0], baseHue)
-        val c2 = if (extractedColors.size > 1) boost(extractedColors[1], (baseHue + 40f) % 360f) else boost(c1, (baseHue + 40f) % 360f)
-        val c3 = if (extractedColors.size > 2) boost(extractedColors[2], (baseHue - 30f + 360f) % 360f) else boost(c1, (baseHue - 30f + 360f) % 360f)
-        val c4 = if (extractedColors.size > 3) boost(extractedColors[3], (baseHue + 60f) % 360f) else boost(c2, (baseHue + 50f) % 360f)
+        val c1 = boostVibrancy(extractedColors[0])
+        val c2 = if (extractedColors.size > 1) boostVibrancy(extractedColors[1]) else boostVibrancy(c1, 45f)
+        val c3 = if (extractedColors.size > 2) boostVibrancy(extractedColors[2]) else boostVibrancy(c1, -40f)
+        val c4 = if (extractedColors.size > 3) boostVibrancy(extractedColors[3]) else boostVibrancy(c2, 60f)
 
         return listOf(c1, c2, c3, c4)
     }
