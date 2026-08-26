@@ -429,4 +429,4 @@ private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
     val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     result.setPixels(pixels, 0, width, 0, 0, width, height)
     return result
-}
+} 

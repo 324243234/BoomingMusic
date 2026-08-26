@@ -741,6 +741,6 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             derive(35f, 1.1f, 0.9f),
             derive(-30f, 0.9f, 1.1f),
             derive(60f, 1.0f, 0.8f)
-        )
+        ) 
     }
 }
