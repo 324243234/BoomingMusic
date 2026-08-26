@@ -27,7 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.edit
@@ -79,7 +78,6 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import java.io.File
-import kotlin.math.abs
 
 class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
@@ -165,8 +163,8 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
                 val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
                 
-                // 🌟 使用 Halcyon 源码级色彩提纯，丢弃原图 Bitmap
-                var fluidColors by remember { mutableStateOf<List<Color>>(emptyList()) }
+                // 🌟 将原图 Bitmap 取出，交给 AuroraBackground 内部去提纯
+                var coverBitmap by remember { mutableStateOf<Bitmap?>(null) }
                 val currentContext = androidx.compose.ui.platform.LocalContext.current
 
                 LaunchedEffect(song, isAuroraEnabled) {
@@ -176,19 +174,18 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                                 ImageRequest.Builder(currentContext).data(song).build()
                             )
                             if (result is SuccessResult) {
-                                // 🌟 调用移植自 Halcyon 的极致算法
-                                fluidColors = extractHalcyonPalette(result.image.toBitmap())
+                                coverBitmap = result.image.toBitmap()
                             } else {
-                                fluidColors = emptyList()
+                                coverBitmap = null
                             }
                         }
                     }
                 }
 
                 if (isAuroraEnabled) {
-                    // 传递给岩浆引擎
+                    // 🌟 接口对齐，直接传 Bitmap
                     AuroraGradientBackground(
-                        colors = fluidColors,
+                        coverBitmap = coverBitmap,
                         isPlaying = isPlaying,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -639,108 +636,5 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     override fun onPause() { 
         super.onPause()
         canvasExoPlayer?.pause() 
-    }
-
-    // ========================================================================
-    // 🌟 Halcyon 同款天才算法：无视黑暗泥浆封面，强行提取高饱和核心色！
-    // ========================================================================
-    private fun extractHalcyonPalette(bitmap: Bitmap?): List<Color> {
-        val defaultPalette = listOf(Color(0xFF2F7DFF), Color(0xFF8E44AD), Color(0xFFE74C3C), Color(0xFFF39C12))
-        if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) return defaultPalette
-
-        val sampleStep = (Math.min(bitmap.width, bitmap.height) / 36).coerceAtLeast(1)
-        val buckets = mutableMapOf<Int, LongArray>()
-        val fallback = LongArray(4)
-        var sampled = 0
-        var brightNeutral = 0
-        var eligible = 0
-
-        val hsv = FloatArray(3)
-        for (y in 0 until bitmap.height step sampleStep) {
-            for (x in 0 until bitmap.width step sampleStep) {
-                val pixel = bitmap.getPixel(x, y)
-                val alpha = android.graphics.Color.alpha(pixel)
-                if (alpha > 24) {
-                    val r = android.graphics.Color.red(pixel)
-                    val g = android.graphics.Color.green(pixel)
-                    val b = android.graphics.Color.blue(pixel)
-                    android.graphics.Color.RGBToHSV(r, g, b, hsv)
-                    val sat = hsv[1]
-                    val lum = hsv[2]
-
-                    sampled++
-                    fallback[0]++
-                    fallback[1] += r.toLong()
-                    fallback[2] += g.toLong()
-                    fallback[3] += b.toLong()
-
-                    if (lum > 0.78f && sat < 0.18f) brightNeutral++
-
-                    // 抛弃纯黑纯白死区，只找有“活力”的色彩
-                    if (lum > 0.08f && !(lum > 0.94f && sat < 0.20f)) {
-                        eligible++
-                        val key = ((r ushr 4) shl 8) or ((g ushr 4) shl 4) or (b ushr 4)
-                        val bucket = buckets.getOrPut(key) { LongArray(4) }
-                        bucket[0]++
-                        bucket[1] += r.toLong()
-                        bucket[2] += g.toLong()
-                        bucket[3] += b.toLong()
-                    }
-                }
-            }
-        }
-
-        val baseColor = if (fallback[0] > 0L && sampled > 0 && brightNeutral.toFloat() / sampled > 0.56f && eligible.toFloat() / sampled < 0.24f) {
-            val count = fallback[0].coerceAtLeast(1L)
-            Color((fallback[1] / count).toInt(), (fallback[2] / count).toInt(), (fallback[3] / count).toInt())
-        } else {
-            // Halcyon 最硬核的数学评分函数：极度偏爱高饱和色彩！
-            val best = buckets.values.maxByOrNull { bucket ->
-                val count = bucket[0].coerceAtLeast(1L)
-                val r = (bucket[1] / count).toInt()
-                val g = (bucket[2] / count).toInt()
-                val b = (bucket[3] / count).toInt()
-                android.graphics.Color.RGBToHSV(r, g, b, hsv)
-                val luminance = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
-                val balance = 1f - abs(luminance - 0.50f).coerceIn(0f, 0.50f) * 1.25f
-                count.toFloat() * (0.55f + hsv[1] * 1.65f) * (0.75f + balance * 0.55f)
-            } ?: fallback
-
-            val count = best[0].coerceAtLeast(1L)
-            Color((best[1] / count).toInt(), (best[2] / count).toInt(), (best[3] / count).toInt())
-        }
-
-        // --- 强制向 Halcyon 的 PlayerPalette 规则对齐 ---
-        val finalHsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(baseColor.toArgb(), finalHsv)
-        
-        // 如果是黑白纯灰封面，赋予高级深海蓝底色
-        if (finalHsv[1] < 0.12f) { 
-            finalHsv[0] = 220f
-            finalHsv[1] = 0.6f
-            finalHsv[2] = 0.7f
-        } else {
-            // 否则强行拉升饱和度和亮度
-            finalHsv[1] = finalHsv[1].coerceAtLeast(0.45f) 
-            finalHsv[2] = finalHsv[2].coerceIn(0.46f, 0.88f)
-        }
-
-        val primary = Color(android.graphics.Color.HSVToColor(finalHsv))
-        
-        // 通过偏移色相，强行衍生出 3 种适合构建“大块岩浆”的互补色
-        fun derive(shift: Float, satMod: Float = 1f, valMod: Float = 1f): Color {
-            val dHsv = finalHsv.copyOf()
-            dHsv[0] = (dHsv[0] + shift + 360f) % 360f
-            dHsv[1] = (dHsv[1] * satMod).coerceIn(0.4f, 1f)
-            dHsv[2] = (dHsv[2] * valMod).coerceIn(0.4f, 1f)
-            return Color(android.graphics.Color.HSVToColor(dHsv))
-        }
-
-        return listOf(
-            primary,
-            derive(35f, 1.1f, 0.9f),
-            derive(-30f, 0.9f, 1.1f),
-            derive(60f, 1.0f, 0.8f)
-        ) 
     }
 }

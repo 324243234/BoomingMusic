@@ -48,6 +48,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
+import kotlin.math.roundToInt // 🌟 修复：补全浮点数转整数的导包
 
 // 🌟 CarWith 工况节流时钟 (24fps，大幅降低 H.264 编码压力与发热)
 private const val FRAME_INTERVAL_MS = 42L
@@ -429,4 +430,4 @@ private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
     val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     result.setPixels(pixels, 0, width, 0, 0, width, height)
     return result
-} 
+}
