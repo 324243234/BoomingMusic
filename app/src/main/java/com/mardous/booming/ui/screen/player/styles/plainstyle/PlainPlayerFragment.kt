@@ -1,436 +1,638 @@
-package com.mardous.booming.ui.component.compose.decoration
+/*
+ * Copyright (c) 2025 Christians Martínez Alvarado
+ */
 
-import android.content.BroadcastReceiver
+package com.mardous.booming.ui.screen.player.styles.plainstyle
+
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.appcompat.widget.Toolbar
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.platform.ComposeView
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.content.edit
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsCompat.Type
+import androidx.core.view.updatePadding
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.toBitmap
+import com.mardous.booming.R
+import com.mardous.booming.core.model.action.NowPlayingAction
+import com.mardous.booming.core.model.lyrics.LyricsViewSettings
+import com.mardous.booming.core.model.player.PlayerColorScheme
+import com.mardous.booming.core.model.player.PlayerColorSchemeMode
+import com.mardous.booming.core.model.player.PlayerTintTarget
+import com.mardous.booming.core.model.player.surfaceTintTarget
+import com.mardous.booming.core.model.player.tintTarget
+import com.mardous.booming.core.model.theme.NowPlayingScreen
+import com.mardous.booming.data.model.Song
+import com.mardous.booming.data.repository.LyricsRepository
+import com.mardous.booming.data.repository.Repository
+import com.mardous.booming.databinding.FragmentPlainPlayerBinding
+import com.mardous.booming.extensions.getOnBackPressedDispatcher
+import com.mardous.booming.extensions.launchAndRepeatWithViewLifecycle
+import com.mardous.booming.extensions.whichFragment
+import com.mardous.booming.ui.component.base.AbsPlayerControlsFragment
+import com.mardous.booming.ui.component.base.AbsPlayerFragment
+import com.mardous.booming.ui.component.compose.decoration.AuroraGradientBackground
+import com.mardous.booming.ui.screen.lyrics.LyricsViewModel
+import com.mardous.booming.ui.screen.player.PlayerGesturesController.GestureType
+import com.mardous.booming.util.Preferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.sin
-import kotlin.math.roundToInt
+import org.koin.android.ext.android.inject
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
+import java.io.File
 
-// 🌟 CarWith 工况节流时钟 (24fps，大幅降低 H.264 编码压力与发热)
-private const val FRAME_INTERVAL_MS = 42L
+class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
 
-/**
- * 🚀 Apple Music 级动态流体背景 (CarWith 终极性能版)
- * 架构：Halcyon 源码级色彩提纯 + 纯 CPU 微缩画布色块混合 + 高度防闪烁过渡
- */
-@Composable
-fun AuroraGradientBackground(
-    coverBitmap: Bitmap?,
-    isPlaying: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
+    private val sharedPreferences: SharedPreferences by inject()
+    private val lyricsViewModel: LyricsViewModel by activityViewModel()
+    private val lyricsRepository: LyricsRepository by inject()
+    private val repository: Repository by inject()
 
-    // --- 🛡️ 硬件工况熔断机制 (防断连) ---
-    var isPowerSaveMode by remember { mutableStateOf(false) }
-    var isOverheating by remember { mutableStateOf(false) }
-    var isLowBattery by remember { mutableStateOf(false) }
+    private var _binding: FragmentPlainPlayerBinding? = null
+    private val binding get() = _binding!!
 
-    DisposableEffect(context) {
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_BATTERY_CHANGED)
-            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+    private lateinit var controlsFragment: PlainPlayerControlsFragment
+
+    private val preferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "now_playing_corner_radius") {
+            syncVideoCoverSizeAndCorners()
         }
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        isPowerSaveMode = powerManager?.isPowerSaveMode == true
+    }
 
-        val batteryReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                when (intent.action) {
-                    Intent.ACTION_BATTERY_CHANGED -> {
-                        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                        if (level != -1 && scale != -1) { isLowBattery = (level * 100f / scale) <= 20f }
-                    }
-                    PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
-                        isPowerSaveMode = powerManager?.isPowerSaveMode == true
+    private fun syncVideoCoverSizeAndCorners() {
+        val binding = _binding ?: return
+        val coverMargin = resources.getDimensionPixelSize(R.dimen.player_cover_margin)
+        val lp = binding.canvasPlayerView?.layoutParams as? ConstraintLayout.LayoutParams
+        if (lp != null) {
+            lp.setMargins(coverMargin, coverMargin, coverMargin, coverMargin)
+            binding.canvasPlayerView?.layoutParams = lp
+        }
+
+        val radiusDp = Preferences.getNowPlayingImageCornerRadius(requireContext())
+        val radiusPx = radiusDp * resources.displayMetrics.density
+
+        binding.canvasPlayerView?.apply {
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    if (view.width > 0 && view.height > 0) {
+                        outline.setRoundRect(0, 0, view.width, view.height, radiusPx)
                     }
                 }
             }
-        }
-        val initialIntent = context.registerReceiver(batteryReceiver, filter)
-        initialIntent?.let { intent ->
-            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-            if (level != -1 && scale != -1) { isLowBattery = (level * 100f / scale) <= 20f }
-        }
-        onDispose { context.unregisterReceiver(batteryReceiver) }
-    }
-
-    DisposableEffect(context) {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            PowerManager.OnThermalStatusChangedListener { status ->
-                isOverheating = status >= PowerManager.THERMAL_STATUS_SEVERE
-            }
-        } else null
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null && powerManager != null) {
-            isOverheating = powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
-            powerManager.addThermalStatusListener(thermalListener)
-        }
-        onDispose {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null && powerManager != null) {
-                powerManager.removeThermalStatusListener(thermalListener)
-            }
+            clipToOutline = true
+            invalidate()
         }
     }
 
-    val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
-    val sharedClockMs = rememberContinuousClock(shouldAnimate)
+    private var canvasExoPlayer: ExoPlayer? = null
+    private var videoFetchJob: Job? = null
+    private var lastProcessedSongId: Long = -1L
 
-    // 🌟 步骤 1：后台异步执行 Halcyon 天才取色算法，提取 4 个高纯度颜色
-    val fluidColors by produceState<List<Color>?>(initialValue = null, coverBitmap) {
-        if (coverBitmap == null) {
-            value = null
-        } else {
-            value = withContext(Dispatchers.Default) {
-                extractHalcyonPalette(coverBitmap)
-            }
-        }
-    }
+    private val powerManager by lazy { requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager }
+    private val batteryManager by lazy { requireContext().getSystemService(Context.BATTERY_SERVICE) as BatteryManager }
 
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0E)).clipToBounds()) {
+    override val colorSchemeMode: PlayerColorSchemeMode
+        get() = Preferences.getNowPlayingColorSchemeMode(NowPlayingScreen.Plain)
+
+    override val playerControlsFragment: AbsPlayerControlsFragment
+        get() = controlsFragment
+
+    override val playerToolbar: Toolbar
+        get() = binding.toolbar
+
+    override val blurView: ImageView
+        get() = binding.blur
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        _binding = FragmentPlainPlayerBinding.bind(view)
         
-        // 🌟 步骤 2：手写盖楼式单向溶解过渡 (防闪黑漏底)
-        AnimatedContent(
-            targetState = fluidColors,
-            transitionSpec = {
-                (fadeIn(tween(1200, easing = LinearEasing)) togetherWith fadeOut(tween(durationMillis = 10, delayMillis = 1200)))
-                    .apply { targetContentZIndex = 1f }
-            },
-            label = "MagmaColorCrossfade"
-        ) { colors ->
-            if (colors != null && colors.size >= 4) {
-                // 将提取出的纯色交由纯 CPU 引擎绘制成岩浆
-                CPUFluidEngine(colors, sharedClockMs)
-            } else {
-                Box(Modifier.fillMaxSize())
-            }
+        val rootGroup = binding.root as? ViewGroup
+        rootGroup?.findViewWithTag<View>("AuroraBackground")?.let { oldBg ->
+            rootGroup.removeView(oldBg)
         }
 
-        // --- 🛡️ 护眼压层：针对车机驾驶视角优化对比度 ---
-        Box(modifier = Modifier.fillMaxSize().background(Color(0x33000000)))
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0x45000000), Color.Transparent, Color(0x55000000))
-                    )
-                )
-        )
-    }
-}
-
-/** 
- * 🚀 极致省电版岩浆引擎：在微缩画布上画彩色圆圈，然后用 Box Blur 糊成流体
- * 完美还原 Shader 的效果，但 0% GPU 负载！
- */
-@Composable
-private fun CPUFluidEngine(colors: List<Color>, sharedClockMs: Long) {
-    val context = LocalContext.current
-    val densityDpi = context.resources.displayMetrics.densityDpi
-    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
-
-    val scaledTimeMs = scaledAppleFlowTimeMs(sharedClockMs, 10)
-    val frameTimeMs = (scaledTimeMs / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS
-
-    val frameBitmap by produceState<Bitmap?>(
-        initialValue = null,
-        colors, viewportSize, frameTimeMs, densityDpi
-    ) {
-        val w = viewportSize.width
-        val h = viewportSize.height
-        if (w > 0 && h > 0) {
-            value = withContext(Dispatchers.Default) {
-                createMagmaFrameBitmap(colors, w, h, frameTimeMs, densityDpi)
-            }
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }) {
-        if (frameBitmap != null) {
-            Image(
-                bitmap = frameBitmap!!.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds // 利用系统的硬件线性过滤进行最后的平滑放大
+        val composeBackground = ComposeView(requireContext()).apply {
+            tag = "AuroraBackground" 
+            layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
             )
+            setContent {
+                val lyricsSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
+                val isAuroraEnabled = lyricsSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+                
+                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
+                val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
+                
+                var coverBitmap by remember { mutableStateOf<Bitmap?>(null) }
+                val currentContext = androidx.compose.ui.platform.LocalContext.current
+
+                LaunchedEffect(song, isAuroraEnabled) {
+                    if (isAuroraEnabled && song != null) {
+                        withContext(Dispatchers.Default) {
+                            val result = SingletonImageLoader.get(currentContext).execute(
+                                ImageRequest.Builder(currentContext).data(song).build()
+                            )
+                            if (result is SuccessResult) {
+                                coverBitmap = result.image.toBitmap()
+                            } else {
+                                coverBitmap = null
+                            }
+                        }
+                    }
+                }
+
+                if (isAuroraEnabled) {
+                    AuroraGradientBackground(
+                        coverBitmap = coverBitmap,
+                        isPlaying = isPlaying,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         }
-    }
-}
+        
+        (composeBackground.parent as? ViewGroup)?.removeView(composeBackground)
+        rootGroup?.addView(composeBackground, 0)
+        rootGroup?.clipToPadding = false
 
-// ============================================================================
-// 🛠️ Halcyon 色彩提纯与 CPU 流体底层
-// ============================================================================
-
-internal fun scaledAppleFlowTimeMs(elapsedMs: Long, speedTenths: Int): Long =
-    elapsedMs.coerceAtLeast(0L) * speedTenths.coerceIn(5, 60) / 10L
-
-@Composable
-private fun rememberContinuousClock(animate: Boolean): Long {
-    var sharedClockMs by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(animate) {
-        if (!animate) return@LaunchedEffect
-        while (isActive) {
-            sharedClockMs = withFrameNanos { it } / 1_000_000L
-            delay(FRAME_INTERVAL_MS)
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.playerLyricsViewSettings.collect { settings ->
+                val isAuroraEnabled = settings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+                binding.blur.visibility = if (isAuroraEnabled) View.INVISIBLE else View.VISIBLE
+                if (isAuroraEnabled) {
+                    binding.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                } else {
+                    binding.root.setBackgroundColor(playerViewModel.colorSchemeFlow.value.surfaceColor)
+                }
+            }
         }
-    }
-    return sharedClockMs
-}
+        
+        setupToolbar()
+        inflateMenuInView(playerToolbar)
+        setupVideoPlayer()
+        setupCanvasObserver()
+        setupLyricsFavoriteButton()
+        syncVideoCoverSizeAndCorners()
+        Preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
 
-/** 
- * 100% 还原自 Halcyon 源码的提纯器：专门对付发灰、发暗的封面
- */
-private fun extractHalcyonPalette(bitmap: Bitmap): List<Color> {
-    val sampleStep = (max(bitmap.width, bitmap.height) / 36).coerceAtLeast(1)
-    val buckets = mutableMapOf<Int, LongArray>()
-    val fallback = LongArray(4)
-    var sampled = 0
-    var brightNeutral = 0
-    var eligible = 0
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        if (isLandscapeOrTablet) {
+            setupSlidingGhostMode()
+        }
 
-    val hsv = FloatArray(3)
-    for (y in 0 until bitmap.height step sampleStep) {
-        for (x in 0 until bitmap.width step sampleStep) {
-            val pixel = bitmap.getPixel(x, y)
-            val alpha = android.graphics.Color.alpha(pixel)
-            if (alpha > 24) {
-                val r = android.graphics.Color.red(pixel)
-                val g = android.graphics.Color.green(pixel)
-                val b = android.graphics.Color.blue(pixel)
-                android.graphics.Color.RGBToHSV(r, g, b, hsv)
-                val sat = hsv[1]
-                val lum = hsv[2]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            requireActivity().window.attributes = requireActivity().window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
 
-                sampled++
-                fallback[0]++
-                fallback[1] += r.toLong()
-                fallback[2] += g.toLong()
-                fallback[3] += b.toLong()
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v: View, insets: WindowInsetsCompat ->
+            val systemBars = insets.getInsets(Type.systemBars())
+            val displayCutout = insets.getInsets(Type.displayCutout())
+            val totalLeft = Math.max(systemBars.left, displayCutout.left)
+            val totalRight = Math.max(systemBars.right, displayCutout.right)
+            
+            v.updatePadding(top = systemBars.top, bottom = systemBars.bottom, left = totalLeft, right = totalRight)
 
-                if (lum > 0.78f && sat < 0.18f) brightNeutral++
+            val displayMetrics = v.resources.displayMetrics
+            composeBackground.layoutParams = composeBackground.layoutParams.apply {
+                width = displayMetrics.widthPixels + totalLeft + totalRight
+                height = displayMetrics.heightPixels + systemBars.top + systemBars.bottom
+            }
+            composeBackground.translationX = -totalLeft.toFloat()
+            composeBackground.translationY = -systemBars.top.toFloat()
 
-                // 剔除纯黑和高亮死区
-                if (lum > 0.08f && !(lum > 0.94f && sat < 0.20f)) {
-                    eligible++
-                    val key = ((r ushr 4) shl 8) or ((g ushr 4) shl 4) or (b ushr 4)
-                    val bucket = buckets.getOrPut(key) { LongArray(4) }
-                    bucket[0]++
-                    bucket[1] += r.toLong()
-                    bucket[2] += g.toLong()
-                    bucket[3] += b.toLong()
+            WindowInsetsCompat.CONSUMED
+        }
+        
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            playerViewModel.currentSongFlow.collect { currentSong ->
+                _binding?.let { nonNullBinding ->
+                    nonNullBinding.title.text = currentSong.title
+                    nonNullBinding.text.text = getSongArtist(currentSong)
                 }
             }
         }
     }
 
-    val baseColor = if (fallback[0] > 0L && sampled > 0 && brightNeutral.toFloat() / sampled > 0.56f && eligible.toFloat() / sampled < 0.24f) {
-        val count = fallback[0].coerceAtLeast(1L)
-        Color((fallback[1] / count).toInt(), (fallback[2] / count).toInt(), (fallback[3] / count).toInt())
-    } else {
-        // Halcyon 核心算法：权重偏爱高饱和度色彩！
-        val best = buckets.values.maxByOrNull { bucket ->
-            val count = bucket[0].coerceAtLeast(1L)
-            val r = (bucket[1] / count).toInt()
-            val g = (bucket[2] / count).toInt()
-            val b = (bucket[3] / count).toInt()
-            android.graphics.Color.RGBToHSV(r, g, b, hsv)
-            val luminance = (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
-            val balance = 1f - abs(luminance - 0.50f).coerceIn(0f, 0.50f) * 1.25f
-            count.toFloat() * (0.55f + hsv[1] * 1.65f) * (0.75f + balance * 0.55f)
-        } ?: fallback
-
-        val count = best[0].coerceAtLeast(1L)
-        Color((best[1] / count).toInt(), (best[2] / count).toInt(), (best[3] / count).toInt())
+    override fun gestureDetected(gestureType: GestureType): Boolean {
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        if (isLandscapeOrTablet) {
+            when (gestureType) {
+                is GestureType.Tap -> { handleCoverClick(); return true }
+                is GestureType.DoubleTap -> {
+                    when (gestureType.type) {
+                        GestureType.DoubleTap.TYPE_LEFT_EDGE -> { playerViewModel.seekToPrevious(); return true }
+                        GestureType.DoubleTap.TYPE_RIGHT_EDGE -> { playerViewModel.seekToNext(); return true }
+                        else -> {}
+                    }
+                }
+                else -> {}
+            }
+        }
+        return super.gestureDetected(gestureType)
     }
 
-    val finalHsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(baseColor.toArgb(), finalHsv)
+    private fun handleCoverClick() {
+        val willShowLyrics = binding.rightLyricsContainer?.visibility != View.VISIBLE
+        binding.rightLyricsContainer?.visibility = if (willShowLyrics) View.VISIBLE else View.INVISIBLE
+        val originalVisibility = if (willShowLyrics) View.INVISIBLE else View.VISIBLE
+        binding.title.visibility = originalVisibility
+        binding.text.visibility = originalVisibility
+        binding.playbackControlsFragment?.visibility = originalVisibility
+        binding.toolbar.visibility = originalVisibility
+    }
+
+    private fun setupToolbar() {
+        if (playerToolbar.navigationIcon != null) {
+            playerToolbar.setNavigationOnClickListener { getOnBackPressedDispatcher().onBackPressed() }
+        }
+    }
+
+    private fun setupSlidingGhostMode() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(500) 
+            val coverFragment = childFragmentManager.findFragmentById(R.id.playerAlbumCoverFragment)
+            coverFragment?.view?.let { innerView ->
+                val viewPager = findViewPager(innerView)
+                viewPager?.addOnPageChangeListener(object : androidx.viewpager.widget.ViewPager.OnPageChangeListener {
+                    override fun onPageScrollStateChanged(state: Int) {
+                        if (state == androidx.viewpager.widget.ViewPager.SCROLL_STATE_DRAGGING) {
+                            _binding?.canvasPlayerView?.animate()?.cancel()
+                            _binding?.canvasPlayerView?.alpha = 0f
+                        } else if (state == androidx.viewpager.widget.ViewPager.SCROLL_STATE_IDLE) {
+                            if (canvasExoPlayer?.playbackState == Player.STATE_READY || canvasExoPlayer?.playbackState == Player.STATE_ENDED) {
+                                _binding?.canvasPlayerView?.animate()?.alpha(1f)?.setDuration(400)?.start()
+                            }
+                        }
+                    }
+                    override fun onPageScrolled(p0: Int, p1: Float, p2: Int) {}
+                    override fun onPageSelected(p0: Int) {}
+                })
+            }
+        }
+    }
+
+    private fun findViewPager(view: View): androidx.viewpager.widget.ViewPager? {
+        if (view is androidx.viewpager.widget.ViewPager) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val found = findViewPager(view.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    override fun onMenuInflated(menu: Menu) {
+        super.onMenuInflated(menu)
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+
+        if (isLandscapeOrTablet) {
+            menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+
+            menu.findItem(R.id.action_go_to_artist)?.apply { setIcon(R.drawable.ic_person_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_go_to_album)?.apply { setIcon(R.drawable.ic_album_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+
+            val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 50, "动态封面开关")
+            toggleVideoItem.apply {
+                setIcon(R.drawable.ic_album_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setOnMenuItemClickListener { toggleVideoCover(); true }
+            }
+
+            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "↓T")
+            fetchTtmlItem.apply {
+                title = "↓T"
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setOnMenuItemClickListener { fetchTtml(); true }
+            }
+
+            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 52, "切换歌词格式")
+            toggleFormatItem.apply {
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setOnMenuItemClickListener { toggleLyricsFormat(); true }
+            }
+
+            val deleteTtmlItem = menu.findItem(R.id.action_delete_ttml) ?: menu.add(Menu.NONE, R.id.action_delete_ttml, 101, "删除TTML")
+            deleteTtmlItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, true) }; true }
+
+            val blacklistVideoItem = menu.findItem(R.id.action_blacklist_video) ?: menu.add(Menu.NONE, R.id.action_blacklist_video, 102, "动封黑名单")
+            blacklistVideoItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { addToVideoBlacklist(it) }; true }
+
+            val deleteDeviceItem = menu.findItem(R.id.action_delete_from_device) ?: menu.add(Menu.NONE, R.id.action_delete_from_device, 103, "删除歌曲及关联文件")
+            deleteDeviceItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }; false }
+
+            updateFormatIcon(toggleFormatItem)
+        } else {
+            menu.setShowAsAction(R.id.action_playing_queue, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.setShowAsAction(R.id.action_favorite, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.setShowAsAction(R.id.action_sleep_timer, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.setShowAsAction(R.id.action_show_lyrics, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
+        }
+    }
+
+    private fun updateFormatIcon(item: MenuItem?) {
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        item?.setIcon(if (isTtml) R.drawable.ic_lyrics_24dp else R.drawable.ic_lyrics_outline_24dp)
+    }
+
+    private fun toggleVideoCover() {
+        val newState = !sharedPreferences.getBoolean("pref_enable_video_cover", true)
+        sharedPreferences.edit(commit = true) { putBoolean("pref_enable_video_cover", newState) }
+        context?.let { Toast.makeText(it, if (newState) "动态封面：已开启" else "动态封面：已关闭", Toast.LENGTH_SHORT).show() }
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+    }
+
+    private fun toggleLyricsFormat() {
+        val currentFormat = sharedPreferences.getString("preferred_lyrics_file_format", "ttml") ?: "ttml"
+        val isTtml = currentFormat.equals("ttml", ignoreCase = true) || currentFormat == "0"
+        lyricsRepository.clearMemoryCache()
+        sharedPreferences.edit(commit = true) { putString("preferred_lyrics_file_format", if (isTtml) "lrc" else "ttml") }
+        context?.let { Toast.makeText(it, if (isTtml) "已切换为 LRC 滚动歌词" else "已切换为 TTML 逐字歌词", Toast.LENGTH_SHORT).show() }
+        updateFormatIcon(playerToolbar.menu.findItem(R.id.action_toggle_lyrics_format))
+        playerViewModel.currentSongFlow.value?.let { lyricsViewModel.updateSong(it) }
+    }
+
+    private fun fetchTtml() {
+        playerViewModel.currentSongFlow.value?.let { currentSong ->
+            val toast = Toast.makeText(context, "正在检索并获取逐字 TTML...", Toast.LENGTH_LONG)
+            toast.show()
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(currentSong)
+                withContext(Dispatchers.Main) {
+                    toast.cancel()
+                    if (!ttmlContent.isNullOrBlank()) {
+                        try {
+                            val parentDir = File(currentSong.data).parentFile
+                            if (parentDir?.exists() == true) {
+                                File(parentDir, "${File(currentSong.data).nameWithoutExtension}.ttml").writeText(ttmlContent)
+                                Toast.makeText(context, "获取成功！已保存为 TTML", Toast.LENGTH_SHORT).show()
+                                lyricsRepository.clearMemoryCache()
+                                lyricsViewModel.updateSong(currentSong)
+                            }
+                        } catch (e: Exception) { }
+                    } else { Toast.makeText(context, "获取失败：全网未找到该歌曲", Toast.LENGTH_SHORT).show() }
+                }
+            }
+        }
+    }
+
+    private fun addToVideoBlacklist(song: Song) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
+                val audioFileName = songFile.nameWithoutExtension
+                val possibleNames = listOf(audioFileName.lowercase(), "${song.artistName} - ${song.title}".lowercase(), "${song.title} - ${song.artistName}".lowercase())
+
+                listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() }).forEach { dir ->
+                    dir.listFiles()?.forEach { file ->
+                        val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
+                        if ((ext == "mp4" || ext == "webm") && possibleNames.contains(file.nameWithoutExtension.lowercase())) {
+                            if (file.isDirectory) file.deleteRecursively() else file.delete()
+                        }
+                    }
+                }
+                val hiddenDir = File(parentDir, ".MP4").apply { if (!exists()) mkdirs() }
+                File(hiddenDir, "$audioFileName.mp4").takeIf { !it.exists() }?.mkdirs()
+
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "已拉黑并清理相关视频", Toast.LENGTH_SHORT).show()
+                    videoFetchJob?.cancel()
+                    canvasExoPlayer?.stop()
+                    canvasExoPlayer?.clearMediaItems()
+                    _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(300)?.start()
+                }
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun deleteAssociatedFiles(song: Song, onlyTtml: Boolean) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val songFile = File(song.data)
+                val parentDir = songFile.parentFile ?: return@launch
+                val possibleNames = listOf(songFile.nameWithoutExtension.lowercase(), "${song.artistName} - ${song.title}".lowercase(), "${song.title} - ${song.artistName}".lowercase())
+                val targets = if (onlyTtml) listOf("ttml") else listOf("ttml", "lrc", "mp4", "webm")
+                
+                var (deletedTtml, deletedOther) = false to false
+                
+                listOfNotNull(parentDir, File(parentDir, ".MP4").takeIf { it.exists() }).forEach { dir ->
+                    dir.listFiles()?.forEach { file ->
+                        val ext = if (file.isDirectory) file.name.substringAfterLast('.', "").lowercase() else file.extension.lowercase()
+                        if (targets.contains(ext) && possibleNames.contains(file.nameWithoutExtension.lowercase())) {
+                            if (file.isDirectory) { file.deleteRecursively(); if (ext != "ttml") deletedOther = true }
+                            else {
+                                runCatching { if (ext == "mp4" || ext == "webm") file.writeBytes(ByteArray(0)) else file.writeText("") }
+                                if (file.delete() || file.length() == 0L) { if (ext == "ttml") deletedTtml = true else deletedOther = true }
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    if (onlyTtml && deletedTtml) {
+                        Toast.makeText(context, "TTML 彻底删除", Toast.LENGTH_SHORT).show()
+                        lyricsRepository.clearMemoryCache()
+                        lyricsViewModel.updateSong(song)
+                    } else if (!onlyTtml && (deletedTtml || deletedOther)) {
+                        lyricsRepository.clearMemoryCache()
+                        Toast.makeText(context, "本地歌词及视频已清空", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun isDeviceStressed(): Boolean {
+        if (powerManager.isPowerSaveMode) return true
+        if (batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) <= 20) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && powerManager.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) return true
+        return false
+    }
+
+    private fun setupVideoPlayer() {
+        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+        if (!isLandscapeOrTablet) return
+
+        canvasExoPlayer = ExoPlayer.Builder(requireContext()).build().apply {
+            repeatMode = Player.REPEAT_MODE_OFF
+            volume = 0f
+            playbackParameters = PlaybackParameters(0.85f)
+            trackSelectionParameters = trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).setMaxVideoSize(854, 480).build()
+
+            addListener(object : Player.Listener {
+                override fun onRenderedFirstFrame() { 
+                    _binding?.canvasPlayerView?.let { if (it.alpha < 1f) it.animate().alpha(1f).setDuration(800).start() } 
+                }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        _binding?.canvasPlayerView?.animate()?.alpha(0f)?.setDuration(700)?.withEndAction { 
+                            _binding?.canvasPlayerView?.postDelayed({ 
+                                canvasExoPlayer?.seekTo(0)
+                                canvasExoPlayer?.play() 
+                            }, 1000) 
+                        }?.start()
+                    }
+                }
+            })
+        }
+        binding.canvasPlayerView?.apply { player = canvasExoPlayer; useController = false; setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM) }
+    }
+
+    private fun setupCanvasObserver() {
+        viewLifecycleOwner.launchAndRepeatWithViewLifecycle {
+            launch {
+                playerViewModel.currentSongFlow.collect { song ->
+                    if (song != null && song.id != lastProcessedSongId) {
+                        _binding?.lyricsSongTitleText?.text = song.title
+                        val artistStr = if (Preferences.preferAlbumArtistName && !song.albumArtistName.isNullOrEmpty()) song.albumArtistName else song.artistName
+                        _binding?.lyricsSongArtistText?.text = artistStr
+
+                        launch(Dispatchers.IO) {
+                            val isFav = repository.isSongFavorite(song.id)
+                            withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
+                        }
+
+                        videoFetchJob?.cancel()
+                        canvasExoPlayer?.stop()
+                        canvasExoPlayer?.clearMediaItems()
+                        _binding?.canvasPlayerView?.animate()?.cancel()
+                        _binding?.canvasPlayerView?.alpha = 0f
+
+                        val isLandscapeOrTablet = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+                            (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
+                        
+                        if (isLandscapeOrTablet && sharedPreferences.getBoolean("pref_enable_video_cover", true) && !isDeviceStressed()) {
+                            videoFetchJob = launch {
+                                delay(400)
+                                val videoUri = withContext(Dispatchers.IO) { com.mardous.booming.data.local.lyrics.ttml.AnimatedCanvasFetcher.fetchCanvasUri(requireContext(), song) }
+                                if (isActive && !videoUri.isNullOrBlank() && !isDeviceStressed() && sharedPreferences.getBoolean("pref_enable_video_cover", true)) {
+                                    withContext(Dispatchers.Main) { 
+                                        canvasExoPlayer?.setMediaItem(MediaItem.fromUri(videoUri))
+                                        canvasExoPlayer?.prepare()
+                                        canvasExoPlayer?.play() 
+                                    }
+                                }
+                            }
+                        }
+                        lastProcessedSongId = song.id
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setupLyricsFavoriteButton() {
+        binding.lyricsFavoriteButton?.setOnClickListener {
+            val isFav = it.tag as? Boolean ?: false
+            updateFavoriteIcon(!isFav)
+            playerViewModel.toggleFavorite() 
+        }
+    }
+
+    override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
+        updateFavoriteIcon(isFavorite)
+    }
+
+    private fun updateFavoriteIcon(isFavorite: Boolean) {
+        _binding?.lyricsFavoriteButton?.apply {
+            tag = isFavorite
+            setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+        }
+    }
+
+    override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {
+        val oldPrimaryTextColor = binding.title.currentTextColor
+        val oldSecondaryTextColor = binding.text.currentTextColor
+        val alphaColor = ColorUtils.setAlphaComponent(scheme.onSurfaceColor, 178)
+        val isAuroraEnabled = lyricsViewModel.playerLyricsViewSettings.value.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+        val finalSurfaceColor = if (isAuroraEnabled) android.graphics.Color.TRANSPARENT else scheme.surfaceColor
+
+        val targets = mutableListOf(
+            binding.root.surfaceTintTarget(finalSurfaceColor),
+            binding.toolbar.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+            binding.title.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor),
+            binding.text.tintTarget(oldSecondaryTextColor, scheme.onSurfaceVariantColor)
+        )
+        binding.lyricsSongTitleText?.let { targets.add(it.tintTarget(it.currentTextColor, scheme.onSurfaceColor)) }
+        binding.lyricsSongArtistText?.let { targets.add(it.tintTarget(it.currentTextColor, alphaColor)) }
+        binding.lyricsFavoriteButton?.let { targets.add(it.tintTarget(oldPrimaryTextColor, scheme.onSurfaceColor)) }
+        targets.addAll(playerControlsFragment.getTintTargets(scheme))
+        return targets
+    }
+
+    override fun onCreateChildFragments() {
+        super.onCreateChildFragments()
+        controlsFragment = whichFragment(R.id.playbackControlsFragment)
+    }
+
+    override fun onDestroyView() {
+        Preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        videoFetchJob?.cancel()
+        _binding?.canvasPlayerView?.animate()?.cancel()
+        canvasExoPlayer?.release()
+        super.onDestroyView()
+        _binding = null
+    }
+
+    override fun onResume() { 
+        super.onResume()
+        if (!isDeviceStressed()) canvasExoPlayer?.play() 
+    }
     
-    // 如果依然是黑白灰，赋予高级深海蓝底色，否则强行拉升鲜艳度
-    if (finalHsv[1] < 0.12f) { 
-        finalHsv[0] = 220f
-        finalHsv[1] = 0.6f
-        finalHsv[2] = 0.7f
-    } else {
-        // 否则强行拉升饱和度和亮度
-        finalHsv[1] = finalHsv[1].coerceAtLeast(0.45f) 
-        finalHsv[2] = finalHsv[2].coerceIn(0.46f, 0.88f)
+    override fun onPause() { 
+        super.onPause()
+        canvasExoPlayer?.pause() 
     }
-
-    val primary = Color(android.graphics.Color.HSVToColor(finalHsv))
-    
-    // 通过偏移色相，强行衍生出 3 种适合构建“大块岩浆”的互补色
-    fun derive(shift: Float, satMod: Float = 1f, valMod: Float = 1f): Color {
-        val dHsv = finalHsv.copyOf()
-        dHsv[0] = (dHsv[0] + shift + 360f) % 360f
-        dHsv[1] = (dHsv[1] * satMod).coerceIn(0.4f, 1f)
-        dHsv[2] = (dHsv[2] * valMod).coerceIn(0.4f, 1f)
-        return Color(android.graphics.Color.HSVToColor(dHsv))
-    }
-
-    return listOf(
-        primary,
-        derive(35f, 1.1f, 0.9f),
-        derive(-30f, 0.9f, 1.1f),
-        derive(60f, 1.0f, 0.8f)
-    )
-}
-
-/** 
- * 在微缩画布上画圆圈并进行 Box Blur，产生类似岩浆的效果 
- */
-private fun createMagmaFrameBitmap(
-    colors: List<Color>,
-    viewportW: Int,
-    viewportH: Int,
-    timeMs: Long,
-    densityDpi: Int
-): Bitmap {
-    // 极致降维，全高清屏幕计算的宽高仅几十像素
-    val downsample = if (densityDpi >= 420) 24f else 16f
-    val w = (viewportW / downsample).roundToInt().coerceAtLeast(1)
-    val h = (viewportH / downsample).roundToInt().coerceAtLeast(1)
-    
-    val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(frame)
-
-    // 铺底色
-    canvas.drawColor(colors[0].toArgb())
-
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    val t = timeMs / 1000f // 转换为秒
-
-    val radius = max(w, h) * 0.75f // 超大色块互相覆盖，模糊后才会像液体
-
-    // 色块 1：逆时针画圆运动
-    paint.color = colors[1].toArgb()
-    val cx1 = w / 2f + sin(t * 0.35f) * (w * 0.4f)
-    val cy1 = h / 2f + cos(t * 0.28f) * (h * 0.4f)
-    canvas.drawCircle(cx1.toFloat(), cy1.toFloat(), radius, paint)
-
-    // 色块 2：顺时针画圆运动
-    paint.color = colors[2].toArgb()
-    val cx2 = w / 2f + cos(t * 0.42f) * (w * 0.45f)
-    val cy2 = h / 2f + sin(t * 0.38f) * (h * 0.45f)
-    canvas.drawCircle(cx2.toFloat(), cy2.toFloat(), radius, paint)
-
-    // 色块 3：穿梭运动
-    paint.color = colors[3].toArgb()
-    val cx3 = w / 2f - sin(t * 0.25f) * (w * 0.35f)
-    val cy3 = h / 2f - cos(t * 0.45f) * (h * 0.35f)
-    canvas.drawCircle(cx3.toFloat(), cy3.toFloat(), radius, paint)
-
-    // 强力 CPU 均值模糊，将圆形彻底糊成不可分辨的流体
-    return blurBitmapFast(frame, 15)
-}
-
-/** 纯 CPU 双通道极速均值模糊 */
-private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
-    if (radius <= 0) return bitmap
-    val r = radius.coerceIn(1, 25)
-    val width = bitmap.width
-    val height = bitmap.height
-    if (width <= 1 || height <= 1) return bitmap
-
-    val pixels = IntArray(width * height)
-    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-    val window = r * 2 + 1
-    val temp = IntArray(width * height)
-
-    for (y in 0 until height) {
-        val rowStart = y * width
-        var a = 0; var red = 0; var green = 0; var blue = 0
-        for (k in -r..r) {
-            val p = pixels[rowStart + k.coerceIn(0, width - 1)]
-            a += (p ushr 24) and 0xff
-            red += (p ushr 16) and 0xff
-            green += (p ushr 8) and 0xff
-            blue += p and 0xff
-        }
-        for (x in 0 until width) {
-            temp[rowStart + x] = ((a / window) shl 24) or ((red / window) shl 16) or ((green / window) shl 8) or (blue / window)
-            val outIdx = rowStart + (x - r).coerceIn(0, width - 1)
-            val inIdx = rowStart + (x + r + 1).coerceIn(0, width - 1)
-            val pOut = pixels[outIdx]
-            val pIn = pixels[inIdx]
-            a += ((pIn ushr 24) and 0xff) - ((pOut ushr 24) and 0xff)
-            red += ((pIn ushr 16) and 0xff) - ((pOut ushr 16) and 0xff)
-            green += ((pIn ushr 8) and 0xff) - ((pOut ushr 8) and 0xff)
-            blue += (pIn and 0xff) - (pOut and 0xff)
-        }
-    }
-
-    for (x in 0 until width) {
-        var a = 0; var red = 0; var green = 0; var blue = 0
-        for (k in -r..r) {
-            val p = temp[k.coerceIn(0, height - 1) * width + x]
-            a += (p ushr 24) and 0xff
-            red += (p ushr 16) and 0xff
-            green += (p ushr 8) and 0xff
-            blue += p and 0xff
-        }
-        for (y in 0 until height) {
-            pixels[y * width + x] = ((a / window) shl 24) or ((red / window) shl 16) or ((green / window) shl 8) or (blue / window)
-            val outIdx = (y - r).coerceIn(0, height - 1) * width + x
-            val inIdx = (y + r + 1).coerceIn(0, height - 1) * width + x
-            val pOut = temp[outIdx]
-            val pIn = temp[inIdx]
-            a += ((pIn ushr 24) and 0xff) - ((pOut ushr 24) and 0xff)
-            red += ((pIn ushr 16) and 0xff) - ((pOut ushr 16) and 0xff)
-            green += ((pIn ushr 8) and 0xff) - ((pOut ushr 8) and 0xff)
-            blue += (pIn and 0xff) - (pOut and 0xff)
-        }
-    }
-
-    val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    result.setPixels(pixels, 0, width, 0, 0, width, height)
-    return result
 }
