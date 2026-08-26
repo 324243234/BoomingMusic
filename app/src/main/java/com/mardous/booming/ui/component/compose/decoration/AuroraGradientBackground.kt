@@ -1,16 +1,20 @@
 package com.mardous.booming.ui.component.compose.decoration
 
-import androidx.compose.ui.unit.dp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,30 +29,35 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import kotlin.math.max
+import kotlin.math.roundToInt
 
-// 🌟 依然保留 24fps 的节流逻辑，因为慢动作流体不需要 60fps 的过剩渲染
+// 🌟 移植自 Halcyon：严格控制刷新率在 24fps，对 CarWith 极度友好
 private const val FRAME_INTERVAL_MS = 42L
 
 /**
- * 🚀 Apple Music 级动态流体背景 (支持切歌无缝溶解过渡)
- * 完全 GPU 硬件加速，极低功耗，绝佳沉浸感
+ * 🚀 终极架构：基于微缩 Bitmap 的 Apple Music 流体动效
+ * 结合了 Halcyon 的完美稳定性与 Compose 高级单向溶解状态机。
  */
 @Composable
 fun AuroraGradientBackground(
@@ -57,8 +66,6 @@ fun AuroraGradientBackground(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-
-    // --- 🛡️ 硬件工况熔断机制 ---
     var isPowerSaveMode by remember { mutableStateOf(false) }
     var isOverheating by remember { mutableStateOf(false) }
     var isLowBattery by remember { mutableStateOf(false) }
@@ -115,103 +122,32 @@ fun AuroraGradientBackground(
 
     val shouldAnimate = !isPowerSaveMode && !isOverheating && !isLowBattery
 
-    // 1. 获取共享时间戳
-    val sharedClockMs = rememberThrottledFlowTimeMs(coverBitmap, shouldAnimate)
-    val timeMs = scaledAppleFlowTimeMs(sharedClockMs, 10)
-
-    // 2. ColorFilter 强行拉升饱和度至 2.5 倍
-    val colorFilter = remember {
-        ColorFilter.colorMatrix(androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(2.5f) })
-    }
+    // 🌟 核心修复 1：抽离全局连续时钟。
+    // 时钟不绑定 coverBitmap，切歌时时间永不重置，新旧封面的流体形状完美同步重合！
+    val sharedClockMs = rememberContinuousClock(shouldAnimate)
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0E)).clipToBounds()) {
         
-        // 🌟 性能大杀器：将 blur 滤镜放在最外层。切歌时 GPU 只需渲染 1 次模糊！
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .blur(80.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-        ) {
-            // 计算旋转角度 (提取到外部，保证切歌过渡时新旧封面的流体形状完美同步旋转，绝不突变)
-            val rot1 = (timeMs % 120_000L) / 120_000f * -360f
-            val rot2 = (timeMs % 90_000L) / 90_000f * 360f
-            val rot3 = (timeMs % 70_000L) / 70_000f * 360f
-
-            // 🌟 终极无缝溶解动画 (Crossfade 增强版)
-            AnimatedContent(
-                targetState = coverBitmap,
-                transitionSpec = {
-                    if (targetState == null) {
-                        // 场景 1：如果新歌没有封面，老封面缓缓消散
-                        fadeIn(tween(1200)) togetherWith fadeOut(tween(1200))
-                    } else {
-                        // 场景 2 (最核心)：切新歌时，新封面用 1200ms 浮现，而老封面被强行“按住”等待 1200ms 后才消失！
-                        // 这样就绝对不会发生总透明度下降漏出底色的“掉闪”现象。
-                        (fadeIn(tween(1200)) togetherWith fadeOut(tween(durationMillis = 10, delayMillis = 1200)))
-                            .apply { targetContentZIndex = 1f }
-                    }
-                },
-                label = "CoverFluidCrossfade"
-            ) { currentCover ->
-                if (currentCover != null) {
-                    val imageBitmap = remember(currentCover) { currentCover.asImageBitmap() }
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        // 图层 1：底层慢速基底
-                        Image(
-                            bitmap = imageBitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            colorFilter = colorFilter,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .scale(1.6f)
-                                .graphicsLayer { rotationZ = rot1 }
-                        )
-
-                        // 图层 2：中层偏移旋转
-                        Image(
-                            bitmap = imageBitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            colorFilter = colorFilter,
-                            alpha = 0.7f,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .scale(1.6f)
-                                .graphicsLayer {
-                                    rotationZ = rot2
-                                    translationX = -size.width * 0.15f
-                                    translationY = -size.height * 0.15f
-                                }
-                        )
-
-                        // 图层 3：顶层极速叠加
-                        Image(
-                            bitmap = imageBitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            colorFilter = colorFilter,
-                            alpha = 0.5f,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .scale(1.6f)
-                                .graphicsLayer {
-                                    rotationZ = rot3 * 1.5f
-                                    translationX = size.width * 0.15f
-                                    translationY = size.height * 0.1f
-                                }
-                        )
-                    }
-                } else {
-                    Box(modifier = Modifier.fillMaxSize())
-                }
+        // 🌟 核心修复 2：手写“盖楼式”单向溶解过渡
+        AnimatedContent(
+            targetState = coverBitmap,
+            transitionSpec = {
+                // 旧图保持 100% 透明度不动，新图用 1200ms 在旧图之上淡入，彻底消灭“闪黑、漏底”现象！
+                (fadeIn(tween(1200, easing = LinearEasing)) togetherWith fadeOut(tween(durationMillis = 10, delayMillis = 1200)))
+                    .apply { targetContentZIndex = 1f }
+            },
+            label = "FluidCrossfade"
+        ) { currentCover ->
+            if (currentCover != null) {
+                // 将单个封面的流体渲染逻辑封装进独立引擎
+                FluidEngine(currentCover, sharedClockMs)
+            } else {
+                Box(Modifier.fillMaxSize())
             }
         }
-
-        // --- 🛡️ 护眼与 UI 隔离层 ---
-        Box(modifier = Modifier.fillMaxSize().background(Color(0x4C000000)))
         
+        // 护眼与文字隔离层
+        Box(modifier = Modifier.fillMaxSize().background(Color(0x4C000000)))
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -224,23 +160,248 @@ fun AuroraGradientBackground(
     }
 }
 
+/** 剥离的单封面渲染引擎，接收外部共享的 sharedClockMs 保证同步 */
+@Composable
+private fun FluidEngine(coverBitmap: Bitmap, sharedClockMs: Long) {
+    val context = LocalContext.current
+    val densityDpi = context.resources.displayMetrics.densityDpi
+    
+    val sourceBitmap = remember(coverBitmap) { coverBitmap.scaledForFlowSource() }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+
+    val scaledTimeMs = scaledAppleFlowTimeMs(sharedClockMs, 10)
+    val frameTimeMs = (scaledTimeMs / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS
+
+    val normalizedBlur = 60f
+    val washPrimary = Color(0x33000000).toArgb() 
+    val washSecondary = Color(0x2E000000).toArgb()
+
+    val frameBitmap by produceState<Bitmap?>(
+        initialValue = null,
+        sourceBitmap, viewportSize, frameTimeMs, normalizedBlur, densityDpi, washPrimary, washSecondary
+    ) {
+        val w = viewportSize.width
+        val h = viewportSize.height
+        if (w <= 0 || h <= 0) {
+            value = null
+            return@produceState
+        }
+        value = withContext(Dispatchers.Default) {
+            createAppleFlowFrameBitmap(sourceBitmap, w, h, frameTimeMs, densityDpi, normalizedBlur, washPrimary, washSecondary)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }) {
+        val ready = frameBitmap
+        val source = sourceBitmap
+        when {
+            ready != null -> Image(
+                bitmap = ready.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds
+            )
+            source != null -> Image(
+                bitmap = source.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur((normalizedBlur * 0.45f).dp),
+                contentScale = ContentScale.Crop,
+                alpha = 0.72f
+            )
+        }
+    }
+}
+
 // ============================================================================
-// 🛠️ 时间控制底层工具 
+// 🛠️ Halcyon 核心底层算法 (修正连续时钟版)
 // ============================================================================
 
 internal fun scaledAppleFlowTimeMs(elapsedMs: Long, speedTenths: Int): Long =
     elapsedMs.coerceAtLeast(0L) * speedTenths.coerceIn(5, 60) / 10L
 
 @Composable
-private fun rememberThrottledFlowTimeMs(key: Any?, animate: Boolean): Long {
-    var sharedClockMs by remember(key) { mutableLongStateOf(0L) }
-    LaunchedEffect(key, animate) {
+private fun rememberContinuousClock(animate: Boolean): Long {
+    var sharedClockMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(animate) {
         if (!animate) return@LaunchedEffect
         while (isActive) {
-            val now = withFrameNanos { it }
-            sharedClockMs = now / 1_000_000L
+            // 时间轴持续往前走，切歌不再重置
+            sharedClockMs = withFrameNanos { it } / 1_000_000L
             delay(FRAME_INTERVAL_MS)
         }
     }
     return sharedClockMs
+}
+
+private fun Bitmap.scaledForFlowSource(maxDimension: Int = 256): Bitmap {
+    val longest = max(width, height)
+    if (longest <= maxDimension || longest <= 0) return this
+    val scale = maxDimension.toFloat() / longest
+    return Bitmap.createScaledBitmap(
+        this,
+        (width * scale).roundToInt().coerceAtLeast(1),
+        (height * scale).roundToInt().coerceAtLeast(1),
+        true
+    )
+}
+
+private fun appleFlowDownsampleFactor(densityDpi: Int): Float = if (densityDpi >= 420) 24f else 16f
+
+private fun createAppleFlowFrameBitmap(
+    cover: Bitmap,
+    viewportW: Int,
+    viewportH: Int,
+    timeMs: Long,
+    densityDpi: Int,
+    blur: Float,
+    washPrimaryArgb: Int,
+    washSecondaryArgb: Int
+): Bitmap {
+    val downsample = appleFlowDownsampleFactor(densityDpi)
+    val w = ((viewportW * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
+    val h = ((viewportH * 1.3f) / downsample).roundToInt().coerceAtLeast(1)
+    val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(frame)
+
+    val diagonal = (max(w, h) * 1.3f).roundToInt().coerceAtLeast(1).toFloat()
+    val coverScale = diagonal / max(cover.height, 1)
+    val translateX = -(diagonal - w) / 2f
+    val translateY = -(diagonal - h) / 2f
+    val rotatePivot = diagonal / 2f
+    val centerX = w / 2f
+    val centerY = h / 2f
+
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        isFilterBitmap = true
+        colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(2.5f) })
+    }
+
+    val rot = (timeMs % 70_000L) / 70_000f * 360f
+    
+    drawFlowLayer(
+        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
+        w.toFloat(), h.toFloat(), centerX, centerY,
+        rotation = (timeMs % 120_000L) / 120_000f * -360f, offsetXFactor = 0f, offsetYFactor = 0f, extraRotation = null
+    )
+    drawFlowLayer(
+        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
+        w.toFloat(), h.toFloat(), centerX, centerY,
+        rotation = (timeMs % 90_000L) / 90_000f * 360f, offsetXFactor = -0.95f, offsetYFactor = -0.7f, extraRotation = null
+    )
+    drawFlowLayer(
+        canvas, cover, paint, coverScale, rotatePivot, translateX, translateY,
+        w.toFloat(), h.toFloat(), centerX, centerY,
+        rotation = rot, offsetXFactor = -0.5f, offsetYFactor = 0.7f, extraRotation = rot
+    )
+
+    canvas.drawColor(washPrimaryArgb)
+    canvas.drawColor(washSecondaryArgb)
+
+    val blurRadius = (((blur.coerceIn(30f, 100f) - 30f) / 70f) * 17f + 8f).roundToInt().coerceIn(8, 25)
+    val blurred = blurBitmapFast(frame, blurRadius)
+
+    val cropW = (blurred.width / 1.3f).roundToInt().coerceIn(1, blurred.width)
+    val cropH = (blurred.height / 1.3f).roundToInt().coerceIn(1, blurred.height)
+    return Bitmap.createBitmap(
+        blurred,
+        ((blurred.width - cropW) / 2).coerceAtLeast(0),
+        ((blurred.height - cropH) / 2).coerceAtLeast(0),
+        cropW,
+        cropH
+    )
+}
+
+private fun drawFlowLayer(
+    canvas: Canvas,
+    cover: Bitmap,
+    paint: Paint,
+    scale: Float,
+    rotatePivot: Float,
+    translateX: Float,
+    translateY: Float,
+    viewW: Float,
+    viewH: Float,
+    centerX: Float,
+    centerY: Float,
+    rotation: Float,
+    offsetXFactor: Float,
+    offsetYFactor: Float,
+    extraRotation: Float?
+) {
+    val matrix = Matrix()
+    matrix.setScale(scale, scale)
+    matrix.postRotate(rotation, rotatePivot, rotatePivot)
+    matrix.postTranslate(translateX, translateY)
+    if (offsetXFactor != 0f || offsetYFactor != 0f) {
+        matrix.postTranslate(viewW * offsetXFactor, viewH * offsetYFactor)
+    }
+    if (extraRotation != null) {
+        matrix.postRotate(extraRotation, centerX, centerY)
+    }
+    canvas.drawBitmap(cover, matrix, paint)
+}
+
+/** 纯 CPU 双通道极速均值模糊 */
+private fun blurBitmapFast(bitmap: Bitmap, radius: Int): Bitmap {
+    if (radius <= 0) return bitmap
+    val r = radius.coerceIn(1, 25)
+    val width = bitmap.width
+    val height = bitmap.height
+    if (width <= 1 || height <= 1) return bitmap
+
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+    val window = r * 2 + 1
+
+    val temp = IntArray(width * height)
+    for (y in 0 until height) {
+        val rowStart = y * width
+        var a = 0; var red = 0; var green = 0; var blue = 0
+        for (k in -r..r) {
+            val p = pixels[rowStart + k.coerceIn(0, width - 1)]
+            a += (p ushr 24) and 0xff
+            red += (p ushr 16) and 0xff
+            green += (p ushr 8) and 0xff
+            blue += p and 0xff
+        }
+        for (x in 0 until width) {
+            temp[rowStart + x] = ((a / window) shl 24) or ((red / window) shl 16) or ((green / window) shl 8) or (blue / window)
+            val outIdx = rowStart + (x - r).coerceIn(0, width - 1)
+            val inIdx = rowStart + (x + r + 1).coerceIn(0, width - 1)
+            val pOut = pixels[outIdx]
+            val pIn = pixels[inIdx]
+            a += ((pIn ushr 24) and 0xff) - ((pOut ushr 24) and 0xff)
+            red += ((pIn ushr 16) and 0xff) - ((pOut ushr 16) and 0xff)
+            green += ((pIn ushr 8) and 0xff) - ((pOut ushr 8) and 0xff)
+            blue += (pIn and 0xff) - (pOut and 0xff)
+        }
+    }
+
+    for (x in 0 until width) {
+        var a = 0; var red = 0; var green = 0; var blue = 0
+        for (k in -r..r) {
+            val p = temp[k.coerceIn(0, height - 1) * width + x]
+            a += (p ushr 24) and 0xff
+            red += (p ushr 16) and 0xff
+            green += (p ushr 8) and 0xff
+            blue += p and 0xff
+        }
+        for (y in 0 until height) {
+            pixels[y * width + x] = ((a / window) shl 24) or ((red / window) shl 16) or ((green / window) shl 8) or (blue / window)
+            val outIdx = (y - r).coerceIn(0, height - 1) * width + x
+            val inIdx = (y + r + 1).coerceIn(0, height - 1) * width + x
+            val pOut = temp[outIdx]
+            val pIn = temp[inIdx]
+            a += ((pIn ushr 24) and 0xff) - ((pOut ushr 24) and 0xff)
+            red += ((pIn ushr 16) and 0xff) - ((pOut ushr 16) and 0xff)
+            green += ((pIn ushr 8) and 0xff) - ((pOut ushr 8) and 0xff)
+            blue += (pIn and 0xff) - (pOut and 0xff)
+        }
+    }
+
+    val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    result.setPixels(pixels, 0, width, 0, 0, width, height)
+    return result
 }
