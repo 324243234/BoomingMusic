@@ -658,6 +658,8 @@ class PlaybackService :
             hasSetUnshuffledOrder = false
         }
         return serviceScope.future(IO) {
+		    // 🌟 1. 核心修复：在此处挂载拦截器！拦截假 ID，从数据库注回真实 HTTP 链接
+            val interceptedItems = interceptRadioMediaItems(mediaItems)
             var resolvedMediaItems: MediaItemsWithStartPosition? = null
             if (mediaItems.size == 1) {
                 resolvedMediaItems = libraryProvider.tryToResolveComplexMediaItems(
@@ -665,8 +667,9 @@ class PlaybackService :
                     mediaItems = mediaItems
                 )
             }
+            // 🌟 2. 携带了真实 URL 的电台将完美通过 resolveMediaItems 的检查
             resolvedMediaItems ?: MediaItemsWithStartPosition(
-                libraryProvider.resolveMediaItems(mediaItems),
+                libraryProvider.resolveMediaItems(interceptedItems),
                 startIndex,
                 startPositionMs
             )
@@ -1196,8 +1199,27 @@ class PlaybackService :
             val position = snapshot.createPosition()
 
             val (songs, missingMediaItems) = withContext(IO) {
-                repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true)
-                    .let { (songs, mediaItems) -> snapshot.deriveQueueSongs(songs) to mediaItems }
+                val dbSongs = repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true).toMutableList()
+                
+                // 🌟 核心拦截 2：保护电台网络流不被当作“丢失文件”而踢出队列
+                val missing = snapshot.mediaItems.filter { item -> dbSongs.none { it.id.toString() == item.mediaId } }
+                val radioMissing = missing.filter { it.localConfiguration?.uri?.toString()?.startsWith("http") == true }
+                
+                // 为网络流重构虚拟的 Song 对象
+                val radioSongs = radioMissing.map { item ->
+                    Song(
+                        id = item.mediaId.toLongOrNull() ?: System.currentTimeMillis(),
+                        title = item.mediaMetadata.title?.toString() ?: "未知电台",
+                        artistName = item.mediaMetadata.artist?.toString() ?: "网络电台",
+                        albumName = item.mediaMetadata.albumTitle?.toString() ?: "直播流",
+                        duration = 0L, data = item.localConfiguration?.uri?.toString() ?: "",
+                        albumId = -1L, artistId = -1L, trackNumber = 0, year = 0, dateAdded = 0L, dateModified = 0L, size = 0L
+                    )
+                }
+                dbSongs.addAll(radioSongs)
+                val actualMissing = missing - radioMissing.toSet()
+                
+                snapshot.deriveQueueSongs(dbSongs) to actualMissing
             }
 
             val missingIds = missingMediaItems.mapTo(mutableSetOf()) { it.mediaId }
@@ -1540,7 +1562,45 @@ class PlaybackService :
             }
         }
     }
+    
+	// 🌟 核心拦截 1：强行注入电台的真实 URL 和元数据，防止初始化丢失
+    private suspend fun interceptRadioMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
+        // 提前一次性从数据库查出所有电台，不要放在循环里查
+        val radioPlaylists = repository.playlistsWithSongs(true).filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
+        val radioEntities = radioPlaylists.flatMap { it.songs }
 
+        return mediaItems.map { item ->
+            // 如果已经被解析过了（携带了 URI），直接放行
+            if (item.localConfiguration != null) return@map item
+            
+            // 直接安全提取 ID
+            val id = item.mediaId.toLongOrNull() ?: return@map item
+            
+            // 比对靶标：如果是电台，强行注入真实的 HTTP 链接与抗网损配置
+            val rs = radioEntities.find { it.id == id }
+            if (rs != null) {
+                item.buildUpon()
+                    .setUri(rs.data) // 👈 核心：注入真实的 HTTP 链接！
+                    .setMediaMetadata(
+                        item.mediaMetadata.buildUpon()
+                            .setTitle(rs.title)
+                            .setArtist("网络电台")
+                            .build()
+                    )
+                    .setLiveConfiguration(
+                        MediaItem.LiveConfiguration.Builder()
+                            .setMaxPlaybackSpeed(1.02f)
+                            .setMinPlaybackSpeed(0.98f)
+                            .setTargetOffsetMs(5000)
+                            .build()
+                    )
+                    .build()
+            } else {
+                item
+            }
+        }
+    }
+	
     companion object {
         private const val PACKAGE_NAME = "com.mardous.booming"
 

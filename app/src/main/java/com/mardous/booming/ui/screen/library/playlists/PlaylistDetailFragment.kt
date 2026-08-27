@@ -427,79 +427,94 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
 	
 	     if (menuItem.itemId == 8001) {
-            // 🌟 只需要一个输入框：M3U 网络订阅源链接
+            val nameInput = android.widget.EditText(requireContext()).apply { 
+                hint = "电台名称 (仅添加单条流时填写；订阅源留空)" 
+            }
             val urlInput = android.widget.EditText(requireContext()).apply { 
-                hint = "输入网络 M3U/M3U8 订阅链接" 
+                hint = "输入 M3U 链接、Radio-Browser API 或直播流 URL" 
             }
             val layout = android.widget.LinearLayout(requireContext()).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
                 setPadding(60, 20, 60, 0)
+                addView(nameInput)
                 addView(urlInput)
             }
 
             com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                .setTitle("在线拉取网络电台源")
+                .setTitle("添加电台 / 导入订阅源")
                 .setView(layout)
                 .setPositiveButton("拉取并导入") { _, _ ->
+                    val manualName = nameInput.text.toString().trim()
                     val urlStr = urlInput.text.toString().trim()
-                    if (urlStr.isNotEmpty() && urlStr.startsWith("http")) {
-                        val toast = Toast.makeText(requireContext(), "正在从网络拉取解析，请稍候...", Toast.LENGTH_LONG)
+                    if (urlStr.isNotEmpty() && (urlStr.startsWith("http://") || urlStr.startsWith("https://"))) {
+                        val toast = Toast.makeText(requireContext(), "正在拉取解析...", Toast.LENGTH_LONG)
                         toast.show()
 
-                        // 🌟 开启 IO 线程进行网络请求
-                        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                             try {
-                                // 1. 直接从网络读取 M3U 文本内容
-                                val m3uContent = java.net.URL(urlStr).readText(Charsets.UTF_8)
-                                val songsToInsert = mutableListOf<com.mardous.booming.data.local.room.SongEntity>()
-                                var currentTitle = "未知电台"
-
-                                // 2. 切片解析
-                                m3uContent.lines().forEach { line ->
-                                    val trimmed = line.trim()
-                                    if (trimmed.startsWith("#EXTINF:")) {
-                                        currentTitle = trimmed.substringAfter(",", "未知电台")
-                                    } else if (trimmed.startsWith("http")) {
-                                        songsToInsert.add(
-                                            com.mardous.booming.data.local.room.SongEntity(
-                                                id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
-                                                title = currentTitle,
-                                                artistName = "网络电台",
-                                                albumName = "直播源",
-                                                duration = 0L, // 🌟 标识为电台直播流
-                                                data = trimmed,
-                                                playlistCreatorId = playlist.playlistEntity.playListId,
-                                                // 补齐必填参数
-                                                trackNumber = 0, year = 0, size = 0L,
-                                                dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
-                                                albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
-                                            )
-                                        )
-                                    }
+                                val connection = (java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection).apply {
+                                    requestMethod = "GET"
+                                    connectTimeout = 10000
+                                    readTimeout = 15000
+                                    instanceFollowRedirects = true
+                                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                                    setRequestProperty("Accept", "*/*")
                                 }
 
-                                // 3. 批量插入数据库
+                                val rawContent = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
+                                val songsToInsert = mutableListOf<com.mardous.booming.data.local.room.SongEntity>()
+
+                                // 模式 1：智能解析 Radio-Browser 等 JSON 接口
+                                if (rawContent.startsWith("[")) {
+                                    val jsonArray = org.json.JSONArray(rawContent)
+                                    for (i in 0 until jsonArray.length()) {
+                                        val obj = jsonArray.getJSONObject(i)
+                                        val stationName = obj.optString("name", "未知电台").trim()
+                                        val streamUrl = obj.optString("url_resolved").ifEmpty { obj.optString("url") }.trim()
+                                        if (streamUrl.startsWith("http")) {
+                                            songsToInsert.add(createRadioSongEntity(stationName, streamUrl, playlist.playlistEntity.playListId))
+                                        }
+                                    }
+                                } 
+                                // 模式 2：解析标准 M3U 聚合列表
+                                else if (rawContent.contains("#EXTINF:") || rawContent.startsWith("#EXTM3U")) {
+                                    var currentTitle = "未知电台"
+                                    rawContent.lines().forEach { line ->
+                                        val trimmed = line.trim()
+                                        if (trimmed.startsWith("#EXTINF:")) {
+                                            currentTitle = trimmed.substringAfter(",", "未知电台")
+                                        } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                                            songsToInsert.add(createRadioSongEntity(currentTitle, trimmed, playlist.playlistEntity.playListId))
+                                        }
+                                    }
+                                } 
+                                // 模式 3：单条流媒体直接收录
+                                else {
+                                    val finalTitle = if (manualName.isNotEmpty()) manualName else "自定义电台"
+                                    songsToInsert.add(createRadioSongEntity(finalTitle, urlStr, playlist.playlistEntity.playListId))
+                                }
+
                                 if (songsToInsert.isNotEmpty()) {
                                     repository.insertSongsInPlaylist(songsToInsert)
-                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    withContext(Dispatchers.Main) {
                                         toast.cancel()
                                         Toast.makeText(requireContext(), "成功导入 ${songsToInsert.size} 个电台！", Toast.LENGTH_SHORT).show()
                                     }
                                 } else {
-                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    withContext(Dispatchers.Main) {
                                         toast.cancel()
-                                        Toast.makeText(requireContext(), "解析为空，未找到可用流", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(requireContext(), "解析失败：未找到有效音频流", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             } catch (e: Exception) {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                withContext(Dispatchers.Main) {
                                     toast.cancel()
-                                    Toast.makeText(requireContext(), "网络请求失败，请检查链接或网络", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(requireContext(), "连接失败: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
                     } else {
-                        Toast.makeText(requireContext(), "必须输入合法的 http/https 链接", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "请输入合法的 http/https 链接", Toast.LENGTH_SHORT).show()
                     }
                 }
                 .setNegativeButton("取消", null)
@@ -886,6 +901,28 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         wrappedAdapter = null
         super.onDestroyView()
         _binding = null
+    }
+	
+	// 🌟 补全缺失的电台实体构造方法 (放在 companion object 上方即可)
+    private fun createRadioSongEntity(title: String, streamUrl: String, playlistId: Long): com.mardous.booming.data.local.room.SongEntity {
+        return com.mardous.booming.data.local.room.SongEntity(
+            id = System.currentTimeMillis() + kotlin.random.Random.nextInt(10000), // 绝对正数，防列表崩溃
+            title = title,
+            artistName = "网络电台",
+            albumName = "直播源",
+            duration = 0L, // 0L 标识为直播流
+            data = streamUrl,
+            playlistCreatorId = playlistId,
+            trackNumber = 0,
+            year = 0,
+            size = 0L,
+            dateAdded = System.currentTimeMillis(),
+            dateModified = System.currentTimeMillis(),
+            albumId = -1L,
+            artistId = -1L,
+            albumArtist = "网络电台",
+            genreName = "直播"
+        )
     }
 
     companion object {

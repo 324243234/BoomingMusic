@@ -41,42 +41,47 @@ object RadioBackupManager {
 
     suspend fun importRadioFromM3u(context: Context, repository: Repository, m3uFile: File) = withContext(Dispatchers.IO) {
         try {
-            val playlistName = "[Radio]${m3uFile.nameWithoutExtension}" // 强加前缀隔离
+            val playlistName = "[Radio]${m3uFile.nameWithoutExtension}" // 完美适配刚才用户自定义的文件名
             var playlistId = repository.checkPlaylistExists(playlistName).firstOrNull()?.playListId
             if (playlistId == null) playlistId = repository.createPlaylist(PlaylistEntity(playlistName = playlistName))
 
             val songsToInsert = mutableListOf<SongEntity>()
             var currentTitle = "未知电台"
 
-            m3uFile.readLines().forEach { line ->
+            // 🌟 智能过滤不可见乱码（UTF-8 BOM 头），防止提取失败
+            val rawContent = String(m3uFile.readBytes(), Charsets.UTF_8).replace("\uFEFF", "")
+
+            rawContent.lines().forEach { line ->
                 val trimmed = line.trim()
-                if (trimmed.startsWith("#EXTINF:")) currentTitle = trimmed.substringAfter(",", "未知电台")
-                else if (trimmed.startsWith("http")) {
+                if (trimmed.startsWith("#EXTINF:", ignoreCase = true)) {
+                    currentTitle = trimmed.substringAfter(",", "未知电台").trim()
+                }
+                else if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
                     songsToInsert.add(
                         SongEntity(
-                            id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
+                            id = System.currentTimeMillis() + kotlin.random.Random.nextInt(10000), // 🌟 换成绝对正数时间戳
                             title = currentTitle,
                             artistName = "网络电台",
                             albumName = "直播流",
                             duration = 0L, 
                             data = trimmed,
                             playlistCreatorId = playlistId,
-                            // 🌟 补齐底层 Entity 强制要求的占位参数
-                            trackNumber = 0,
-                            year = 0,
-                            size = 0L,
-                            dateAdded = System.currentTimeMillis(),
-                            dateModified = System.currentTimeMillis(),
-                            albumId = -1L,
-                            artistId = -1L,
-                            albumArtist = "网络电台",
-                            genreName = "直播"
+                            trackNumber = 0, year = 0, size = 0L,
+                            dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                            albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
                         )
                     )
+                    currentTitle = "未知电台" // 提取完成立即重置
                 }
             }
-            if (songsToInsert.isNotEmpty()) repository.insertSongsInPlaylist(songsToInsert)
-            withContext(Dispatchers.Main) { Toast.makeText(context, "导入成功！", Toast.LENGTH_SHORT).show() }
-        } catch (e: Exception) {}
+            if (songsToInsert.isNotEmpty()) {
+                repository.insertSongsInPlaylist(songsToInsert)
+                withContext(Dispatchers.Main) { Toast.makeText(context, "成功导入 ${songsToInsert.size} 个电台！", Toast.LENGTH_SHORT).show() }
+            } else {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "解析失败，未找到有效链接", Toast.LENGTH_SHORT).show() }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { Toast.makeText(context, "解析错误: ${e.message}", Toast.LENGTH_SHORT).show() }
+        }
     }
 }

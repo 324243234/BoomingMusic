@@ -49,30 +49,59 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     override val itemLayoutRes: Int
         get() = if (isGridMode) R.layout.item_playlist else R.layout.item_list
 
-    // 🌟 注册系统文件选择器（用于导入 .m3u 文件）
+    // 🌟 注册系统文件选择器并动态重命名
     private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    // 将 Uri 内容复制到临时 Cache 文件，交给 RadioBackupManager 处理
-                    val tempFile = File(requireContext().cacheDir, "imported_radio.m3u")
-                    requireContext().contentResolver.openInputStream(uri)?.use { input ->
-                        FileOutputStream(tempFile).use { output ->
-                            input.copyTo(output)
+                    // 1. 获取选中的真实文件名
+                    var fileName = "自定义导入电台"
+                    requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (nameIndex >= 0) fileName = cursor.getString(nameIndex).substringBeforeLast(".")
                         }
                     }
                     
-                    RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
-                    tempFile.delete() // 导入完毕后清除临时文件
-                    
                     withContext(Dispatchers.Main) {
-                        libraryViewModel.forceReload(ReloadType.Playlists)
+                        // 2. 弹出对话框，允许用户修改分类名称
+                        val input = android.widget.EditText(requireContext()).apply {
+                            setText(fileName)
+                            setSingleLine()
+                        }
+                        val layout = android.widget.LinearLayout(requireContext()).apply {
+                            setPadding(60, 20, 60, 0)
+                            addView(input)
+                        }
+
+                        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                            .setTitle("设置电台分类名称")
+                            .setView(layout)
+                            .setPositiveButton("导入") { _, _ ->
+                                val finalName = input.text.toString().trim().ifEmpty { fileName }
+                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                                    try {
+                                        // 3. 将文件缓存为用户定义的名字
+                                        val tempFile = File(requireContext().cacheDir, "${finalName}.m3u")
+                                        requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                                            FileOutputStream(tempFile).use { it.write(input.readBytes()) }
+                                        }
+                                        
+                                        RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
+                                        tempFile.delete() // 导入完毕后清除临时文件
+                                        
+                                        withContext(Dispatchers.Main) {
+                                            libraryViewModel.forceReload(ReloadType.Playlists)
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导入失败", Toast.LENGTH_SHORT).show() }
+                                    }
+                                }
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
                     }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "导入解析失败", Toast.LENGTH_SHORT).show()
-                    }
-                }
+                } catch (e: Exception) { }
             }
         }
     }
