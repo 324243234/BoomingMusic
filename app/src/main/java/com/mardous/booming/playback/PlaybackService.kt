@@ -4,6 +4,7 @@
 
 package com.mardous.booming.playback
 
+import androidx.media3.datasource.DefaultHttpDataSource
 import com.mardous.booming.data.repository.PlaylistRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -294,6 +295,27 @@ class PlaybackService :
         )
 
         playerThread.start()
+        // 🌟 1. 创建防盗链 HTTP 数据源工厂 (伪装 User-Agent，支持跨协议重定向)
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Lavf/58.76.100")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(8000)
+            .setReadTimeoutMs(8000)
+
+        // 🌟 2. 保留原有的 MP3 提取器配置 (用于本地音乐支持)
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .also {
+                if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
+                    it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
+                }
+            }
+
+        // 🌟 3. 将 HTTP 数据源注入 MediaSourceFactory
+        val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
+            .setDataSourceFactory(httpDataSourceFactory)
+
+        // 🌟 4. 构建终极版 ExoPlayer
         player = AdvancedForwardingPlayer(
             ExoPlayer.Builder(this)
                 .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -310,17 +332,7 @@ class PlaybackService :
                         .setMediaCodecSelector(AlacWorkaroundCodecSelector())
                         .setEnableDecoderFallback(true)
                 )
-                .setMediaSourceFactory(
-                    DefaultMediaSourceFactory(
-                        this, DefaultExtractorsFactory()
-                            .setConstantBitrateSeekingEnabled(true)
-                            .also {
-                                if (preferences.getBoolean(MP3_INDEX_SEEKING, false)) {
-                                    it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
-                                }
-                            }
-                    )
-                )
+                .setMediaSourceFactory(mediaSourceFactory) // 👈 完美注入防盗链工厂
                 .setSkipSilenceEnabled(equalizerManager.skipSilence.value)
                 .setHandleAudioBecomingNoisy(true)
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
