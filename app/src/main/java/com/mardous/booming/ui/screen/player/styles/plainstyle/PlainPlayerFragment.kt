@@ -521,7 +521,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                             _binding?.canvasPlayerView?.postDelayed({ 
                                 canvasExoPlayer?.seekTo(0)
                                 canvasExoPlayer?.play() 
-                            }, 500) 
+                            }, 400) 
                         }?.start()
                     }
                 }

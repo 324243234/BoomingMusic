@@ -427,47 +427,85 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
 	
 	     if (menuItem.itemId == 8001) {
-            val nameInput = android.widget.EditText(requireContext()).apply { hint = "电台名称 (如: 广东交通广播)" }
-            val urlInput = android.widget.EditText(requireContext()).apply { hint = "直播流 URL (http/m3u8)" }
+            // 🌟 只需要一个输入框：M3U 网络订阅源链接
+            val urlInput = android.widget.EditText(requireContext()).apply { 
+                hint = "输入网络 M3U/M3U8 订阅链接" 
+            }
             val layout = android.widget.LinearLayout(requireContext()).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
                 setPadding(60, 20, 60, 0)
-                addView(nameInput)
                 addView(urlInput)
             }
 
             com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                .setTitle("添加自定义电台源")
+                .setTitle("在线拉取网络电台源")
                 .setView(layout)
-                .setPositiveButton("保存") { _, _ ->
-                    val name = nameInput.text.toString().trim()
-                    val url = urlInput.text.toString().trim()
-                    if (name.isNotEmpty() && url.isNotEmpty()) {
-                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                            val newRadioSong = com.mardous.booming.data.local.room.SongEntity(
-                                id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
-                                title = name,
-                                artistName = "网络电台",
-                                albumName = "直播流",
-                                duration = 0L, // 🌟 标识为电台流
-                                data = url,
-                                playlistCreatorId = playlist.playlistEntity.playListId,
-                                // 补齐必填参数
-                                trackNumber = 0, year = 0, size = 0L,
-                                dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
-                                albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
-                            )
-                            repository.insertSongsInPlaylist(listOf(newRadioSong))
-                            // Room 数据库有观察者机制，插入完成后 detailViewModel 的 LiveData 会自动更新并刷新列表 UI！
+                .setPositiveButton("拉取并导入") { _, _ ->
+                    val urlStr = urlInput.text.toString().trim()
+                    if (urlStr.isNotEmpty() && urlStr.startsWith("http")) {
+                        val toast = Toast.makeText(requireContext(), "正在从网络拉取解析，请稍候...", Toast.LENGTH_LONG)
+                        toast.show()
+
+                        // 🌟 开启 IO 线程进行网络请求
+                        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                // 1. 直接从网络读取 M3U 文本内容
+                                val m3uContent = java.net.URL(urlStr).readText(Charsets.UTF_8)
+                                val songsToInsert = mutableListOf<com.mardous.booming.data.local.room.SongEntity>()
+                                var currentTitle = "未知电台"
+
+                                // 2. 切片解析
+                                m3uContent.lines().forEach { line ->
+                                    val trimmed = line.trim()
+                                    if (trimmed.startsWith("#EXTINF:")) {
+                                        currentTitle = trimmed.substringAfter(",", "未知电台")
+                                    } else if (trimmed.startsWith("http")) {
+                                        songsToInsert.add(
+                                            com.mardous.booming.data.local.room.SongEntity(
+                                                id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
+                                                title = currentTitle,
+                                                artistName = "网络电台",
+                                                albumName = "直播源",
+                                                duration = 0L, // 🌟 标识为电台直播流
+                                                data = trimmed,
+                                                playlistCreatorId = playlist.playlistEntity.playListId,
+                                                // 补齐必填参数
+                                                trackNumber = 0, year = 0, size = 0L,
+                                                dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                                                albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
+                                            )
+                                        )
+                                    }
+                                }
+
+                                // 3. 批量插入数据库
+                                if (songsToInsert.isNotEmpty()) {
+                                    repository.insertSongsInPlaylist(songsToInsert)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        toast.cancel()
+                                        Toast.makeText(requireContext(), "成功导入 ${songsToInsert.size} 个电台！", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        toast.cancel()
+                                        Toast.makeText(requireContext(), "解析为空，未找到可用流", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    toast.cancel()
+                                    Toast.makeText(requireContext(), "网络请求失败，请检查链接或网络", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     } else {
-                        Toast.makeText(requireContext(), "名称和链接不能为空", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "必须输入合法的 http/https 链接", Toast.LENGTH_SHORT).show()
                     }
                 }
                 .setNegativeButton("取消", null)
                 .show()
             return true
-			}
+        }
         if (menuItem.itemId == R.id.action_export_playlist) {
             val currentSongs = playlistSongAdapter?.dataSet
             val playlistName = playlist.playlistEntity.playlistName

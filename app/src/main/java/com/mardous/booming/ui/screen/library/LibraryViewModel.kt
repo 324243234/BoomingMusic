@@ -89,6 +89,7 @@ class LibraryViewModel(
     private val albums = MutableLiveData<List<Album>>()
     private val artists = MutableLiveData<List<Artist>>()
     private val playlists = MutableLiveData<List<PlaylistWithSongs>>()
+	private val radios = MutableLiveData<List<PlaylistWithSongs>>() // 🌟 新增这一行
     private val genres = MutableLiveData<List<Genre>>()
     private val years = MutableLiveData<List<ReleaseYear>>()
     private val fileSystem = MutableLiveData<FileSystemQuery>()
@@ -183,11 +184,24 @@ class LibraryViewModel(
     }
 
     private suspend fun fetchPlaylists() {
-	val normalPlaylists = repository.playlistsWithSongs(true).filterNot {
-        it.playlistEntity.playlistName.startsWith("[Radio]")
-    }
-	
+        // 拿到数据库所有的播放列表
+        val allPlaylists = repository.playlistsWithSongs(true)
+
+        // 1. 发送给普通的播放列表 (过滤掉电台)
+        val normalPlaylists = allPlaylists.filterNot {
+            it.playlistEntity.playlistName.startsWith("[Radio]")
+        }
         playlists.postValue(normalPlaylists)
+
+        // 2. 发送给电台专属列表 (只取电台，并脱除隐藏外壳)
+        val radioPlaylists = allPlaylists.filter {
+            it.playlistEntity.playlistName.startsWith("[Radio]")
+        }.map { 
+            it.copy(playlistEntity = it.playlistEntity.copy(
+                playlistName = it.playlistEntity.playlistName.removePrefix("[Radio]")
+            )) 
+        }
+        radios.postValue(radioPlaylists) // 🌟 每次刷新都会同步推送，UI 瞬间响应！
     }
 
     private suspend fun fetchGenres() {
@@ -224,16 +238,7 @@ class LibraryViewModel(
 
 	
 	// 暴露出纯净的电台列表（去掉前缀给 UI 显示）
-fun getRadioPlaylists() = liveData(IO) {
-    val radios = repository.playlistsWithSongs(sorted = true)
-        .filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
-        .map { 
-            it.copy(playlistEntity = it.playlistEntity.copy(
-                playlistName = it.playlistEntity.playlistName.removePrefix("[Radio]")
-            )) 
-        }
-    emit(radios)
-}
+fun getRadioPlaylists(): LiveData<List<PlaylistWithSongs>> = radios 
 
 
     fun navigateToPath(
