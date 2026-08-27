@@ -6,6 +6,10 @@
     app:startDestination="@id/nav_home">
 
     <fragment
+    android:id="@+id/nav_radios"
+    android:name="com.mardous.booming.ui.screen.library.radios.RadioListFragment"
+    android:label="@string/radios_label" />
+	<fragment
         android:id="@+id/nav_home"
         android:name="com.mardous.booming.ui.screen.library.home.HomeFragment"
         android:label="HomeFragment"/>

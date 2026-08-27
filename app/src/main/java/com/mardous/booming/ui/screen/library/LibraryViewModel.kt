@@ -183,7 +183,11 @@ class LibraryViewModel(
     }
 
     private suspend fun fetchPlaylists() {
-        playlists.postValue(repository.playlistsWithSongs(true))
+	val normalPlaylists = repository.playlistsWithSongs(true).filterNot {
+        it.playlistEntity.playlistName.startsWith("[Radio]")
+    }
+	
+        playlists.postValue(normalPlaylists)
     }
 
     private suspend fun fetchGenres() {
@@ -217,6 +221,20 @@ class LibraryViewModel(
             addAll(files.filterIsInstance<Song>())
         }
     }
+
+	
+	// 暴露出纯净的电台列表（去掉前缀给 UI 显示）
+fun getRadioPlaylists() = liveData(Dispatchers.IO) {
+    val radios = repository.playlistsWithSongs(sorted = true)
+        .filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
+        .map { 
+            it.copy(playlistEntity = it.playlistEntity.copy(
+                playlistName = it.playlistEntity.playlistName.removePrefix("[Radio]")
+            )) 
+        }
+    emit(radios)
+}
+
 
     fun navigateToPath(
         navigateToPath: String? = null,

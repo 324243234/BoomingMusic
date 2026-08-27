@@ -414,11 +414,23 @@ class LibraryProvider(private val repository: Repository) {
                 )
             }
 
-    private fun Song.toPlayableMediaItem(parent: String? = null) =
-        buildPlayableMediaItem(
-            song = this,
-            id = if (parent.isNullOrEmpty()) this.id.toString() else MediaIDs.getPathId(parent, this.id)
+    private fun Song.toPlayableMediaItem(parent: String? = null): MediaItem {
+    val builder = MediaItem.Builder()
+        .setMediaId(if (parent.isNullOrEmpty()) this.id.toString() else MediaIDs.getPathId(parent, this.id))
+        .setUri(this.data)
+
+    // 🌟 CarWith 防断连装甲
+    if (this.duration == 0L || this.data.contains(".m3u8")) {
+        builder.setLiveConfiguration(
+            MediaItem.LiveConfiguration.Builder()
+                .setMaxPlaybackSpeed(1.02f) 
+                .setMinPlaybackSpeed(0.98f) 
+                .setTargetOffsetMs(5000) // 延迟 5s 起播，对抗过隧道网络抖动
+                .build()
         )
+    }
+    return builder.build()
+}
 
     companion object {
         // Internal ID for search requests

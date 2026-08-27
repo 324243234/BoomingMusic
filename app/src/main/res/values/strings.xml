@@ -220,6 +220,7 @@
     <string name="genres_label">Genres</string>
     <string name="folders_label">Folders</string>
     <string name="playlists_label">Playlists</string>
+	<string name="radios_label">网络电台</string>
     <string name="playlist_label">Playlist</string>
     <string name="favorites_label">Favorites</string>
     <string name="last_added_label">Last added</string>

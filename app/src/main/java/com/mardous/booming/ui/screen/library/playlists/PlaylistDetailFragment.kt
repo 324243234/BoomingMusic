@@ -490,6 +490,14 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
     ): Boolean {
+	
+	if (song.duration == 0L || song.data.startsWith("http")) { 
+        if (menuItem.itemId == R.id.action_fetch_lrc || menuItem.itemId == R.id.action_fetch_cover || menuItem.itemId == R.id.action_tag_editor) {
+            Toast.makeText(requireContext(), "电台直播流不支持修改本地标签", Toast.LENGTH_SHORT).show()
+            return true
+        }
+    }
+	
         return when (menuItem.itemId) {
             R.id.action_remove_from_playlist -> {
                 RemoveFromPlaylistDialog.create(song.toSongEntity(playlist.playlistEntity.playListId))

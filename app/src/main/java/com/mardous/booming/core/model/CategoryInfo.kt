@@ -44,7 +44,8 @@ class CategoryInfo(val category: Category, var visible: Boolean) : Parcelable {
         Playlists(R.id.nav_playlists, R.string.playlists_label, R.drawable.icon_playlist),
         Genres(R.id.nav_genres, R.string.genres_label, R.drawable.icon_genre),
         Years(R.id.nav_years, R.string.release_years_label, R.drawable.icon_year),
-        Folders(R.id.nav_folders, R.string.folders_label, R.drawable.icon_folder)
+        Folders(R.id.nav_folders, R.string.folders_label, R.drawable.icon_folder),
+		Radios(R.id.nav_radios, R.string.radios_label, R.drawable.icon_genre)
     }
 
     companion object {

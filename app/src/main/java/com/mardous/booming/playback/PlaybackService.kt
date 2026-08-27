@@ -4,6 +4,9 @@
 
 package com.mardous.booming.playback
 
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.first
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -1099,8 +1102,18 @@ class PlaybackService :
         withContext(IO) {
             val song = queueStateHolder.currentSong.first()
             if (song != Song.emptySong) {
-                repository.toggleFavorite(song)
-                currentIsFavorite = repository.isSongFavorite(song.id) 
+			// ?? 核心识别：时长为 0 或 http 直链即为电台
+            val isRadioStream = song.duration == 0L || song.data.startsWith("http")
+			if (isRadioStream) {
+               // 走电台专属收藏，并将返回值赋给 currentIsFavorite
+                    currentIsFavorite = repository.toggleRadioFavorite(song)
+            } else {
+                repository.toggleFavorite(song) // 走本地歌曲收藏
+				 currentIsFavorite = repository.isSongFavorite(song.id) 
+            }
+			
+                //repository.toggleFavorite(song)
+               
             }
         }
 

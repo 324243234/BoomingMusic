@@ -78,6 +78,8 @@ interface PlaylistRepository {
     suspend fun deleteSongFromAllPlaylists(songId: Long)
     suspend fun deleteSongsFromPlaylist(songs: List<SongEntity>)
     suspend fun deleteSongsFromAllPlaylists(songsIds: List<Long>)
+	suspend fun favoriteRadioPlaylist(): PlaylistEntity
+    suspend fun toggleRadioFavorite(song: Song): Boolean
     fun updatePlaylistsContainingIds(songIds: List<Long>)
 }
 
@@ -158,6 +160,28 @@ class RealPlaylistRepository(
 
     override suspend fun updatePlaylist(playlist: PlaylistEntity) =
         playlistDao.updatePlaylist(playlist)
+		
+	override suspend fun favoriteRadioPlaylist(): PlaylistEntity {
+    val radioFavName = "[Radio]我的电台" 
+    val playlist = playlistDao.playlist(radioFavName).firstOrNull()
+    return if (playlist != null) playlist else {
+        createPlaylist(PlaylistEntity(playlistName = radioFavName))
+        playlistDao.playlist(radioFavName).first()
+    }
+}
+
+override suspend fun toggleRadioFavorite(song: Song): Boolean {
+    val playlist = favoriteRadioPlaylist()
+    val songEntity = song.toSongEntity(playlist.playListId)
+    val favoriteSong = findSongInPlaylist(playlist.playListId, song)
+    return if (favoriteSong != null) {
+        removeSongFromPlaylist(songEntity)
+        false
+    } else {
+        insertSongs(listOf(songEntity))
+        true
+    }
+}
 
     override suspend fun favoritePlaylist(): PlaylistEntity {
         val favorite = context.getString(R.string.favorites_label)
