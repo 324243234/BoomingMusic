@@ -214,25 +214,25 @@ class RealRepository(
         playlistRepository.playlistWithSongsObservable(playlistId)
 
     override suspend fun isSongFavorite(songId: Long): Boolean {
-        // 1. ³¢ÊÔ×ßÔ­ÉúµÄ±¾µØÇú¿â¹ØÁª²éÑ¯
+        // 1. å°è¯•èµ°åŸç”Ÿçš„æœ¬åœ°æ›²åº“å…³è”æŸ¥è¯¢
         val isStandardFav = playlistRepository.isSongFavorite(songId)
         if (isStandardFav) return true
         
-        // 2. ?? ºËĞÄĞŞ¸´£ºÎªÍøÂçµçÌ¨Ìá¹©¶µµ×¼ì²é
-        // ÓÉÓÚµçÌ¨Á÷ÊÇĞéÄâ¸èÇú£¬²»´æÔÚÓÚ±¾µØÇú¿âÖ÷±íÖĞ£¬Ô­Éú»ùÓÚ SQL JOIN µÄ²éÑ¯»áÓÀÔ¶·µ»Ø false¡£
-        // ÎÒÃÇÖ±½Ó¿ç±í¶ÁÈ¡¡°ÎÒµÄÊÕ²Ø¡±¸èµ¥µÄËùÓĞÊı¾İ£¬½øĞĞÎïÀí ID µÄÇ¿Æ¥Åä¡£
+        // 2. ?? æ ¸å¿ƒä¿®å¤ï¼šä¸ºç½‘ç»œç”µå°æä¾›å…œåº•æ£€æŸ¥
+        // ç”±äºç”µå°æµæ˜¯è™šæ‹Ÿæ­Œæ›²ï¼Œä¸å­˜åœ¨äºæœ¬åœ°æ›²åº“ä¸»è¡¨ä¸­ï¼ŒåŸç”ŸåŸºäº SQL JOIN çš„æŸ¥è¯¢ä¼šæ°¸è¿œè¿”å› falseã€‚
+        // æˆ‘ä»¬ç›´æ¥è·¨è¡¨è¯»å–â€œæˆ‘çš„æ”¶è—â€æ­Œå•çš„æ‰€æœ‰æ•°æ®ï¼Œè¿›è¡Œç‰©ç† ID çš„å¼ºåŒ¹é…ã€‚
         return try {
-            // ¹ıÂË³öËùÓĞµÄÍøÂçµçÌ¨·ÖÀà
+            // è¿‡æ»¤å‡ºæ‰€æœ‰çš„ç½‘ç»œç”µå°åˆ†ç±»
             val allRadioPlaylists = playlistRepository.playlistsWithSongs(true)
                 .filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
                 
-            // Ëø¶¨ÃûÎª¡°ÎÒµÄµçÌ¨¡±»ò¡°ÎÒµÄµçÌ¨ÁĞ±í¡±µÄ×¨ÊôÊÕ²Ø¼Ğ
+            // é”å®šåä¸ºâ€œæˆ‘çš„ç”µå°â€æˆ–â€œæˆ‘çš„ç”µå°åˆ—è¡¨â€çš„ä¸“å±æ”¶è—å¤¹
             val radioFavPlaylist = allRadioPlaylists.find { 
                 val name = it.playlistEntity.playlistName
-                name.contains("ÎÒµÄµçÌ¨") || name.contains("ÊÕ²Ø") 
+                name.contains("æˆ‘çš„ç”µå°") || name.contains("æ”¶è—") 
             }
             
-            // Èç¹ûÔÚÕâ¸ö×¨ÊôÁĞ±íÀïÕÒµ½ÁËµ±Ç°µçÌ¨µÄ ID£¬Á¢¼´¸æËß UI ºÍ³µ»úµãÁÁºìĞÄ£¡
+            // å¦‚æœåœ¨è¿™ä¸ªä¸“å±åˆ—è¡¨é‡Œæ‰¾åˆ°äº†å½“å‰ç”µå°çš„ IDï¼Œç«‹å³å‘Šè¯‰ UI å’Œè½¦æœºç‚¹äº®çº¢å¿ƒï¼
             radioFavPlaylist?.songs?.any { it.id == songId } ?: false
         } catch (e: Exception) {
             false
