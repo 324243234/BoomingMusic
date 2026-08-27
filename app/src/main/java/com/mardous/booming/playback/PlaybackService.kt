@@ -1199,25 +1199,37 @@ class PlaybackService :
             val position = snapshot.createPosition()
 
             val (songs, missingMediaItems) = withContext(IO) {
-                val dbSongs = repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true).toMutableList()
+                // 1. 获取数据库匹配结果 (解构 Pair)
+                val (fetchedSongs, fetchedMissing) = repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true)
+                val dbSongs = fetchedSongs.toMutableList()
                 
-                // 🌟 核心拦截 2：保护电台网络流不被当作“丢失文件”而踢出队列
-                val missing = snapshot.mediaItems.filter { item -> dbSongs.none { it.id.toString() == item.mediaId } }
-                val radioMissing = missing.filter { it.localConfiguration?.uri?.toString()?.startsWith("http") == true }
+                // 2. 🌟 核心拦截：从真正丢失的项目中捞出网络电台流
+                val radioMissing = fetchedMissing.filter { it.localConfiguration?.uri?.toString()?.startsWith("http") == true }
                 
-                // 为网络流重构虚拟的 Song 对象
+                // 3. 严格按照当前项目的 Song 构造器生成虚拟电台对象
                 val radioSongs = radioMissing.map { item ->
                     Song(
                         id = item.mediaId.toLongOrNull() ?: System.currentTimeMillis(),
+                        data = item.localConfiguration?.uri?.toString() ?: "",
                         title = item.mediaMetadata.title?.toString() ?: "未知电台",
-                        artistName = item.mediaMetadata.artist?.toString() ?: "网络电台",
+                        trackNumber = 0,
+                        year = 0,
+                        size = 0L,
+                        duration = 0L,
+                        dateAdded = System.currentTimeMillis(),
+                        rawDateModified = System.currentTimeMillis(), // 👈 修复的参数名
+                        albumId = -1L,
                         albumName = item.mediaMetadata.albumTitle?.toString() ?: "直播流",
-                        duration = 0L, data = item.localConfiguration?.uri?.toString() ?: "",
-                        albumId = -1L, artistId = -1L, trackNumber = 0, year = 0, dateAdded = 0L, dateModified = 0L, size = 0L
+                        artistId = -1L,
+                        artistName = item.mediaMetadata.artist?.toString() ?: "网络电台",
+                        albumArtistName = "网络电台", // 👈 补齐的必填参数
+                        genreName = "直播"          // 👈 补齐的必填参数
                     )
                 }
                 dbSongs.addAll(radioSongs)
-                val actualMissing = missing - radioMissing.toSet()
+                
+                // 4. 剔除网络电台后，真正缺失的本地文件
+                val actualMissing = fetchedMissing.filterNot { radioMissing.contains(it) }
                 
                 snapshot.deriveQueueSongs(dbSongs) to actualMissing
             }
