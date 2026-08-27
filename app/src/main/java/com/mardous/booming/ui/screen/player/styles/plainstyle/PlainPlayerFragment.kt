@@ -332,15 +332,18 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             (resources.configuration.screenLayout and android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK) >= android.content.res.Configuration.SCREENLAYOUT_SIZE_LARGE
 
         if (isLandscapeOrTablet) {
-            menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+           // menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)            
             menu.findItem(R.id.action_sleep_timer)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
             menu.findItem(R.id.action_show_lyrics)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
 
-            menu.findItem(R.id.action_go_to_artist)?.apply { setIcon(R.drawable.ic_person_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+            
+			menu.findItem(R.id.action_go_to_artist)?.apply { setIcon(R.drawable.ic_person_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_go_to_album)?.apply { setIcon(R.drawable.ic_album_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
+			menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+			
 
             val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 50, "动态封面开关")
             toggleVideoItem.apply {
