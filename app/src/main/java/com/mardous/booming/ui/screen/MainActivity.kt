@@ -186,6 +186,7 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
                 R.id.nav_folders,
                 R.id.nav_playlists,
                 R.id.nav_genres,
+				R.id.nav_radios,
                 R.id.nav_years -> {
                     // Save the last tab
                     if (Preferences.isRememberLastPage) {

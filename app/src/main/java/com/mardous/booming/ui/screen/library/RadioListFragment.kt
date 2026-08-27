@@ -107,6 +107,7 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
         menu.removeItem(R.id.action_view_type) // 移除多余的视图切换
         
         // 添加电台专属菜单
+		menu.add(0, 9003, 0, "📁 新建电台分类").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         menu.add(0, 9001, 0, "导入 M3U 电台源").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         menu.add(0, 9002, 0, "备份全部电台").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
     }
@@ -114,6 +115,40 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     // 🌟 处理顶部菜单点击
     override fun onMenuItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+		    9003 -> {
+                // 弹出输入框，新建一个空的电台播放列表
+                val editText = android.widget.EditText(requireContext()).apply {
+                    hint = "例如: 交通广播"
+                    setSingleLine()
+                }
+                val layout = android.widget.LinearLayout(requireContext()).apply {
+                    setPadding(60, 20, 60, 0)
+                    addView(editText)
+                }
+
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("新建电台分类")
+                    .setView(layout)
+                    .setPositiveButton("创建") { _, _ ->
+                        val name = editText.text.toString().trim()
+                        if (name.isNotEmpty()) {
+                            viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                // 🌟 必须加上 [Radio] 前缀进行底层物理隔离
+                                val playlistEntity = com.mardous.booming.data.local.room.PlaylistEntity(
+                                    playlistName = "[Radio]$name"
+                                )
+                                repository.createPlaylist(playlistEntity)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    libraryViewModel.forceReload(ReloadType.Playlists)
+                                }
+                            }
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return true
+            }
+		
             9001 -> {
                 // 触发文件选择器，过滤出所有文件（系统会允许选中 m3u/txt）
                 importM3uLauncher.launch("*/*") 

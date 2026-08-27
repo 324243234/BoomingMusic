@@ -400,6 +400,17 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
             if (it.playlistEntity.isFavorites(requireContext())) {
                 menu.removeItem(R.id.action_delete_playlist)
             }
+			
+			// 👇 新增：识别到是电台分类，动态注入“添加自定义源”菜单
+            if (it.playlistEntity.playlistName.startsWith("[Radio]")) {
+                if (menu.findItem(8001) == null) {
+                    menu.add(0, 8001, 0, "➕ 添加自定义电台源").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+                }
+                // 顺便把电台不需要的排序、导出功能屏蔽掉
+                menu.findItem(R.id.action_sort_order)?.isVisible = false
+                menu.findItem(R.id.action_export_playlist)?.isVisible = false
+            }
+        
         }
         if (playlistSongAdapter?.isLockDrag == true) {
             menu.findItem(R.id.action_lock)
@@ -414,6 +425,49 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+	
+	     if (menuItem.itemId == 8001) {
+            val nameInput = android.widget.EditText(requireContext()).apply { hint = "电台名称 (如: 广东交通广播)" }
+            val urlInput = android.widget.EditText(requireContext()).apply { hint = "直播流 URL (http/m3u8)" }
+            val layout = android.widget.LinearLayout(requireContext()).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(60, 20, 60, 0)
+                addView(nameInput)
+                addView(urlInput)
+            }
+
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                .setTitle("添加自定义电台源")
+                .setView(layout)
+                .setPositiveButton("保存") { _, _ ->
+                    val name = nameInput.text.toString().trim()
+                    val url = urlInput.text.toString().trim()
+                    if (name.isNotEmpty() && url.isNotEmpty()) {
+                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                            val newRadioSong = com.mardous.booming.data.local.room.SongEntity(
+                                id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
+                                title = name,
+                                artistName = "网络电台",
+                                albumName = "直播流",
+                                duration = 0L, // 🌟 标识为电台流
+                                data = url,
+                                playlistCreatorId = playlist.playlistEntity.playListId,
+                                // 补齐必填参数
+                                trackNumber = 0, year = 0, size = 0L,
+                                dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                                albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
+                            )
+                            repository.insertSongsInPlaylist(listOf(newRadioSong))
+                            // Room 数据库有观察者机制，插入完成后 detailViewModel 的 LiveData 会自动更新并刷新列表 UI！
+                        }
+                    } else {
+                        Toast.makeText(requireContext(), "名称和链接不能为空", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return true
+			}
         if (menuItem.itemId == R.id.action_export_playlist) {
             val currentSongs = playlistSongAdapter?.dataSet
             val playlistName = playlist.playlistEntity.playlistName
