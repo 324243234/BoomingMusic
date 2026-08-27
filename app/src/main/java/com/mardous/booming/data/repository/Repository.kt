@@ -213,8 +213,31 @@ class RealRepository(
     override fun playlistWithSongsObservable(playlistId: Long): LiveData<PlaylistWithSongs> =
         playlistRepository.playlistWithSongsObservable(playlistId)
 
-    override suspend fun isSongFavorite(songId: Long): Boolean =
-        playlistRepository.isSongFavorite(songId)
+    override suspend fun isSongFavorite(songId: Long): Boolean {
+        // 1. 尝试走原生的本地曲库关联查询
+        val isStandardFav = playlistRepository.isSongFavorite(songId)
+        if (isStandardFav) return true
+        
+        // 2. ?? 核心修复：为网络电台提供兜底检查
+        // 由于电台流是虚拟歌曲，不存在于本地曲库主表中，原生基于 SQL JOIN 的查询会永远返回 false。
+        // 我们直接跨表读取“我的收藏”歌单的所有数据，进行物理 ID 的强匹配。
+        return try {
+            // 过滤出所有的网络电台分类
+            val allRadioPlaylists = playlistRepository.playlistsWithSongs(true)
+                .filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
+                
+            // 锁定名为“我的电台”或“我的电台列表”的专属收藏夹
+            val radioFavPlaylist = allRadioPlaylists.find { 
+                val name = it.playlistEntity.playlistName
+                name.contains("我的电台") || name.contains("收藏") 
+            }
+            
+            // 如果在这个专属列表里找到了当前电台的 ID，立即告诉 UI 和车机点亮红心！
+            radioFavPlaylist?.songs?.any { it.id == songId } ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     override suspend fun favoriteSongs(): List<Song> =
         playlistRepository.favoriteSongs()
