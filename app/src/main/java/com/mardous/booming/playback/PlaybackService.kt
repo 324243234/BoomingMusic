@@ -4,6 +4,7 @@
 
 package com.mardous.booming.playback
 
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import com.mardous.booming.data.repository.PlaylistRepository
 import kotlinx.coroutines.flow.first
@@ -295,14 +296,17 @@ class PlaybackService :
         )
 
         playerThread.start()
-        // 🌟 1. 创建防盗链 HTTP 数据源工厂 (伪装 User-Agent，支持跨协议重定向)
+        // 🌟 1. 创建防盗链 HTTP 数据源工厂 (伪装 User-Agent，支持网络电台)
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Lavf/58.76.100")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(8000)
             .setReadTimeoutMs(8000)
 
-        // 🌟 2. 保留原有的 MP3 提取器配置 (用于本地音乐支持)
+        // 🌟 2. 核心修复：用 DefaultDataSource 包装它！这样就同时支持了本地音乐和网络流！
+        val defaultDataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
+
+        // 🌟 3. 保留原有的 MP3 提取器配置 (用于本地音乐支持)
         val extractorsFactory = DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
             .also {
@@ -311,14 +315,15 @@ class PlaybackService :
                 }
             }
 
-        // 🌟 3. 将 HTTP 数据源注入 MediaSourceFactory
+        // 🌟 4. 将包装好的 defaultDataSourceFactory 注入 MediaSourceFactory
         val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
-            .setDataSourceFactory(httpDataSourceFactory)
+            .setDataSourceFactory(defaultDataSourceFactory) // 👈 这里必须用包装后的工厂！
 
-        // 🌟 4. 构建终极版 ExoPlayer
+        // 🌟 5. 构建终极版 ExoPlayer
         player = AdvancedForwardingPlayer(
             ExoPlayer.Builder(this)
                 .setWakeMode(C.WAKE_MODE_LOCAL)
+                // ... 保持下面的 AudioAttributes 和 setRenderersFactory 不变
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -332,12 +337,11 @@ class PlaybackService :
                         .setMediaCodecSelector(AlacWorkaroundCodecSelector())
                         .setEnableDecoderFallback(true)
                 )
-                .setMediaSourceFactory(mediaSourceFactory) // 👈 完美注入防盗链工厂
+                .setMediaSourceFactory(mediaSourceFactory) // 👈 完美注入
                 .setSkipSilenceEnabled(equalizerManager.skipSilence.value)
                 .setHandleAudioBecomingNoisy(true)
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
                 .setSeekBackIncrementMs(seekInterval)
-                .setSeekForwardIncrementMs(seekInterval)
                 .setPlaybackLooper(playerThread.looper)
                 .build()
         )
