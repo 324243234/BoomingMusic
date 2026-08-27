@@ -342,7 +342,10 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
 			menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            menu.findItem(R.id.action_favorite)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            menu.findItem(R.id.action_favorite)?.apply {
+                setIcon(R.drawable.ic_favorite_outline_24dp)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            }
 			
 
             val toggleVideoItem = menu.findItem(R.id.action_toggle_video_cover) ?: menu.add(Menu.NONE, R.id.action_toggle_video_cover, 50, "动态封面开关")
@@ -589,10 +592,14 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
     }
 
     private fun updateFavoriteIcon(isFavorite: Boolean) {
+	    val iconRes = if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp
         _binding?.lyricsFavoriteButton?.apply {
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
+		
+		// 2. 🌟 强制同步更新顶栏 Toolbar 上的主红心状态
+        playerToolbar.menu?.findItem(R.id.action_favorite)?.setIcon(iconRes)
     }
 
     override fun getTintTargets(scheme: PlayerColorScheme): List<PlayerTintTarget> {

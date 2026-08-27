@@ -1,6 +1,7 @@
 package com.mardous.booming.ui.screen.library.radios
 
 
+
 import androidx.core.content.edit
 import com.mardous.booming.core.model.GridViewType
 import android.net.Uri
@@ -48,6 +49,8 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
 
     override val itemLayoutRes: Int
         get() = if (isGridMode) R.layout.item_playlist else R.layout.item_list
+		
+	private var originalRadios: List<PlaylistWithSongs> = emptyList()
 
     // 🌟 注册系统文件选择器并动态重命名
     private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -109,9 +112,11 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 🌟 监听 ViewModel 中获取电台的数据流
+        // 🌟 监听 ViewModel 中获取电台的数据流并缓存
         libraryViewModel.getRadioPlaylists().observe(viewLifecycleOwner) { radios ->
+            originalRadios = radios
             adapter?.dataSet = radios
+            adapter?.notifyDataSetChanged()
         }
     }
 
@@ -134,6 +139,32 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
         super.onCreateMenu(menu, inflater)
         menu.removeItem(R.id.action_view_type) // 移除多余的视图切换
+		
+		// 🌟 1. 注入原生搜索框
+        val searchItem = menu.add(0, 9005, 0, "搜索电台").apply {
+            setIcon(R.drawable.ic_search_24dp)
+            setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM or MenuItem.SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW)
+        }
+        val searchView = androidx.appcompat.widget.SearchView(requireContext()).apply {
+            queryHint = "搜索电台名称..."
+            setOnQueryTextListener(object : androidx.appcompat.widget.SearchView.OnQueryTextListener {
+                override fun onQueryTextSubmit(query: String?): Boolean = true
+                override fun onQueryTextChange(newText: String?): Boolean {
+                    val query = newText?.trim()?.lowercase() ?: ""
+                    // 根据输入内容实时过滤列表
+                    adapter?.dataSet = if (query.isEmpty()) {
+                        originalRadios
+                    } else {
+                        originalRadios.filter { 
+                            it.playlistEntity.playlistName.lowercase().contains(query) 
+                        }
+                    }
+                    adapter?.notifyDataSetChanged()
+                    return true
+                }
+            })
+        }
+        searchItem.actionView = searchView
         
         // 添加电台专属菜单
 		menu.add(0, 9003, 0, "📁 新建电台分类").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
