@@ -54,14 +54,23 @@ object RadioBackupManager {
                 else if (trimmed.startsWith("http")) {
                     songsToInsert.add(
                         SongEntity(
-                            // 使用纳秒级时间戳 + 随机数，保证 ID 绝对唯一且为正数
-                           id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
+                            id = System.nanoTime() + kotlin.random.Random.nextInt(10000),
                             title = currentTitle,
                             artistName = "网络电台",
                             albumName = "直播流",
-                            duration = 0L, // 标识为直播流
+                            duration = 0L, 
                             data = trimmed,
-                            playlistCreatorId = playlistId
+                            playlistCreatorId = playlistId,
+                            // 🌟 补齐底层 Entity 强制要求的占位参数
+                            trackNumber = 0,
+                            year = 0,
+                            size = 0L,
+                            dateAdded = System.currentTimeMillis(),
+                            dateModified = System.currentTimeMillis(),
+                            albumId = -1L,
+                            artistId = -1L,
+                            albumArtist = "网络电台",
+                            genreName = "直播"
                         )
                     )
                 }

@@ -1,5 +1,8 @@
 package com.mardous.booming.ui.screen.library.radios
 
+
+import androidx.core.content.edit
+import com.mardous.booming.core.model.GridViewType
 import android.net.Uri
 import android.os.Bundle
 import android.view.Menu
@@ -150,5 +153,15 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     
     override fun onFavoriteContentChanged() { 
         libraryViewModel.forceReload(ReloadType.Playlists) 
+    }
+	
+	// 🌟 补全基类要求的网格布局抽象方法
+    override fun getSavedViewType(): GridViewType = GridViewType.Normal
+    override fun saveViewType(viewType: GridViewType) {}
+    override fun getSavedGridSize(): Int = sharedPreferences.getInt("radios_grid_size", defaultGridSize)
+    override fun saveGridSize(newGridSize: Int) { sharedPreferences.edit { putInt("radios_grid_size", newGridSize) } }
+    override fun onGridSizeChanged(isLand: Boolean, gridColumns: Int) {
+        layoutManager?.spanCount = gridColumns
+        adapter?.notifyDataSetChanged()
     }
 }

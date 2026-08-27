@@ -224,7 +224,7 @@ class LibraryViewModel(
 
 	
 	// 暴露出纯净的电台列表（去掉前缀给 UI 显示）
-fun getRadioPlaylists() = liveData(Dispatchers.IO) {
+fun getRadioPlaylists() = liveData(IO) {
     val radios = repository.playlistsWithSongs(sorted = true)
         .filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
         .map { 

@@ -4,6 +4,7 @@
 
 package com.mardous.booming.playback
 
+import com.mardous.booming.data.repository.PlaylistRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.first
@@ -149,6 +150,7 @@ class PlaybackService :
     private val repository: Repository by inject()
     // ğŸŒŸ æ³¨å…¥æ­Œè¯æœåŠ¡ (CarWith å¿…é¡»é¡¹)
     private val lyricsRepository: LyricsRepository by inject()
+	private val playlistRepository: PlaylistRepository by inject()
 
     private val queueStateHolder: QueueStateHolder by inject()
     private val isInTimelineUpdate = AtomicBoolean(false)
@@ -1102,13 +1104,13 @@ class PlaybackService :
         withContext(IO) {
             val song = queueStateHolder.currentSong.first()
             if (song != Song.emptySong) {
-			// ?? ºËĞÄÊ¶±ğ£ºÊ±³¤Îª 0 »ò http Ö±Á´¼´ÎªµçÌ¨
+			// ?? æ ¸å¿ƒè¯†åˆ«ï¼šæ—¶é•¿ä¸º 0 æˆ– http ç›´é“¾å³ä¸ºç”µå°
             val isRadioStream = song.duration == 0L || song.data.startsWith("http")
 			if (isRadioStream) {
-               // ×ßµçÌ¨×¨ÊôÊÕ²Ø£¬²¢½«·µ»ØÖµ¸³¸ø currentIsFavorite
-                    currentIsFavorite = repository.toggleRadioFavorite(song)
+               // èµ°ç”µå°ä¸“å±æ”¶è—ï¼Œå¹¶å°†è¿”å›å€¼èµ‹ç»™ currentIsFavorite
+                   currentIsFavorite = playlistRepository.toggleRadioFavorite(song)
             } else {
-                repository.toggleFavorite(song) // ×ß±¾µØ¸èÇúÊÕ²Ø
+                repository.toggleFavorite(song) // èµ°æœ¬åœ°æ­Œæ›²æ”¶è—
 				 currentIsFavorite = repository.isSongFavorite(song.id) 
             }
 			
