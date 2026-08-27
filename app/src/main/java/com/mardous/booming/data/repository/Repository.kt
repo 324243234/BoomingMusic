@@ -296,10 +296,13 @@ class RealRepository(
         // Clean up playlists
         val playlists = playlistRepository.playlistsWithSongs()
         playlists.forEach { playlistWithSongs ->
+            // 🌟 核心修复：遇到 http/https 开头的电台流直接放行，绝不当作丢失文件删除！
             val missingSongs = playlistWithSongs.songs.filterNot {
-                File(it.data).exists()
+                it.data.startsWith("http", ignoreCase = true) || File(it.data).exists()
             }
-            playlistRepository.deleteSongsFromPlaylist(missingSongs)
+            if (missingSongs.isNotEmpty()) {
+                playlistRepository.deleteSongsFromPlaylist(missingSongs)
+            }
         }
     }
 

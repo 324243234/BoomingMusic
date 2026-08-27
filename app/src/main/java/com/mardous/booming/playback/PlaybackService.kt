@@ -296,12 +296,12 @@ class PlaybackService :
         )
 
         playerThread.start()
-        // 🌟 1. 创建防盗链 HTTP 数据源工厂 (伪装 User-Agent，支持网络电台)
+        // 🌟 1. 换成全球通用的 Chrome浏览器 UA，彻底解决高级防火墙 403 拦截
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Lavf/58.76.100")
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(8000)
+            .setConnectTimeoutMs(15000) // 👈 增加连接超时到 15秒 (应对部分加载慢的源)
+            .setReadTimeoutMs(15000)    // 👈 增加读取超时
 
         // 🌟 2. 核心修复：用 DefaultDataSource 包装它！这样就同时支持了本地音乐和网络流！
         val defaultDataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
@@ -1199,37 +1199,34 @@ class PlaybackService :
             val position = snapshot.createPosition()
 
             val (songs, missingMediaItems) = withContext(IO) {
-                // 1. 获取数据库匹配结果 (解构 Pair)
                 val (fetchedSongs, fetchedMissing) = repository.songsByMediaItems(snapshot.mediaItems, ignoreBlacklist = true)
                 val dbSongs = fetchedSongs.toMutableList()
                 
-                // 2. 🌟 核心拦截：从真正丢失的项目中捞出网络电台流
-                val radioMissing = fetchedMissing.filter { it.localConfiguration?.uri?.toString()?.startsWith("http") == true }
+                // 🔥 性能核弹：将已查到的 ID 放入 HashSet 内存屏障，将比对复杂度从 O(N²) 降到 O(N)
+                val dbSongIds = dbSongs.map { it.id.toString() }.toSet()
                 
-                // 3. 严格按照当前项目的 Song 构造器生成虚拟电台对象
+                // 极速过滤丢失文件，杜绝手机发热卡顿
+                val missing = snapshot.mediaItems.filter { !dbSongIds.contains(it.mediaId) }
+                val radioMissing = missing.filter { it.localConfiguration?.uri?.toString()?.startsWith("http") == true }
+                
                 val radioSongs = radioMissing.map { item ->
                     Song(
                         id = item.mediaId.toLongOrNull() ?: System.currentTimeMillis(),
                         data = item.localConfiguration?.uri?.toString() ?: "",
                         title = item.mediaMetadata.title?.toString() ?: "未知电台",
-                        trackNumber = 0,
-                        year = 0,
-                        size = 0L,
-                        duration = 0L,
+                        trackNumber = 0, year = 0, size = 0L, duration = 0L,
                         dateAdded = System.currentTimeMillis(),
-                        rawDateModified = System.currentTimeMillis(), // 👈 修复的参数名
+                        rawDateModified = System.currentTimeMillis(),
                         albumId = -1L,
                         albumName = item.mediaMetadata.albumTitle?.toString() ?: "直播流",
                         artistId = -1L,
                         artistName = item.mediaMetadata.artist?.toString() ?: "网络电台",
-                        albumArtistName = "网络电台", // 👈 补齐的必填参数
-                        genreName = "直播"          // 👈 补齐的必填参数
+                        albumArtistName = "网络电台", 
+                        genreName = "直播"
                     )
                 }
                 dbSongs.addAll(radioSongs)
-                
-                // 4. 剔除网络电台后，真正缺失的本地文件
-                val actualMissing = fetchedMissing.filterNot { radioMissing.contains(it) }
+                val actualMissing = missing.filterNot { radioMissing.contains(it) }
                 
                 snapshot.deriveQueueSongs(dbSongs) to actualMissing
             }
@@ -1575,35 +1572,26 @@ class PlaybackService :
         }
     }
     
-	// 🌟 核心拦截 1：强行注入电台的真实 URL 和元数据，防止初始化丢失
+	// 🌟 核心拦截 1：强行注入电台的真实 URL 和元数据 (启用 O(1) Hash 性能优化)
     private suspend fun interceptRadioMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
-        // 提前一次性从数据库查出所有电台，不要放在循环里查
         val radioPlaylists = repository.playlistsWithSongs(true).filter { it.playlistEntity.playlistName.startsWith("[Radio]") }
-        val radioEntities = radioPlaylists.flatMap { it.songs }
+        
+        // 🔥 性能核弹：将电台列表转换为 Map 字典。避免双重 for 循环导致 CPU 飙升发热
+        val radioEntitiesMap = radioPlaylists.flatMap { it.songs }.associateBy { it.id }
 
         return mediaItems.map { item ->
-            // 如果已经被解析过了（携带了 URI），直接放行
             if (item.localConfiguration != null) return@map item
-            
-            // 直接安全提取 ID
             val id = item.mediaId.toLongOrNull() ?: return@map item
             
-            // 比对靶标：如果是电台，强行注入真实的 HTTP 链接与抗网损配置
-            val rs = radioEntities.find { it.id == id }
+            // O(1) 极速秒级匹配，一千个电台也毫无性能损耗
+            val rs = radioEntitiesMap[id]
             if (rs != null) {
                 item.buildUpon()
-                    .setUri(rs.data) // 👈 核心：注入真实的 HTTP 链接！
+                    .setUri(rs.data) // 注入真实的 HTTP 链接！
                     .setMediaMetadata(
                         item.mediaMetadata.buildUpon()
                             .setTitle(rs.title)
                             .setArtist("网络电台")
-                            .build()
-                    )
-                    .setLiveConfiguration(
-                        MediaItem.LiveConfiguration.Builder()
-                            .setMaxPlaybackSpeed(1.02f)
-                            .setMinPlaybackSpeed(0.98f)
-                            .setTargetOffsetMs(5000)
                             .build()
                     )
                     .build()
