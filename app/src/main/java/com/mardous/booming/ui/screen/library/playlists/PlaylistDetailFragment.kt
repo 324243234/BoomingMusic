@@ -407,7 +407,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     menu.add(0, 8001, 0, "➕ 添加自定义电台源").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
                 }
                 // 顺便把电台不需要的排序、导出功能屏蔽掉
-                menu.findItem(R.id.action_sort_order)?.isVisible = false
+                menu.findItem(R.id.action_sort_order)?.isVisible = true
                 menu.findItem(R.id.action_export_playlist)?.isVisible = false
             }
         
