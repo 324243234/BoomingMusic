@@ -90,7 +90,7 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
                     resultList.clear()
                     recyclerView.adapter?.notifyDataSetChanged()
 
-                    val results = UniversalDownloadEngine.searchOrParse(input, targetLevel)
+                    val results = UniversalDownloadEngine.searchOrParse(requireContext(), input, targetLevel)
                     
                     progressBar.visibility = View.GONE
                     if (results.isEmpty()) {

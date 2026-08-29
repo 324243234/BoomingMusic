@@ -21,6 +21,7 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.util.Base64
 import android.util.Log
+import com.mardous.booming.data.network.NeteaseDailyApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -41,7 +42,6 @@ import javax.crypto.spec.SecretKeySpec
 
 object UniversalDownloadEngine {
     private const val TAG = "UniversalDownloadEngine"
-    private const val RENDER_API = "https://my-wangyi-api.onrender.com"
 
     // 🌟 Znnu 终极密钥常量
     private const val ZNNU_HMAC_KEY = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0"
@@ -53,10 +53,13 @@ object UniversalDownloadEngine {
     )
 
     // ==========================================
-    // 🚀 第 1 级火箭：稳定搜索与链接解析 (纯净 Render 方案)
+    // 🚀 第 1 级火箭：稳定搜索与链接解析 (动态适配本地配置的 API 域名)
     // ==========================================
-    suspend fun searchOrParse(input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
+    suspend fun searchOrParse(context: Context, input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
+            // 🌟 动态获取用户在高级设置里填写的网易云 API 域名（若为空则自动回退默认 Render）
+            val baseUrl = NeteaseDailyApi.getBaseUrl(context)
+
             val inputTrimmed = input.trim()
             val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
             val idsToFetch = mutableListOf<Long>()
@@ -66,7 +69,7 @@ object UniversalDownloadEngine {
             } else {
                 val limit = if (inputTrimmed.contains(" ") || inputTrimmed.contains("-")) 30 else 80
                 val encodedQuery = URLEncoder.encode(inputTrimmed, "UTF-8").replace("+", "%20")
-                val searchUrl = "$RENDER_API/search?keywords=$encodedQuery&type=1&limit=$limit"
+                val searchUrl = "$baseUrl/search?keywords=$encodedQuery&type=1&limit=$limit"
                 
                 val res = httpGet(searchUrl) ?: return@withContext emptyList()
                 val songs = JSONObject(res).optJSONObject("result")?.optJSONArray("songs") ?: return@withContext emptyList()
@@ -79,7 +82,7 @@ object UniversalDownloadEngine {
             if (idsToFetch.isEmpty()) return@withContext emptyList()
 
             val idsParam = idsToFetch.joinToString(",")
-            val detailUrl = "$RENDER_API/song/detail?ids=$idsParam"
+            val detailUrl = "$baseUrl/song/detail?ids=$idsParam"
             val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
             val songArray = runCatching { JSONObject(detailRes).optJSONArray("songs") }.getOrNull() ?: return@withContext emptyList()
 
@@ -124,7 +127,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ⚔️ 第 2 级火箭：破盾下载流 (100% 走 Znnu 引擎)
+    // ⚔️ 第 2 级火箭：破盾下载流 (100% 走 Znnu 引擎 + 动态降级)
     // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
@@ -133,8 +136,10 @@ object UniversalDownloadEngine {
             var audioUrl = extractZnnuVipUrl(song.id, song.requestedLevel)
             
             if (audioUrl.isNullOrBlank()) {
-                Log.w(TAG, "Znnu 解析失败，启动 Render 降级兜底...")
-                val fallbackRes = httpGet("$RENDER_API/song/url/v1?id=${song.id}&level=${song.requestedLevel}")
+                Log.w(TAG, "Znnu 解析失败，启动动态 API 降级兜底...")
+                // 🌟 使用动态 baseUrl
+                val baseUrl = NeteaseDailyApi.getBaseUrl(context)
+                val fallbackRes = httpGet("$baseUrl/song/url/v1?id=${song.id}&level=${song.requestedLevel}")
                 audioUrl = runCatching { JSONObject(fallbackRes ?: "").optJSONArray("data")?.getJSONObject(0)?.optString("url") }.getOrNull()
             }
             
@@ -365,7 +370,6 @@ object UniversalDownloadEngine {
             val domain = "music.znnu.com"
             val rawInput = "https://music.163.com/song?id=$songId"
 
-            // 🌟 修复：不再硬编码 "lossless"，而是使用传入的真实 targetLevel！
             val params = mapOf(
                 "act" to "song",
                 "id" to songId,
