@@ -26,5 +26,13 @@
         app:persistent="false"
         app:layout="@layout/list_item_view"
         app:key="backup_and_restore" />
+		
+	<!-- 👇 新增的网易云 Cookie 注入入口 -->
+    <Preference
+        app:key="pref_netease_cookie"
+        app:title="配置网易云 Cookie"
+        app:summary="绑定本地 Cookie 以解锁每日推荐与红心同步"
+        app:icon="@drawable/ic_settings_24dp"
+        app:layout="@layout/list_item_view" />
 
 </PreferenceScreen>

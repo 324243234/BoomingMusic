@@ -410,8 +410,44 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
                 findActivityNavController(R.id.fragment_container).navigate(R.id.nav_about)
                 true
             }
+            // 👇 拦截高级设置中的点击事件，呼出弹窗
+            preference.key == "pref_netease_cookie" -> {
+                showCookieInputDialog(requireContext())
+                true
+            }
             else -> super.onPreferenceTreeClick(preference)
         }
+    }
+
+    // 👇 呼出配置 Cookie 弹窗的具体实现方法
+    private fun showCookieInputDialog(context: android.content.Context) {
+        val currentCookie = com.mardous.booming.data.network.NeteaseDailyApi.getCookie(context)
+        
+        val editText = android.widget.EditText(context).apply {
+            hint = "留空则使用云端 Render 配置的 Cookie"
+            setText(currentCookie)
+            setLines(4)
+            gravity = android.view.Gravity.TOP
+        }
+        
+        val layout = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(60, 30, 60, 0)
+            addView(editText, android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+
+        MaterialAlertDialogBuilder(context)
+            .setTitle("配置网易云 Cookie")
+            .setMessage("数据仅保存在手机本地。优先使用本地 Cookie，留空则默认回退至 Render 云端配置。")
+            .setView(layout)
+            .setPositiveButton("保存") { dialog, _ ->
+                val inputCookie = editText.text.toString().trim()
+                com.mardous.booming.data.network.NeteaseDailyApi.saveCookie(context, inputCookie)
+                android.widget.Toast.makeText(context, "Cookie 设置已保存", android.widget.Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
