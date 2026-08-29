@@ -238,14 +238,15 @@ private val importM3uLauncher = registerForActivityResult(ActivityResultContract
     }
 
     override fun playlistMenuItemClick(playlist: PlaylistWithSongs, menuItem: MenuItem): Boolean {
-        // 🌟 致命架构隐患阻断：封杀重命名功能，强保 [Radio] 隔离标识不被用户意外删掉
-        if (menuItem.itemId == R.id.action_rename_playlist) {
-            Toast.makeText(requireContext(), "为保证数据库物理隔离，电台分类不支持修改名称，请新建并导入。", Toast.LENGTH_LONG).show()
-            return true
-        }
-        // 放行“删除”、“播放”等安全指令
-        return playlist.onPlaylistMenu(this, menuItem)
+    // 🌟 修复：原作者移除了 action_rename_playlist，改用标题判定或通用 action_rename 防护
+    val title = menuItem.title?.toString() ?: ""
+    if (title.contains("重命名") || title.contains("Rename")) {
+        Toast.makeText(requireContext(), "为保证数据库物理隔离，电台分类不支持修改名称，请新建并导入。", Toast.LENGTH_LONG).show()
+        return true
     }
+    // 放行“删除”、“播放”等安全指令
+    return playlist.onPlaylistMenu(this, menuItem)
+}
     override fun playlistsMenuItemClick(playlists: List<PlaylistWithSongs>, menuItem: MenuItem) {
         // 🌟 激活长按多选后的批量删除与操作
         playlists.onPlaylistsMenu(this, menuItem)

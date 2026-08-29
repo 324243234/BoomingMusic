@@ -80,11 +80,8 @@ import com.mardous.booming.ui.screen.update.UpdateSearchResult
 import com.mardous.booming.ui.screen.update.UpdateViewModel
 import com.mardous.booming.util.ADD_EXTRA_CONTROLS
 import com.mardous.booming.util.AUTO_LANGUAGE
-import com.mardous.booming.util.BACKUP_DATA
 import com.mardous.booming.util.BLACKLIST_ENABLED
 import com.mardous.booming.util.BLACK_THEME
-import com.mardous.booming.util.BackupContent
-import com.mardous.booming.util.BackupHelper
 import com.mardous.booming.util.COVER_DOUBLE_TAP_ACTION
 import com.mardous.booming.util.COVER_LEFT_DOUBLE_TAP_ACTION
 import com.mardous.booming.util.COVER_LONG_PRESS_ACTION
@@ -105,7 +102,6 @@ import com.mardous.booming.util.ON_CLEAR_QUEUE_ACTION
 import com.mardous.booming.util.ON_SONG_CLICK_ACTION
 import com.mardous.booming.util.PREFERRED_IMAGE_SIZE
 import com.mardous.booming.util.Preferences
-import com.mardous.booming.util.RESTORE_DATA
 import com.mardous.booming.util.TRASH_MUSIC_FILES
 import com.mardous.booming.util.USE_CUSTOM_FONT
 import com.mardous.booming.util.USE_FOLDER_ART
