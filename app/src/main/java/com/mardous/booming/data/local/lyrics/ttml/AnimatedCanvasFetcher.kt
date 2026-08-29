@@ -28,8 +28,8 @@ object AnimatedCanvasFetcher {
     
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
-    private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
-    private const val QQ_MUSIC_API_DOMAIN = "https://my-qqmusic-api.onrender.com"
+    //private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
+    //private const val QQ_MUSIC_API_DOMAIN = "https://my-qqmusic-api.onrender.com"
 
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
@@ -188,8 +188,8 @@ object AnimatedCanvasFetcher {
         // 🌟 3. 并发全局大拉取：全网优中取优
         val candidates = coroutineScope {
             val aTask = async { fetchAppleMusicCover(strictQuery, song) }
-            val nTask = async { fetchNeteaseCover(strictQuery, song) }
-            val qTask = async { fetchQQMusicCover(strictQuery, song) }
+            val nTask = async { fetchNeteaseCover(context, strictQuery, song) }
+            val qTask = async { fetchQQMusicCover(context, strictQuery, song) } // 🌟 加入 context
             listOfNotNull(aTask.await(), nTask.await(), qTask.await())
         }
 
@@ -251,9 +251,12 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    private suspend fun fetchNeteaseCover(query: String, song: Song): CoverMatch? {
+    // 🌟 修复：签名加上 context 参数，并动态获取 baseUrl
+    private suspend fun fetchNeteaseCover(context: Context, query: String, song: Song): CoverMatch? {
         try {
-            val searchUrl = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&limit=10"
+            // 动态读取网易云域名
+            val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getBaseUrl(context)
+            val searchUrl = "$baseUrl/search?keywords=${Uri.encode(query)}&limit=10"
             val searchRes = httpGet(searchUrl) ?: return null
             val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
             
@@ -270,7 +273,8 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null && bestMatch.id != 0L) {
                 yield()
-                val dynamicCoverUrl = "$NETEASE_API_DOMAIN/song/dynamic/cover?id=${bestMatch.id}"
+                // 🌟 使用动态 baseUrl
+                val dynamicCoverUrl = "$baseUrl/song/dynamic/cover?id=${bestMatch.id}"
                 val dynamicRes = httpGet(dynamicCoverUrl) ?: return null
                 val dataObj = JSONObject(dynamicRes).optJSONObject("data")
                 if (dataObj != null) {
@@ -287,9 +291,11 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    private suspend fun fetchQQMusicCover(query: String, song: Song): CoverMatch? {
+    // 🌟 签名加上 context，URL 动态获取
+    private suspend fun fetchQQMusicCover(context: Context, query: String, song: Song): CoverMatch? {
         try {
-            val searchUrl = "$QQ_MUSIC_API_DOMAIN/api/search?key=${Uri.encode(query)}"
+            val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getQqBaseUrl(context)
+            val searchUrl = "$baseUrl/api/search?key=${Uri.encode(query)}"
             val searchRes = httpGet(searchUrl) ?: return null
             val list = runCatching { JSONObject(searchRes).optJSONObject("data")?.optJSONArray("list") }.getOrNull() ?: return null
 
@@ -307,7 +313,8 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null) {
                 yield()
-                val mvUrl = "$QQ_MUSIC_API_DOMAIN/api/mv?id=${bestMatch.vid}"
+                // 🌟 使用动态 baseUrl
+                val mvUrl = "$baseUrl/api/mv?id=${bestMatch.vid}"
                 val mvRes = httpGet(mvUrl) ?: return null
                 val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
                 

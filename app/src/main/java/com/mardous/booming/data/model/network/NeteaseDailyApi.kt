@@ -9,24 +9,48 @@ import java.net.URL
 import java.net.URLEncoder
 
 object NeteaseDailyApi {
-    private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
+    // 默认的 Render 兜底域名
+    const val DEFAULT_DOMAIN = "https://my-wangyi-api.onrender.com"
+    const val DEFAULT_QQ_DOMAIN = "https://my-qqmusic-api.onrender.com"
+    
     private const val PREF_NAME = "netease_config"
     private const val KEY_COOKIE = "user_cookie"
-
-    // 默认留空，确保源码中无隐私泄露
+    private const val KEY_DOMAIN = "custom_domain"
+    private const val KEY_QQ_DOMAIN = "qq_custom_domain"
     private const val DEFAULT_COOKIE = ""
 
+    // --- 网易 API 域名 ---
+    fun getBaseUrl(context: Context): String {
+        val custom = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_DOMAIN, "") ?: ""
+        return if (custom.isNotBlank()) custom.removeSuffix("/") else DEFAULT_DOMAIN
+    }
+    fun getCustomDomain(context: Context): String {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_DOMAIN, "") ?: ""
+    }
+
+    // --- QQ 音乐 API 域名 ---
+    fun getQqBaseUrl(context: Context): String {
+        val custom = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_QQ_DOMAIN, "") ?: ""
+        return if (custom.isNotBlank()) custom.removeSuffix("/") else DEFAULT_QQ_DOMAIN
+    }
+    fun getQqCustomDomain(context: Context): String {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_QQ_DOMAIN, "") ?: ""
+    }
+
+    // --- 网易 Cookie ---
     fun getCookie(context: Context): String {
-        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_COOKIE, DEFAULT_COOKIE) ?: DEFAULT_COOKIE
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_COOKIE, DEFAULT_COOKIE) ?: DEFAULT_COOKIE
     }
 
-    fun saveCookie(context: Context, cookie: String) {
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .edit().putString(KEY_COOKIE, cookie.trim()).apply()
+    // 🌟 统一保存设置
+    fun saveConfig(context: Context, domain: String, cookie: String, qqDomain: String) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_DOMAIN, domain.trim())
+            .putString(KEY_COOKIE, cookie.trim())
+            .putString(KEY_QQ_DOMAIN, qqDomain.trim())
+            .apply()
     }
 
-    // 🌟 核心防冲突：动态组装 URL。如果本地有 Cookie 就带上并覆盖 Render；如果没有就发原生链接让 Render 处理。
     private fun buildUrlWithCookie(baseUrl: String, cookie: String): URL {
         return if (cookie.isNotEmpty()) {
             val encodedCookie = URLEncoder.encode(cookie, "UTF-8")
@@ -37,11 +61,10 @@ object NeteaseDailyApi {
         }
     }
 
-    // 1. 唤醒并刷新 Cookie (打破 15 天失效)
     suspend fun wakeUpAndRefresh(context: Context) = withContext(Dispatchers.IO) {
         val cookie = getCookie(context)
         try {
-            val url = buildUrlWithCookie("$NETEASE_API_DOMAIN/login/refresh", cookie)
+            val url = buildUrlWithCookie("${getBaseUrl(context)}/login/refresh", cookie)
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 60000 
             conn.readTimeout = 60000
@@ -49,16 +72,12 @@ object NeteaseDailyApi {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // 2. 获取每日推荐歌曲
     suspend fun fetchDailyRecommend(context: Context): List<JSONObject> = withContext(Dispatchers.IO) {
         val resultList = mutableListOf<JSONObject>()
         val cookie = getCookie(context)
-        
         try {
-            val url = buildUrlWithCookie("$NETEASE_API_DOMAIN/recommend/songs", cookie)
+            val url = buildUrlWithCookie("${getBaseUrl(context)}/recommend/songs", cookie)
             val conn = url.openConnection() as HttpURLConnection
-            
-            // 极致宽容冷启动超时，防止免费容器睡死
             conn.connectTimeout = 60000
             conn.readTimeout = 60000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
@@ -76,11 +95,10 @@ object NeteaseDailyApi {
         return@withContext resultList
     }
 
-    // 3. 同步红心到云端
     suspend fun likeSong(context: Context, songId: Long): Boolean = withContext(Dispatchers.IO) {
         val cookie = getCookie(context)
         try {
-            val url = buildUrlWithCookie("$NETEASE_API_DOMAIN/like?id=$songId", cookie)
+            val url = buildUrlWithCookie("${getBaseUrl(context)}/like?id=$songId", cookie)
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 60000
             conn.readTimeout = 60000

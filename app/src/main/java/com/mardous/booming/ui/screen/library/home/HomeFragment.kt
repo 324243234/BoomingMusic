@@ -172,8 +172,8 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
             viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend()
-                    val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
+                    val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend(appContext)
+					val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
                     var idOffset = 0L
 
                     for (item in dailyJsonList) {

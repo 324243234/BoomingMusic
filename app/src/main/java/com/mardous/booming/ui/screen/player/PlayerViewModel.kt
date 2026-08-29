@@ -260,8 +260,8 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val realNeteaseId = song.size 
-            if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(realNeteaseId)
-
+            if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(context, realNeteaseId)
+			
             val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
             if (!targetDir.exists()) targetDir.mkdirs()
 

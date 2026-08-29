@@ -421,29 +421,62 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
 
     // 👇 呼出配置 Cookie 弹窗的具体实现方法
     private fun showCookieInputDialog(context: android.content.Context) {
-        val currentCookie = com.mardous.booming.data.network.NeteaseDailyApi.getCookie(context)
+        val apiClass = com.mardous.booming.data.network.NeteaseDailyApi
+        val currentDomain = apiClass.getCustomDomain(context)
+        val currentQqDomain = apiClass.getQqCustomDomain(context)
+        val currentCookie = apiClass.getCookie(context)
         
-        val editText = android.widget.EditText(context).apply {
-            hint = "留空则使用云端 Render 配置的 Cookie"
+        val domainInput = android.widget.EditText(context).apply {
+            hint = "网易 API 域名 (留空使用默认 Render)"
+            setText(currentDomain)
+            setSingleLine()
+        }
+        
+        val qqDomainInput = android.widget.EditText(context).apply {
+            hint = "QQ 音乐 API 域名 (留空使用默认 Render)"
+            setText(currentQqDomain)
+            setSingleLine()
+            val lp = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.topMargin = 30
+            layoutParams = lp
+        }
+        
+        val cookieInput = android.widget.EditText(context).apply {
+            hint = "网易 Cookie (解锁推荐，留空跳过)"
             setText(currentCookie)
-            setLines(4)
+            setLines(3)
             gravity = android.view.Gravity.TOP
+            val lp = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.topMargin = 30
+            layoutParams = lp
         }
         
         val layout = android.widget.LinearLayout(context).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(60, 30, 60, 0)
-            addView(editText, android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(domainInput)
+            addView(qqDomainInput)
+            addView(cookieInput)
         }
 
-        MaterialAlertDialogBuilder(context)
-            .setTitle("配置网易云 Cookie")
-            .setMessage("数据仅保存在手机本地。优先使用本地 Cookie，留空则默认回退至 Render 云端配置。")
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
+            .setTitle("配置 API 与 Cookie")
+            .setMessage("所有设置仅保存于手机本地。")
             .setView(layout)
             .setPositiveButton("保存") { dialog, _ ->
-                val inputCookie = editText.text.toString().trim()
-                com.mardous.booming.data.network.NeteaseDailyApi.saveCookie(context, inputCookie)
-                android.widget.Toast.makeText(context, "Cookie 设置已保存", android.widget.Toast.LENGTH_SHORT).show()
+                apiClass.saveConfig(
+                    context, 
+                    domainInput.text.toString(), 
+                    cookieInput.text.toString(),
+                    qqDomainInput.text.toString()
+                )
+                android.widget.Toast.makeText(context, "API 与 Cookie 配置已保存", android.widget.Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
             }
             .setNegativeButton("取消", null)
