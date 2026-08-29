@@ -81,7 +81,7 @@
             <ImageView
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:src="@drawable/ic_auto_awesome_24dp"
+                android:src="@drawable/ic_trending_up_24dp"
                 app:tint="?attr/colorPrimary" />
 
             <TextView
