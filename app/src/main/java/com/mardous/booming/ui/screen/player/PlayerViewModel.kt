@@ -1,12 +1,13 @@
 package com.mardous.booming.ui.screen.player
 
 
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import com.mardous.booming.core.model.AudioSourceType
 import com.mardous.booming.core.model.getAudioSourceType
 import android.os.Environment
 import android.widget.Toast
 import java.io.File
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.content.Context
@@ -81,7 +82,7 @@ class PlayerViewModel(
     private val preferences: SharedPreferences,
     private val repository: Repository,
     queueStateHolder: QueueStateHolder
-) : ViewModel(), Player.Listener {
+) : ViewModel(), Player.Listener, KoinComponent {
 
     private val progressObserver = ProgressObserver(intervalMs = 100)
     private val shuffleManager = ShuffleManager()
@@ -228,33 +229,37 @@ class PlayerViewModel(
         _playbackSpeed.value = playbackParameters.speed
     }
 
-    fun toggleFavorite(context: Context) {
-    val song = currentSong
-    if (song == Song.emptySong) return
-    val appContext = context.applicationContext
+    // 🌟 3. 还原为无参方法，那 4 个 Fragment 彻底不用改了！
+    fun toggleFavorite() {
+        val song = currentSong
+        if (song == Song.emptySong) return
 
-    when (song.getAudioSourceType()) {
-        AudioSourceType.LOCAL -> {
-            // 本地歌曲走正常指令写入数据库
-            mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
+        when (song.getAudioSourceType()) {
+            AudioSourceType.LOCAL -> {
+                // 本地歌曲走正常指令写入数据库
+                mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
+            }
+            AudioSourceType.RADIO -> {
+                handleRadioFavorite(appContext, song) // 直接使用注入的 appContext
+            }
+            AudioSourceType.NETEASE -> {
+                handleNeteaseFavorite(appContext, song) // 直接使用注入的 appContext
+            }
+            AudioSourceType.UNKNOWN -> {
+                Toast.makeText(appContext, "未知音频源", Toast.LENGTH_SHORT).show()
+            }
         }
-        AudioSourceType.RADIO -> handleRadioFavorite(appContext, song)
-        AudioSourceType.NETEASE -> handleNeteaseFavorite(appContext, song)
-        AudioSourceType.UNKNOWN -> Toast.makeText(appContext, "未知音频源", Toast.LENGTH_SHORT).show()
     }
-}
 
 
 // 🌟 2. 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
+// 🌟 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
 private fun handleNeteaseFavorite(context: Context, song: Song) {
-    // 读取你在 Toolbar 切换的下载偏好 (flac 或 320k)
     val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
-
     Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
 
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            // A. 同步网易云红心云端
             val realNeteaseId = song.size 
             if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(realNeteaseId)
 
@@ -264,39 +269,38 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
             val query = "${song.artistName} ${song.title}"
             var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
 
-            // 🌟 梯队 1：如果用户设置了优先 FLAC，才去搜无损
             if (targetQuality == "flac") {
                 val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "lossless")
                 targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
             }
 
-            // 🌟 梯队 2：如果没搜到 FLAC，或者用户选了 320k，去搜极高品质 MP3
             if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
                 val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "exhigh")
                 targetItem = results.firstOrNull()
             }
 
-            // 🌟 梯队 3：兜底。如果全部搜不到，用播放流兜底
+            // 🌟 修复 NetSongItem 构造函数的参数名匹配
             val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                songId = realNeteaseId.toString(),
+                id = realNeteaseId.toString(),
                 title = song.title,
                 artist = song.artistName,
                 album = song.albumName,
-                url = song.data, // 128k 秒播流
+                picUrl = "", // 补齐必填项
                 durationMs = song.duration,
+                year = "", // 补齐必填项
                 format = "mp3",
-                fileSizeStr = "标准音质兜底"
+                fileSizeStr = "标准音质兜底",
+                requestedLevel = targetQuality // 补齐必填项
             )
 
-            // C. 执行防 OOM 的后台下载与打标
             val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
 
-            // D. 闭环转正
             if (downloadedFile != null && downloadedFile.exists()) {
                 kotlinx.coroutines.delay(1500)
                 val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
                 if (localSong != Song.emptySong) {
-                    repository.toggleFavorite(localSong.id)
+                    // 🌟 修复传参类型报错：传对象而不是传 ID
+                    repository.toggleFavorite(localSong) 
                 }
                 
                 withContext(Dispatchers.Main) { 
@@ -699,8 +703,12 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             Log.e(TAG, "Failed to load color scheme", result.exceptionOrNull())
         }
     }
+	// 🌟 2. 利用 Koin 全局无感注入 ApplicationContext，彻底解放 UI 层
+    private val appContext: Context by inject()
 
     companion object {
         private const val TAG = "PlayerViewModel"
     }
+	
+	
 }

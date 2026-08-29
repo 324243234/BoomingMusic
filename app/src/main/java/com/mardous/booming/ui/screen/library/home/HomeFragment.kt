@@ -17,6 +17,9 @@
 
 package com.mardous.booming.ui.screen.library.home
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuInflater
@@ -161,73 +164,81 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
     }
 
     override fun onClick(view: View) {
-        when (view) {
-		
-		R.id.dailyRecommendCard -> {
-    val appContext = requireContext().applicationContext
-    val toast = android.widget.Toast.makeText(appContext, "正在获取今日专属推荐...", android.widget.Toast.LENGTH_SHORT)
-    toast.show()
+        // 🌟 修复类型不匹配：将按键 ID 的判断提取到 when 外面
+        if (view.id == R.id.dailyRecommendCard) {
+            val appContext = requireContext().applicationContext
+            val toast = android.widget.Toast.makeText(appContext, "正在获取今日专属推荐...", android.widget.Toast.LENGTH_SHORT)
+            toast.show()
 
-    viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-        val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend()
-        val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
+            viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend()
+                    val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
+                    var idOffset = 0L
 
-        var idOffset = 0L
-        for (item in dailyJsonList) {
-            val songId = item.optLong("id", 0L)
-            if (songId == 0L) continue
-            
-            // 组装歌手名
-            val artistsArr = item.optJSONArray("ar")
-            val artistName = if (artistsArr != null && artistsArr.length() > 0) {
-                (0 until artistsArr.length()).joinToString("/") { artistsArr.getJSONObject(it).optString("name") }
-            } else "未知歌手"
+                    for (item in dailyJsonList) {
+                        val songId = item.optLong("id", 0L)
+                        if (songId == 0L) continue
 
-            val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
-            val picUrl = item.optJSONObject("al")?.optString("picUrl") ?: ""
-            // 默认网易云播放直链拼接规则
-            val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+                        val artistsArr = item.optJSONArray("ar")
+                        val artistName = if (artistsArr != null && artistsArr.length() > 0) {
+                            (0 until artistsArr.length()).joinToString("/") { artistsArr.getJSONObject(it).optString("name") }
+                        } else "未知歌手"
 
-            dailySongs.add(
-                com.mardous.booming.data.model.Song(
-                    // 🌟 使用极大正数偏移时间戳，绝对避免与本地 Room 数据库冲突
-                    id = (System.currentTimeMillis() * 1000) + idOffset++, 
-                    title = item.optString("name", "未知歌曲"),
-                    artistName = artistName,
-                    albumName = albumName,
-                    duration = item.optLong("dt", 0L), // 毫秒
-                    data = playUrl, 
-                    albumId = -1L, artistId = -1L, albumArtist = artistName,
-                    genreName = "Netease" // ⚠️ 致命标签：用于触发后续的下载拦截器
-					size = songId // 🌟 核心补丁：把真实的网易云 ID 伪装在文件大小属性里
-                )
-            )
-        }
+                        val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
+                        val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-            toast.cancel()
-            if (dailySongs.isNotEmpty()) {
-                // 送入播放器，由于含 HTTP 直链，底层 ExoPlayer 及车机会将其视为网络流正常播放
-                playerViewModel.openQueue(dailySongs, position = 0, startPlaying = true)
-            } else {
-                android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络", android.widget.Toast.LENGTH_SHORT).show()
+                        // 🌟 修复构造函数匹配：补齐必填的默认参数
+                        dailySongs.add(
+                            com.mardous.booming.data.model.Song(
+                                id = (System.currentTimeMillis() * 1000) + idOffset++,
+                                data = playUrl,
+                                title = item.optString("name", "未知歌曲"),
+                                trackNumber = 0,
+                                year = 0,
+                                size = songId, // 用 size 存网易云真实 ID
+                                duration = item.optLong("dt", 0L),
+                                dateAdded = System.currentTimeMillis(),
+                                rawDateModified = System.currentTimeMillis(),
+                                albumId = -1L,
+                                albumName = albumName,
+                                artistId = -1L,
+                                artistName = artistName,
+                                albumArtistName = artistName,
+                                genreName = "Netease"
+                            )
+                        )
+                    }
+
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        toast.cancel()
+                        if (dailySongs.isNotEmpty()) {
+                            playerViewModel.openQueue(dailySongs, position = 0, startPlaying = true)
+                        } else {
+                            android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        toast.cancel()
+                        android.widget.Toast.makeText(appContext, "加载失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
+            return // 命中每日推荐后直接返回
         }
-    }
-}
-		
+
+        // 原有的 when 继续处理其他按钮
+        when (view) {
             binding.myTopTracks -> {
                 findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.TopTracks))
             }
-
             binding.lastAdded -> {
                 findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.RecentSongs))
             }
-
             binding.history -> {
                 findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.History))
             }
-
             binding.shuffleButton -> {
                 libraryViewModel.allSongs().observe(viewLifecycleOwner) {
                     playerViewModel.openAndShuffleQueue(it)
