@@ -17,6 +17,8 @@
 
 package com.mardous.booming.ui.screen.settings
 
+import android.content.Intent
+import com.mardous.booming.ui.screen.backup.BackupActivity
 import com.mardous.booming.ui.screen.lyrics.FontTarget
 import android.content.SharedPreferences
 import android.graphics.Color
@@ -172,91 +174,31 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
     private val lyricsViewModel: LyricsViewModel by activityViewModel()
     private val updateViewModel: UpdateViewModel by activityViewModel()
 
-    // 记得在文件顶部导入 FontTarget：
-    // import com.mardous.booming.ui.screen.lyrics.FontTarget
+    private val preferences: SharedPreferences by inject()
 
-    // 🌟 1. 常规字体导入选择器
+    // 🌟 1. 常规字体导入选择器 (保留本地定制)
     private val importRegularFontLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
                 lyricsViewModel.importCustomFont(requireContext(), uri, FontTarget.REGULAR)
                     .observe(viewLifecycleOwner) { success ->
-                        if (success) {
-                            showToast(R.string.font_imported_successfully)
-                        } else {
-                            showToast(R.string.could_not_import_font)
-                        }
+                        if (success) showToast(R.string.font_imported_successfully)
+                        else showToast(R.string.could_not_import_font)
                     }
             }
         }
 
-    // 🌟 2. 加粗字体导入选择器
+    // 🌟 2. 加粗字体导入选择器 (保留本地定制)
     private val importBoldFontLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
                 lyricsViewModel.importCustomFont(requireContext(), uri, FontTarget.BOLD)
                     .observe(viewLifecycleOwner) { success ->
-                        if (success) {
-                            showToast(R.string.font_imported_successfully)
-                        } else {
-                            showToast(R.string.could_not_import_font)
-                        }
+                        if (success) showToast(R.string.font_imported_successfully)
+                        else showToast(R.string.could_not_import_font)
                     }
             }
         }
-
-    @OptIn(DelicateCoroutinesApi::class)
-    private val createBackupLauncher: ActivityResultLauncher<String> =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/*")) { uri ->
-            if (uri != null) {
-                GlobalScope.launch {
-                    BackupHelper.createBackup(requireContext(), uri) { isSuccess ->
-                        if (isSuccess) {
-                            showToast(R.string.backup_successful)
-                        } else {
-                            showToast(R.string.backup_failed)
-                        }
-                    }
-                }
-            }
-        }
-
-    @OptIn(DelicateCoroutinesApi::class)
-    private val selectBackupLauncher: ActivityResultLauncher<Array<String>> =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { selection ->
-            if (selection != null) {
-                val items = BackupContent.entries.map {
-                    getString(it.titleRes)
-                }
-                val multiCheckDialog = MultiCheckDialog.Builder(requireContext())
-                    .title(R.string.select_content_to_restore)
-                    .items(items)
-                    .createDialog { _, whichPos, _ ->
-                        val content = BackupContent.entries.filterIndexed { i, _ ->
-                            whichPos.contains(i)
-                        }
-                        GlobalScope.launch {
-                            BackupHelper.restoreBackup(requireContext(), selection, content) { isSuccess ->
-                                if (isSuccess) {
-                                    MaterialAlertDialogBuilder(requireContext())
-                                        .setTitle(R.string.data_restored_successfully)
-                                        .setMessage(R.string.restart_app_message)
-                                        .setPositiveButton(android.R.string.ok, null)
-                                        .setOnDismissListener { App.restart(requireActivity()) }
-                                        .setCancelable(false)
-                                        .show()
-                                } else {
-                                    showToast(R.string.could_not_restore_data)
-                                }
-                            }
-                        }
-                        true
-                    }
-                multiCheckDialog.show(childFragmentManager, "RESTORE_DIALOG")
-            }
-        }
-
-    private val preferences: SharedPreferences by inject()
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         addPreferencesFromResource(R.xml.preferences)
@@ -318,31 +260,24 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         findPreference<ListPreference>(LyricsViewSettings.Key.BACKGROUND_EFFECT)?.apply {
             if (!hasS()) {
                 val indexOfBlur = entryValues.indexOf("blur")
-                entries = entries.filterIndexed { index, _ -> index != indexOfBlur }
-                    .toTypedArray()
-                entryValues = entryValues.filterIndexed { index, _ -> index != indexOfBlur }
-                    .toTypedArray()
+                entries = entries.filterIndexed { index, _ -> index != indexOfBlur }.toTypedArray()
+                entryValues = entryValues.filterIndexed { index, _ -> index != indexOfBlur }.toTypedArray()
             }
         }
 
-        findPreference<Preference>(LyricsViewSettings.Key.BLUR_EFFECT)
-            ?.isVisible = hasS()
+        findPreference<Preference>(LyricsViewSettings.Key.BLUR_EFFECT)?.isVisible = hasS()
 
-        // 🌟 绑定常规/Medium 字体点击事件
+        // 🌟 绑定常规/Medium 字体点击事件 (保留本地定制)
         findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_REGULAR)
             ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
-            importRegularFontLauncher.launch(
-                arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf")
-            )
+            importRegularFontLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf"))
             true
         }
 
-        // 🌟 绑定加粗/Bold 字体点击事件
+        // 🌟 绑定加粗/Bold 字体点击事件 (保留本地定制)
         findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_BOLD)
             ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
-            importBoldFontLauncher.launch(
-                arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf")
-            )
+            importBoldFontLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf"))
             true
         }
 
@@ -353,9 +288,7 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
             true
         }
 
-        if (!hasR()) {
-            findPreference<Preference>(TRASH_MUSIC_FILES)?.isVisible = false
-        }
+        if (!hasR()) findPreference<Preference>(TRASH_MUSIC_FILES)?.isVisible = false
 
         findPreference<Preference>(LAST_ADDED_CUTOFF)?.onPreferenceChangeListener =
             Preference.OnPreferenceChangeListener { _, _ ->
@@ -365,17 +298,13 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
 
         findPreference<SwitchWithButtonPreference>(WHITELIST_ENABLED)?.apply {
             setButtonPressedListener(object : SwitchWithButtonPreference.OnButtonPressedListener {
-                override fun onButtonPressed() {
-                    showLibraryFolderSelector(InclExclDao.WHITELIST)
-                }
+                override fun onButtonPressed() { showLibraryFolderSelector(InclExclDao.WHITELIST) }
             })
         }
 
         findPreference<SwitchWithButtonPreference>(BLACKLIST_ENABLED)?.apply {
             setButtonPressedListener(object : SwitchWithButtonPreference.OnButtonPressedListener {
-                override fun onButtonPressed() {
-                    showLibraryFolderSelector(InclExclDao.BLACKLIST)
-                }
+                override fun onButtonPressed() { showLibraryFolderSelector(InclExclDao.BLACKLIST) }
             })
         }
 
@@ -403,18 +332,9 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
             true
         }
 
-        findPreference<Preference>(BACKUP_DATA)?.setOnPreferenceClickListener {
-            createBackupLauncher.launch(
-                getFormattedFileName(
-                    "Backup",
-                    BackupHelper.BACKUP_EXTENSION
-                )
-            )
-            true
-        }
-
-        findPreference<Preference>(RESTORE_DATA)?.setOnPreferenceClickListener {
-            selectBackupLauncher.launch(arrayOf("application/*"))
+        // 🔥 接入原作者新版备份与恢复页面
+        findPreference<Preference>("backup_and_restore")?.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(), BackupActivity::class.java))
             true
         }
 
@@ -435,12 +355,9 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
                         updateSearchPreference.isEnabled = false
                         updateSearchPreference.summary = getString(R.string.checking_please_wait)
                     }
-
-                    UpdateSearchResult.State.Completed,
-                    UpdateSearchResult.State.Failed -> {
+                    UpdateSearchResult.State.Completed, UpdateSearchResult.State.Failed -> {
                         updateSearchState(updateSearchPreference, result.executedAtMillis)
                     }
-
                     else -> {
                         updateSearchState(updateSearchPreference, Preferences.lastUpdateSearch)
                     }

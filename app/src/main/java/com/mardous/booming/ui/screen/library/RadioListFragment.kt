@@ -1,7 +1,8 @@
 package com.mardous.booming.ui.screen.library.radios
 
 
-
+import com.mardous.booming.extensions.utilities.sanitize
+import com.mardous.booming.extensions.files.belongsTo
 import com.mardous.booming.ui.component.menu.onPlaylistMenu
 import com.mardous.booming.ui.component.menu.onPlaylistsMenu
 import androidx.core.content.edit
@@ -56,38 +57,49 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
 	private var originalRadios: List<PlaylistWithSongs> = emptyList()
 
     // 🌟 升级为 GetMultipleContents 支持批量多选导入
-    private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) {
-            val toast = Toast.makeText(requireContext(), "正在批量导入 ${uris.size} 个电台源...", Toast.LENGTH_LONG)
-            toast.show()
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                var successCount = 0
-                for (uri in uris) {
-                    try {
-                        var fileName = "电台源_${System.currentTimeMillis()}"
-                        requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                            if (cursor.moveToFirst()) {
-                                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                                if (nameIndex >= 0) fileName = cursor.getString(nameIndex).substringBeforeLast(".")
-                            }
+    // 替换 RadioListFragment.kt 中的 importM3uLauncher 代码段
+private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
+    if (uris.isNotEmpty()) {
+        val toast = Toast.makeText(requireContext(), "正在批量导入 ${uris.size} 个电台源...", Toast.LENGTH_LONG)
+        toast.show()
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            var successCount = 0
+            for (uri in uris) {
+                try {
+                    var rawFileName = "电台源_${System.currentTimeMillis()}"
+                    requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (nameIndex >= 0) rawFileName = cursor.getString(nameIndex).substringBeforeLast(".")
                         }
-                        val tempFile = File(requireContext().cacheDir, "${fileName}.m3u")
-                        requireContext().contentResolver.openInputStream(uri)?.use { input ->
-                            FileOutputStream(tempFile).use { it.write(input.readBytes()) }
-                        }
-                        com.mardous.booming.util.RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
-                        tempFile.delete()
-                        successCount++
-                    } catch (e: Exception) { }
-                }
-                withContext(Dispatchers.Main) {
-                    toast.cancel()
-                    Toast.makeText(requireContext(), "成功批量导入 $successCount 个电台分类！", Toast.LENGTH_SHORT).show()
-                    libraryViewModel.forceReload(com.mardous.booming.ui.screen.library.ReloadType.Playlists)
-                }
+                    }
+                    
+                    // 🌟 1. 文件名清洗与防空处理
+                     
+                    val safeFileName = rawFileName.sanitize().ifBlank { "电台源_${System.currentTimeMillis()}" }
+                    
+                    val tempFile = File(requireContext().cacheDir, "${safeFileName}.m3u")
+                    
+                    // 🌟 2. 防目录穿越安全校验
+                    
+                    if (!tempFile.belongsTo(requireContext().cacheDir)) continue
+                    
+                    requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(tempFile).use { it.write(input.readBytes()) }
+                    }
+                    com.mardous.booming.util.RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
+                    tempFile.delete()
+                    successCount++
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            withContext(Dispatchers.Main) {
+                toast.cancel()
+                Toast.makeText(requireContext(), "成功批量导入 $successCount 个电台分类！", Toast.LENGTH_SHORT).show()
+                libraryViewModel.forceReload(com.mardous.booming.ui.screen.library.ReloadType.Playlists)
             }
         }
     }
+}
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)

@@ -1,5 +1,7 @@
 package com.mardous.booming.ui.screen.lyrics
 
+import com.mardous.booming.util.FileTypeVerifier
+import com.mardous.booming.util.FileUtil
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
@@ -177,82 +179,77 @@ class LyricsViewModel(
         repository.deleteAllLyrics()
     }
 
-    // 🌟 2. 升级导入逻辑：支持传参分辨导入的是 Regular 还是 Bold
-    fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
-        try {
-            val targetName = target.name.lowercase()
-            val defaultName = "custom_font_${targetName}_${System.currentTimeMillis()}.ttf"
-            val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
-            val rawFileName = context.contentResolver.query(uri, null, null, null, null)
-                ?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        if (nameIndex != -1) cursor.getString(nameIndex) else null
-                    } else null
-                } ?: defaultName
+    // 🌟 1. 升级版字体导入：融合你的 FontTarget 参数与作者的安全审查
+fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
+    try {
+        val targetName = target.name.lowercase()
+        val defaultName = "custom_font_${targetName}_${System.currentTimeMillis()}.ttf"
+        val fontsDir = FileUtil.fontsDirectory() ?: return@liveData // 作者新版目录获取
+        val rawFileName = context.contentResolver.query(uri, null, null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1) cursor.getString(nameIndex) else null
+                } else null
+            } ?: defaultName
 
-            val fileName = File(rawFileName).name.sanitize()
-                .ifBlank { defaultName }
+        // 作者新版文件名清洗
+        val fileName = File(rawFileName).name.sanitize().ifBlank { defaultName }
 
-            var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
+        var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
 
-            if (isValid) {
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    val header = ByteArray(4)
-                    if (input.read(header) == 4) {
-                        val hex = header.joinToString("") { "%02X".format(it) }
-                        isValid = hex == "00010000" || hex == "4F54544F"
-                    } else {
-                        isValid = false
-                    }
-                }
-            }
-
-            if (!isValid) {
-                emit(false)
-                return@liveData
-            }
-
-            val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
-
-            // 🌟 清理旧的字重物理文件，防止多次导入占用空间
-            val oldPath = preferences.getString(targetPrefKey, null)
-            if (!oldPath.isNullOrBlank()) {
-                val oldFile = File(oldPath)
-                if (oldFile.exists() && oldFile.belongsTo(fontsDir)) {
-                    oldFile.delete()
-                }
-            }
-
-            val outFile = File(fontsDir, "font_${targetName}_$fileName")
-            if (!outFile.belongsTo(fontsDir)) {
-                emit(false)
-                return@liveData
-            }
-
+        // 🔥 作者新版：调用独立验证器替代本地硬编码 Hex 匹配
+        if (isValid) {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                outFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+                isValid = with(FileTypeVerifier) { input.isFontFile() }
             }
-
-            // 🌟 存储配置
-            preferences.edit(commit = true) {
-                putBoolean(Key.USE_CUSTOM_FONT, true)
-                putString(targetPrefKey, outFile.absolutePath)
-                
-                // 为了兼容旧版逻辑，如果是导入 Regular，同时更新一下旧 Key
-                if (target == FontTarget.REGULAR) {
-                    putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
-                }
-            }
-
-            emit(outFile.length() > 0)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emit(false)
         }
+
+        if (!isValid) {
+            emit(false)
+            return@liveData
+        }
+
+        val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
+
+        // 🌟 清理旧的字重物理文件
+        val oldPath = preferences.getString(targetPrefKey, null)
+        if (!oldPath.isNullOrBlank()) {
+            val oldFile = File(oldPath)
+            if (oldFile.exists() && oldFile.belongsTo(fontsDir)) {
+                oldFile.delete()
+            }
+        }
+
+        val outFile = File(fontsDir, "font_${targetName}_$fileName")
+        if (!outFile.belongsTo(fontsDir)) { // 作者防穿越检查
+            emit(false)
+            return@liveData
+        }
+
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            outFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        // 🌟 存储配置
+        preferences.edit(commit = true) {
+            putBoolean(Key.USE_CUSTOM_FONT, true)
+            putString(targetPrefKey, outFile.absolutePath)
+            
+            // 为了兼容旧版逻辑，如果是导入 Regular，同时更新一下旧 Key
+            if (target == FontTarget.REGULAR) {
+                putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
+            }
+        }
+
+        emit(outFile.length() > 0)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        emit(false)
     }
+}
 
     fun updateSong(song: Song) {
         lyricsJob?.cancel()
@@ -349,15 +346,15 @@ class LyricsViewModel(
         return@withContext LyricsUiState.Empty(song.id)
     }
 
+    // 🌟 2. 你的 createViewSettings (维持了原本注释掉 if (!mode.isFull) 的行为与双字重并合 FontFamily 算法)
     private fun createViewSettings(mode: LyricsViewMode): LyricsViewSettings {
-	    
-        val background: BackgroundEffect =
-            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // 移除了 if (!mode.isFull)
-                "gradient" -> BackgroundEffect.Gradient
-                "aurora" -> BackgroundEffect.Aurora
-                "blur" -> BackgroundEffect.Blur
-                else -> BackgroundEffect.None
-            }
+    val background: BackgroundEffect =
+        when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // 本地：移除了 if (!mode.isFull)
+            "gradient" -> BackgroundEffect.Gradient
+            "blur" -> BackgroundEffect.Blur
+            "aurora" -> BackgroundEffect.Aurora // 你的本地新增枚举
+            else -> BackgroundEffect.None
+        }
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
         val enableKaraokeStyle = preferences.getBoolean(Key.ENABLE_KARAOKE_STYLE, false)
         val progressiveColoring = preferences.getBoolean(Key.PROGRESSIVE_COLORING, false)
@@ -369,40 +366,29 @@ class LyricsViewModel(
         
         // 🌟 3. 重构字体构建逻辑：智能组合原生双字重
         val fontFamily: FontFamily = if (preferences.getBoolean(Key.USE_CUSTOM_FONT, false)) {
-            try {
-                // 读取常规字体（优先用新 Key，找不到用旧 Key 兜底兼容）
-                val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
-                    ?: preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
-                // 读取加粗字体
-                val boldPath = preferences.getString(PREF_CUSTOM_FONT_BOLD, null)
+        try {
+            val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
+                ?: preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
+            val boldPath = preferences.getString(PREF_CUSTOM_FONT_BOLD, null)
+            val fonts = mutableListOf<Font>()
 
-                val fonts = mutableListOf<Font>()
-
-                if (!regularPath.isNullOrBlank()) {
-                    val file = File(regularPath)
-                    if (file.exists()) {
-                        fonts.add(Font(file = file, weight = FontWeight.Normal))
-                    }
-                }
-
-                if (!boldPath.isNullOrBlank()) {
-                    val file = File(boldPath)
-                    if (file.exists()) {
-                        fonts.add(Font(file = file, weight = FontWeight.Bold))
-                    }
-                }
-
-                if (fonts.isNotEmpty()) {
-                    FontFamily(fonts)
-                } else {
-                    FontFamily.Default
-                }
-            } catch (_: Exception) {
-                FontFamily.Default
+            if (!regularPath.isNullOrBlank()) {
+                val file = File(regularPath)
+                if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Normal))
             }
-        } else {
+
+            if (!boldPath.isNullOrBlank()) {
+                val file = File(boldPath)
+                if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Bold))
+            }
+
+            if (fonts.isNotEmpty()) FontFamily(fonts) else FontFamily.Default
+        } catch (_: Exception) {
             FontFamily.Default
         }
+    } else {
+        FontFamily.Default
+    }
         
         val lineSpacing = preferences.getInt(Key.LINE_SPACING, 40)
         val syncedFontSize = if (mode == LyricsViewMode.Player) {
