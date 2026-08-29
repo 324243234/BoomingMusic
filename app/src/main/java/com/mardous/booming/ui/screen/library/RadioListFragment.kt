@@ -2,6 +2,8 @@ package com.mardous.booming.ui.screen.library.radios
 
 
 
+import com.mardous.booming.ui.component.menu.onPlaylistMenu
+import com.mardous.booming.ui.component.menu.onPlaylistsMenu
 import androidx.core.content.edit
 import com.mardous.booming.core.model.GridViewType
 import android.net.Uri
@@ -38,6 +40,7 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
 
     // 电台不需要全局随机播放，隐藏悬浮按钮
     override val isShuffleVisible: Boolean = false 
+	private var currentSearchQuery: String = ""
     override val titleRes: Int = R.string.radios_label
     
     override val emptyMessageRes: Int
@@ -52,59 +55,36 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
 		
 	private var originalRadios: List<PlaylistWithSongs> = emptyList()
 
-    // 🌟 注册系统文件选择器并动态重命名
-    private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
+    // 🌟 升级为 GetMultipleContents 支持批量多选导入
+    private val importM3uLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val toast = Toast.makeText(requireContext(), "正在批量导入 ${uris.size} 个电台源...", Toast.LENGTH_LONG)
+            toast.show()
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    // 1. 获取选中的真实文件名
-                    var fileName = "自定义导入电台"
-                    requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            if (nameIndex >= 0) fileName = cursor.getString(nameIndex).substringBeforeLast(".")
-                        }
-                    }
-                    
-                    withContext(Dispatchers.Main) {
-                        // 2. 弹出对话框，允许用户修改分类名称
-                        val input = android.widget.EditText(requireContext()).apply {
-                            setText(fileName)
-                            setSingleLine()
-                        }
-                        val layout = android.widget.LinearLayout(requireContext()).apply {
-                            setPadding(60, 20, 60, 0)
-                            addView(input)
-                        }
-
-                        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("设置电台分类名称")
-                            .setView(layout)
-                            .setPositiveButton("导入") { _, _ ->
-                                val finalName = input.text.toString().trim().ifEmpty { fileName }
-                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                                    try {
-                                        // 3. 将文件缓存为用户定义的名字
-                                        val tempFile = File(requireContext().cacheDir, "${finalName}.m3u")
-                                        requireContext().contentResolver.openInputStream(uri)?.use { input ->
-                                            FileOutputStream(tempFile).use { it.write(input.readBytes()) }
-                                        }
-                                        
-                                        RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
-                                        tempFile.delete() // 导入完毕后清除临时文件
-                                        
-                                        withContext(Dispatchers.Main) {
-                                            libraryViewModel.forceReload(ReloadType.Playlists)
-                                        }
-                                    } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导入失败", Toast.LENGTH_SHORT).show() }
-                                    }
-                                }
+                var successCount = 0
+                for (uri in uris) {
+                    try {
+                        var fileName = "电台源_${System.currentTimeMillis()}"
+                        requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (nameIndex >= 0) fileName = cursor.getString(nameIndex).substringBeforeLast(".")
                             }
-                            .setNegativeButton("取消", null)
-                            .show()
-                    }
-                } catch (e: Exception) { }
+                        }
+                        val tempFile = File(requireContext().cacheDir, "${fileName}.m3u")
+                        requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                            FileOutputStream(tempFile).use { it.write(input.readBytes()) }
+                        }
+                        com.mardous.booming.util.RadioBackupManager.importRadioFromM3u(requireContext(), repository, tempFile)
+                        tempFile.delete()
+                        successCount++
+                    } catch (e: Exception) { }
+                }
+                withContext(Dispatchers.Main) {
+                    toast.cancel()
+                    Toast.makeText(requireContext(), "成功批量导入 $successCount 个电台分类！", Toast.LENGTH_SHORT).show()
+                    libraryViewModel.forceReload(com.mardous.booming.ui.screen.library.ReloadType.Playlists)
+                }
             }
         }
     }
@@ -112,10 +92,18 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 🌟 监听 ViewModel 中获取电台的数据流并缓存
         libraryViewModel.getRadioPlaylists().observe(viewLifecycleOwner) { radios ->
-            originalRadios = radios
-            adapter?.dataSet = radios
+            val sortedRadios = radios.sortedByDescending { 
+                it.playlistEntity.playlistName.contains("我的电台") || it.playlistEntity.playlistName.contains("收藏")
+            }
+            originalRadios = sortedRadios
+            
+            // 🌟 修复跳回全量列表的隐患：刷新时强制维持搜索词
+            adapter?.dataSet = if (currentSearchQuery.isNotEmpty()) {
+                sortedRadios.filter { it.playlistEntity.playlistName.lowercase().contains(currentSearchQuery) }
+            } else {
+                sortedRadios
+            }
             adapter?.notifyDataSetChanged()
         }
     }
@@ -150,13 +138,12 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
             setOnQueryTextListener(object : androidx.appcompat.widget.SearchView.OnQueryTextListener {
                 override fun onQueryTextSubmit(query: String?): Boolean = true
                 override fun onQueryTextChange(newText: String?): Boolean {
-                    val query = newText?.trim()?.lowercase() ?: ""
-                    // 根据输入内容实时过滤列表
-                    adapter?.dataSet = if (query.isEmpty()) {
+                    currentSearchQuery = newText?.trim()?.lowercase() ?: ""
+                    adapter?.dataSet = if (currentSearchQuery.isEmpty()) {
                         originalRadios
                     } else {
                         originalRadios.filter { 
-                            it.playlistEntity.playlistName.lowercase().contains(query) 
+                            it.playlistEntity.playlistName.lowercase().contains(currentSearchQuery) 
                         }
                     }
                     adapter?.notifyDataSetChanged()
@@ -238,11 +225,20 @@ class RadioListFragment : AbsRecyclerViewCustomGridSizeFragment<PlaylistAdapter,
         )
     }
 
-    override fun playlistMenuItemClick(playlist: PlaylistWithSongs, menuItem: MenuItem): Boolean = false
-    
-    override fun playlistsMenuItemClick(playlists: List<PlaylistWithSongs>, menuItem: MenuItem) {}
-    
-    override fun onMediaContentChanged() { 
+    override fun playlistMenuItemClick(playlist: PlaylistWithSongs, menuItem: MenuItem): Boolean {
+        // 🌟 致命架构隐患阻断：封杀重命名功能，强保 [Radio] 隔离标识不被用户意外删掉
+        if (menuItem.itemId == R.id.action_rename_playlist) {
+            Toast.makeText(requireContext(), "为保证数据库物理隔离，电台分类不支持修改名称，请新建并导入。", Toast.LENGTH_LONG).show()
+            return true
+        }
+        // 放行“删除”、“播放”等安全指令
+        return playlist.onPlaylistMenu(this, menuItem)
+    }
+    override fun playlistsMenuItemClick(playlists: List<PlaylistWithSongs>, menuItem: MenuItem) {
+        // 🌟 激活长按多选后的批量删除与操作
+        playlists.onPlaylistsMenu(this, menuItem)
+    }
+	override fun onMediaContentChanged() { 
         libraryViewModel.forceReload(ReloadType.Playlists) 
     }
     

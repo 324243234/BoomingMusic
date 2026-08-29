@@ -408,7 +408,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 }
                 // 顺便把电台不需要的排序、导出功能屏蔽掉
                 menu.findItem(R.id.action_sort_order)?.isVisible = true
-                menu.findItem(R.id.action_export_playlist)?.isVisible = false
+                menu.findItem(R.id.action_export_playlist)?.isVisible = true
             }
         
         }
@@ -856,7 +856,11 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                     m3uContent.append("${song.data}\r\n")
                 }
                 val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-                val playlistDir = File(musicDir, "Playlists")
+                
+				// 🌟 核心修复：动态判断如果是电台，就放进 RadioBackups；否则放进 Playlists
+                val folderName = if (playlistName.startsWith("[Radio]")) "RadioBackups" else "Playlists"
+                val playlistDir = File(musicDir, folderName)
+				
                 if (!playlistDir.exists()) playlistDir.mkdirs()
 
                 val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
