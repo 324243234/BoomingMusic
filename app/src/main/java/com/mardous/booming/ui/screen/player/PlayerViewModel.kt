@@ -253,7 +253,6 @@ class PlayerViewModel(
 
 
 // 🌟 2. 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
-// 🌟 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
 private fun handleNeteaseFavorite(context: Context, song: Song) {
     val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
     Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
@@ -279,18 +278,18 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
                 targetItem = results.firstOrNull()
             }
 
-            // 🌟 修复 NetSongItem 构造函数的参数名匹配
+            // 🌟 修复：去掉 .toString() 直接传 Long，将 year 设为数字 0
             val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                id = realNeteaseId.toString(),
+                id = realNeteaseId, 
                 title = song.title,
                 artist = song.artistName,
                 album = song.albumName,
-                picUrl = "", // 补齐必填项
+                picUrl = "", 
                 durationMs = song.duration,
-                year = "", // 补齐必填项
+                year = 0, 
                 format = "mp3",
                 fileSizeStr = "标准音质兜底",
-                requestedLevel = targetQuality // 补齐必填项
+                requestedLevel = targetQuality 
             )
 
             val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
@@ -299,7 +298,6 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
                 kotlinx.coroutines.delay(1500)
                 val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
                 if (localSong != Song.emptySong) {
-                    // 🌟 修复传参类型报错：传对象而不是传 ID
                     repository.toggleFavorite(localSong) 
                 }
                 
