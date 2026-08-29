@@ -9,7 +9,6 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import com.mardous.booming.data.repository.PlaylistRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.first
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -1594,6 +1593,15 @@ class PlaybackService :
                         item.mediaMetadata.buildUpon()
                             .setTitle(rs.title)
                             .setArtist("网络电台")
+                            .build()
+                    )
+                    // 💥 致命隐患修复：这里必须手动补上 CarWith 装甲！
+                    // 因为赋予 Uri 后底层会直接放行，不加的话电台会失去 5 秒防断连缓冲！
+                    .setLiveConfiguration(
+                        MediaItem.LiveConfiguration.Builder()
+                            .setMaxPlaybackSpeed(1.02f) 
+                            .setMinPlaybackSpeed(0.98f) 
+                            .setTargetOffsetMs(5000) // 延迟 5s 起播，对抗过隧道网络抖动
                             .build()
                     )
                     .build()
