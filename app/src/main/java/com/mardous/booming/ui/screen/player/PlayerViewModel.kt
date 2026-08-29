@@ -286,7 +286,7 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
                 album = song.albumName,
                 picUrl = "", 
                 durationMs = song.duration,
-                year = 0, 
+                year = "",
                 format = "mp3",
                 fileSizeStr = "标准音质兜底",
                 requestedLevel = targetQuality 
