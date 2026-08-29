@@ -269,14 +269,16 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
             var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
 
             if (targetQuality == "flac") {
-                val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "lossless")
-                targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
-            }
+    // 🌟 在括号最前面加上 context,
+    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "lossless")
+    targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
+}
 
-            if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
-                val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "exhigh")
-                targetItem = results.firstOrNull()
-            }
+if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
+    // 🌟 在括号最前面加上 context,
+    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "exhigh")
+    targetItem = results.firstOrNull()
+}
 
             // 🌟 修复：去掉 .toString() 直接传 Long，将 year 设为数字 0
             val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
