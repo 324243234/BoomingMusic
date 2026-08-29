@@ -149,6 +149,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         binding.lastAdded.setOnClickListener(this)
         binding.history.setOnClickListener(this)
         binding.shuffleButton.setOnClickListener(this)
+		view?.findViewById<View>(R.id.dailyRecommendCard)?.setOnClickListener(this)
     }
 
     private fun checkIsEmpty() {
@@ -161,6 +162,60 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
     override fun onClick(view: View) {
         when (view) {
+		
+		R.id.dailyRecommendCard -> {
+    val appContext = requireContext().applicationContext
+    val toast = android.widget.Toast.makeText(appContext, "正在获取今日专属推荐...", android.widget.Toast.LENGTH_SHORT)
+    toast.show()
+
+    viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend()
+        val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
+
+        var idOffset = 0L
+        for (item in dailyJsonList) {
+            val songId = item.optLong("id", 0L)
+            if (songId == 0L) continue
+            
+            // 组装歌手名
+            val artistsArr = item.optJSONArray("ar")
+            val artistName = if (artistsArr != null && artistsArr.length() > 0) {
+                (0 until artistsArr.length()).joinToString("/") { artistsArr.getJSONObject(it).optString("name") }
+            } else "未知歌手"
+
+            val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
+            val picUrl = item.optJSONObject("al")?.optString("picUrl") ?: ""
+            // 默认网易云播放直链拼接规则
+            val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+
+            dailySongs.add(
+                com.mardous.booming.data.model.Song(
+                    // 🌟 使用极大正数偏移时间戳，绝对避免与本地 Room 数据库冲突
+                    id = (System.currentTimeMillis() * 1000) + idOffset++, 
+                    title = item.optString("name", "未知歌曲"),
+                    artistName = artistName,
+                    albumName = albumName,
+                    duration = item.optLong("dt", 0L), // 毫秒
+                    data = playUrl, 
+                    albumId = -1L, artistId = -1L, albumArtist = artistName,
+                    genreName = "Netease" // ⚠️ 致命标签：用于触发后续的下载拦截器
+					size = songId // 🌟 核心补丁：把真实的网易云 ID 伪装在文件大小属性里
+                )
+            )
+        }
+
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            toast.cancel()
+            if (dailySongs.isNotEmpty()) {
+                // 送入播放器，由于含 HTTP 直链，底层 ExoPlayer 及车机会将其视为网络流正常播放
+                playerViewModel.openQueue(dailySongs, position = 0, startPlaying = true)
+            } else {
+                android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+		
             binding.myTopTracks -> {
                 findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.TopTracks))
             }

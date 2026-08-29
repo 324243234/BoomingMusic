@@ -313,6 +313,11 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         }
     }
 
+	override fun onDestroy() {
+        super.onDestroy()
+        // 🌟 退出时执行强制清理，打扫网易云在线播放与下载产生的缓存碎片
+        com.mardous.booming.util.NeteaseCacheSweeper.cleanUp(applicationContext)
+    }
     companion object {
         // 🌟 作者新增：页面内容跳转所使用的系统静态标识
         const val ACTION_SHOW_CONTENT = "com.mardous.booming.action.SHOW_CONTENT"

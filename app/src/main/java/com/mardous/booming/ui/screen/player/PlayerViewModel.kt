@@ -1,5 +1,14 @@
 package com.mardous.booming.ui.screen.player
 
+
+import com.mardous.booming.core.model.AudioSourceType
+import com.mardous.booming.core.model.getAudioSourceType
+import android.os.Environment
+import android.widget.Toast
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
@@ -219,9 +228,122 @@ class PlayerViewModel(
         _playbackSpeed.value = playbackParameters.speed
     }
 
-    fun toggleFavorite() {
-        mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
+    fun toggleFavorite(context: Context) {
+    val song = currentSong
+    if (song == Song.emptySong) return
+    val appContext = context.applicationContext
+
+    when (song.getAudioSourceType()) {
+        AudioSourceType.LOCAL -> {
+            // 本地歌曲走正常指令写入数据库
+            mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
+        }
+        AudioSourceType.RADIO -> handleRadioFavorite(appContext, song)
+        AudioSourceType.NETEASE -> handleNeteaseFavorite(appContext, song)
+        AudioSourceType.UNKNOWN -> Toast.makeText(appContext, "未知音频源", Toast.LENGTH_SHORT).show()
     }
+}
+
+
+// 🌟 2. 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
+private fun handleNeteaseFavorite(context: Context, song: Song) {
+    // 读取你在 Toolbar 切换的下载偏好 (flac 或 320k)
+    val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
+
+    Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
+
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            // A. 同步网易云红心云端
+            val realNeteaseId = song.size 
+            if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(realNeteaseId)
+
+            val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            val query = "${song.artistName} ${song.title}"
+            var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
+
+            // 🌟 梯队 1：如果用户设置了优先 FLAC，才去搜无损
+            if (targetQuality == "flac") {
+                val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "lossless")
+                targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
+            }
+
+            // 🌟 梯队 2：如果没搜到 FLAC，或者用户选了 320k，去搜极高品质 MP3
+            if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
+                val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(query, "exhigh")
+                targetItem = results.firstOrNull()
+            }
+
+            // 🌟 梯队 3：兜底。如果全部搜不到，用播放流兜底
+            val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
+                songId = realNeteaseId.toString(),
+                title = song.title,
+                artist = song.artistName,
+                album = song.albumName,
+                url = song.data, // 128k 秒播流
+                durationMs = song.duration,
+                format = "mp3",
+                fileSizeStr = "标准音质兜底"
+            )
+
+            // C. 执行防 OOM 的后台下载与打标
+            val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
+
+            // D. 闭环转正
+            if (downloadedFile != null && downloadedFile.exists()) {
+                kotlinx.coroutines.delay(1500)
+                val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
+                if (localSong != Song.emptySong) {
+                    repository.toggleFavorite(localSong.id)
+                }
+                
+                withContext(Dispatchers.Main) { 
+                    val qualityText = when {
+                        finalDownloadItem.format.equals("flac", ignoreCase = true) -> "无损 FLAC"
+                        targetItem != null -> "320k 高级 MP3"
+                        else -> "128k 标准音质"
+                    }
+                    Toast.makeText(context, "✅ 已保存 [$qualityText]", Toast.LENGTH_SHORT).show() 
+                }
+            } else {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "同步成功，下载失败", Toast.LENGTH_SHORT).show() }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+// 🌟 3. 增加电台专属处理器（物理防串扰）
+private fun handleRadioFavorite(context: Context, song: Song) {
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val radioFavName = "[Radio]我的收藏"
+            var playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
+            if (playlistId == null) {
+                playlistId = repository.createPlaylist(PlaylistEntity(playlistName = radioFavName))
+            }
+            
+            val existingSongs = repository.playlistSongs(playlistId)
+            if (existingSongs.any { it.data == song.data }) {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "已取消电台收藏", Toast.LENGTH_SHORT).show() }
+            } else {
+                val radioEntity = com.mardous.booming.data.local.room.SongEntity(
+                    id = (System.currentTimeMillis() * 1000), 
+                    title = song.title, artistName = song.artistName, albumName = song.albumName,
+                    duration = 0L, data = song.data, playlistCreatorId = playlistId,
+                    trackNumber = 0, year = 0, size = 0L,
+                    dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                    albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
+                )
+                repository.insertSongsInPlaylist(listOf(radioEntity))
+                withContext(Dispatchers.Main) { Toast.makeText(context, "❤️ 已收藏至电台列表", Toast.LENGTH_SHORT).show() }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+}
 
     fun cycleRepeatMode() {
         mediaController?.sendCustomCommand(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY), Bundle.EMPTY)
