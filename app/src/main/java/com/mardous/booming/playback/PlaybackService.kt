@@ -16,7 +16,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothA2dp
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -87,8 +86,6 @@ import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.repository.Repository
-import com.mardous.booming.extensions.isBluetoothA2dpConnected
-import com.mardous.booming.extensions.isBluetoothA2dpDisconnected
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.playback.equalizer.EqualizerManager
 import com.mardous.booming.playback.library.LibraryProvider
@@ -189,9 +186,6 @@ class PlaybackService :
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
 
-    // =========================================================================
-    // 🔥 车机专属状态防卡顿装甲体系 (CarWith / Bluetooth Lyrics)
-    // =========================================================================
     private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
@@ -232,11 +226,7 @@ class PlaybackService :
         get() = player.isPlaying
 
     private val shuffleCommand: CommandButton
-        get() = if (player.shuffleModeEnabled) {
-            customCommands[1]
-        } else {
-            customCommands[0]
-        }
+        get() = if (player.shuffleModeEnabled) customCommands[1] else customCommands[0]
 
     private val repeatCommand: CommandButton
         get() = when (player.repeatMode) {
@@ -462,7 +452,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 🌟 开放 CarWith 专属控制命令
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -702,7 +691,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 修复：精准解析 CarWith 发送的目标 PlayMode 参数 ("0" 随机, "1" 单曲, "2" 循环)
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 val targetModeStr = args.getString("ucar.media.bundle.PLAY_MODE")
                 if (!targetModeStr.isNullOrEmpty()) {
@@ -721,7 +709,6 @@ class PlaybackService :
                         }
                     }
                 } else {
-                    // 兜底循环切换
                     if (player.shuffleModeEnabled) {
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ONE
@@ -890,26 +877,26 @@ class PlaybackService :
         serviceScope.launch(IO) {
             val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
-            currentIsFavorite = if (newSong != Song.emptySong) {
-                val isRadioStream = newSong.duration == 0L || newSong.data.startsWith("http")
-                if (isRadioStream) {
-                    runCatching {
-                        val radioFavName = "[Radio]我的收藏"
-                        val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
-                        if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == newSong.data } else false
-                    }.getOrDefault(false)
-                } else {
-                    runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
-                }
+            // 🌟 核心修复 1：提取真实 URI，彻底杜绝电台切歌时被 MediaStore 阻断导致丢状态的死症！
+            val streamUrl = mediaItem?.localConfiguration?.uri?.toString() ?: newSong.data
+            val isRadioStream = streamUrl.startsWith("http")
+
+            currentIsFavorite = if (isRadioStream && streamUrl.isNotEmpty()) {
+                runCatching {
+                    val radioFavName = "[Radio]我的收藏"
+                    val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
+                    if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == streamUrl } else false
+                }.getOrDefault(false)
+            } else if (newSong != Song.emptySong) {
+                runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
             } else false
 
             withContext(Main) {
-                // 🌟 核心修复 2：严格强制时序！先刷新内存图标布局，再挂载给车机并触发底层重绘
+                // 🌟 核心修复 2：绝对强制的时序！内存状态算出后，直接发给手机下拉通知栏和车机卡片！
                 refreshMediaButtonCustomLayout()
                 if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
                     bluetoothLyricManager?.loadLyricsForSong(newSong)
                 }
-                // 🌟 将 CarWith 更新移到这里，确保它在获得最新的红心状态后执行！
                 updateCarWithMetadata()
             }
 
@@ -948,9 +935,6 @@ class PlaybackService :
                 }
             }
         }
-
-        // 🌟 切歌时直接执行轻量、防爆的 CarWith 元数据注入
-        //updateCarWithMetadata()
 
         if (player.currentMediaItemIndex == stopIndex) {
             player.exoPlayer.pauseAtEndOfMediaItems = true
@@ -1128,6 +1112,7 @@ class PlaybackService :
 
         withContext(Main) {
             refreshMediaButtonCustomLayout()
+            updateCarWithMetadata()
         }
 
         widgets.refresh()
@@ -1135,8 +1120,6 @@ class PlaybackService :
             SessionCommand(Playback.EVENT_FAVORITE_CONTENT_CHANGED, Bundle.EMPTY),
             Bundle.EMPTY
         )
-
-        updateCarWithMetadata()
     }
 
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
@@ -1275,7 +1258,6 @@ class PlaybackService :
             emptyList()
         }
         
-        // 🌟 核心修复 1：Media3 标准规范，设置全局 CustomLayout 唤醒手机系统通知栏红心刷新！
         mediaSession?.setCustomLayout(buttonLayout)
         
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
@@ -1439,9 +1421,6 @@ class PlaybackService :
         }
     }
 
-    // ==============================================================================
-    // 💥 终极 CarWith 装甲同步引擎：切歌单次投送 + 严格 Binder 截断保护
-    // ==============================================================================
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
@@ -1456,14 +1435,16 @@ class PlaybackService :
             
             withContext(IO) {
                 val song = runCatching { repository.songByMediaItem(expectedMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
-                if (song == Song.emptySong) return@withContext
 
-                // 🌟 核心修复 3：砍掉冗余的 DB 查询代码，直接使用上一步算出来的真理状态！性能与准确度双升！
+                // 🌟 核心修复 3：砍掉 emptySong 阻断，直接沿用最新的 currentIsFavorite！
                 val collectState = if (currentIsFavorite) "1" else "0"
 
                 val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
-                val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = false) }.getOrNull()
-				val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
+                val rawLyrics = if (song != Song.emptySong) {
+                    runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = false) }.getOrNull()
+                } else null
+                
+                val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
                 val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                     val timeMs = line.start
@@ -1482,7 +1463,6 @@ class PlaybackService :
                     }
                 } ?: ""
 
-                // 🛡️ 核心防爆截断：限制单次歌词长度最大 8000 字符，彻底杜绝 Binder 1MB 溢出导致车机断连
                 val lrcText = if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
 
                 val playMode: Long = when {
@@ -1502,7 +1482,6 @@ class PlaybackService :
                     val curPlayMode = currentExtras.getLong("ucar.media.metadata.PLAY_MODE", -1L)
                     val curLyric = currentExtras.getString("ucar.media.metadata.LYRICS_WHOLE")
 
-                    // 避免无意义重复替换引发底层 Timeline 震荡
                     if (curCollect == collectState && curPlayMode == playMode && curLyric == lrcText) {
                         return@withContext
                     }
