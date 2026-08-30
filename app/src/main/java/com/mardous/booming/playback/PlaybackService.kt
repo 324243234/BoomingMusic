@@ -877,15 +877,25 @@ class PlaybackService :
         serviceScope.launch(IO) {
             val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
-            // 🌟 核心修复 1：提取真实 URI，彻底杜绝电台切歌时被 MediaStore 阻断导致丢状态的死症！
             val streamUrl = mediaItem?.localConfiguration?.uri?.toString() ?: newSong.data
-            val isRadioStream = streamUrl.startsWith("http")
+            
+            // 🌟 终极修复 2：严格叠加 duration <= 0L 判定，防止把带时长的网易云 HTTP 流识别成电台！
+            val isRadioStream = newSong.duration <= 0L && streamUrl.startsWith("http")
 
             currentIsFavorite = if (isRadioStream && streamUrl.isNotEmpty()) {
                 runCatching {
-                    val radioFavName = "[Radio]我的收藏"
-                    val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
-                    if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == streamUrl } else false
+                    val targetNames = listOf("[Radio]我的电台", "[Radio]我的收藏")
+                    var isFav = false
+                    for (name in targetNames) {
+                        val playlistId = repository.checkPlaylistExists(name).firstOrNull()?.playListId
+                        if (playlistId != null) {
+                            if (repository.playlistSongs(playlistId).any { it.data == streamUrl }) {
+                                isFav = true
+                                break
+                            }
+                        }
+                    }
+                    isFav
                 }.getOrDefault(false)
             } else if (newSong != Song.emptySong) {
                 runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
@@ -1100,7 +1110,8 @@ class PlaybackService :
         withContext(IO) {
             val song = queueStateHolder.currentSong.first()
             if (song != Song.emptySong) {
-                val isRadioStream = song.duration == 0L || song.data.startsWith("http")
+                // 🌟 终极修复 1：必须是时长为0 且 是http流，才判定为电台！杜绝误杀网易云在线音乐！
+                val isRadioStream = song.duration <= 0L && song.data.startsWith("http")
                 if (isRadioStream) {
                     currentIsFavorite = playlistRepository.toggleRadioFavorite(song)
                 } else {
