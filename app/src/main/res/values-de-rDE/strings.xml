@@ -124,7 +124,6 @@
     <string name="permission_external_storage_denied">Du musst die Berechtigung zum Zugriff auf den externen Speicher erteilen.</string>
     <string name="permission_bluetooth_title">Geräte in der Nähe</string>
     <string name="permission_bluetooth_description">Die App benötigt Zugriff auf Geräte in der Nähe, um Bluetooth-Geräte zu finden</string>
-    <string name="permission_bluetooth_denied">Zugriff auf Geräte in der Nähe verweigert.</string>
     <string name="permission_read_images_title">Bilder lesen (optional)</string>
     <string name="permission_read_images_summary">Diese Berechtigung ist erforderlich, damit Booming Music Albumcover-Dateien in deinen Musikordnern finden kann. Wenn du diese Funktion nicht nutzen möchten, kannst du die Berechtigung verweigern.</string>
     <string name="permission_read_images_denied">Sie müssen die Berechtigung zum Lesen von Bildern auf diesem Gerät erteilen.</string>
@@ -282,10 +281,6 @@
     <string name="connection_unavailable">Verbindung nicht möglich.</string>
     <string name="you_have_to_select_at_least_one_category">Du musst mindestens eine Kategorie auswählen</string>
     <string name="you_cannot_select_more_than_five_categories">Du kannst nicht mehr als fünf Kategorien auswählen.</string>
-
-
-
-
     <string name="backup_successful">Sicherung erfolgreich!</string>
     <string name="backup_failed">Sicherung fehlgeschlagen.</string>
     <string name="select_content_to_restore">Inhalt zum Wiederherstellen auswählen:</string>
@@ -535,7 +530,6 @@
     <string name="audio_focus_header">Audiofokus</string>
     <string name="shuffle_mode_header">Zufallswiedergabe-Modus</string>
     <string name="display_header">Anzeige</string>
-
     <string name="visuals_header">Visuelles</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">Allgemeines Design</string>
@@ -717,10 +711,6 @@
     <string name="min_song_duration_summary">Mindestlänge eines Titels in Sekunden, um diesen in Deiner Bibliothek anzuzeigen.</string>
     <!-- Remote preferences -->
     <string name="app_language_title">App-Sprache</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">Beenden, wenn aus den zuletzt verwendeten Apps geschlossen</string>
     <string name="stop_when_closed_from_recents_summary">Die Wiedergabe wird angehalten, wenn die App aus der Liste der zuletzt verwendeten Apps geschlossen wird.</string>
     <string name="stop_when_closed_from_recents_note">Hinweis: Einige Geräte mit aggressivem Arbeitsspeicher- oder Akku-Management ignorieren diese Einstellung möglicherweise und beenden die App immer, wenn sie aus den zuletzt verwendeten Apps entfernt wird.</string>
@@ -984,8 +974,6 @@
     <string name="widget_page_previous">Vorherige Lieder</string>
     <string name="widget_page_next">Nächste Lieder</string>
     <string name="restart_app_message">Die App startet neu, um den Prozess abzuschließen.</string>
-    <string name="welcome_to">Willkommen bei</string>
-    <string name="permissions_title">Benötigte Berechtigungen</string>
     <string name="permissions_subtitle">Gewähre Zugriff auf deine Musikdateien und Geräte in der Nähe, um das beste Wiedergabeerlebnis zu genießen.</string>
     <string name="initial_configuration_title">Erstkonfiguration</string>
     <string name="initial_configuration_subtitle">Passe Booming Music nach deinem Geschmack an, bevor du beginnst.</string>

@@ -124,7 +124,6 @@
     <string name="permission_external_storage_denied">Du måste bevilja behörighet att komma åt extern lagring.</string>
     <string name="permission_bluetooth_title">Enheter i närheten</string>
     <string name="permission_bluetooth_description">Appen behöver åtkomst till enheter i närheten för att söka efter bluetooth-enheter</string>
-    <string name="permission_bluetooth_denied">Åtkomst till enheter i närheten nekad.</string>
     <string name="permission_read_images_title">Läs bilder (valfritt)</string>
     <string name="permission_read_images_summary">Denna behörighet krävs för att Booming Music ska kunna hitta skivomslagsfiler i dina musikmappar. Om du inte planerar att använda den här funktionen kan du välja att inte bevilja den.</string>
     <string name="permission_read_images_denied">Du måste ge behörighet att läsa bilder från enheten.</string>
@@ -282,10 +281,6 @@
     <string name="connection_unavailable">Anslutning ej tillgänglig.</string>
     <string name="you_have_to_select_at_least_one_category">Du måste välja minst en kategori</string>
     <string name="you_cannot_select_more_than_five_categories">Du kan inte välja mer än fem kategorier.</string>
-
-
-
-
     <string name="backup_successful">Säkerhetskopiering lyckades!</string>
     <string name="backup_failed">Säkerhetskopiering misslyckades.</string>
     <string name="select_content_to_restore">Välj innehåll att återställa:</string>
@@ -535,7 +530,6 @@
     <string name="audio_focus_header">Fokus på ljud</string>
     <string name="shuffle_mode_header">Blanda läge</string>
     <string name="display_header">Visning</string>
-
     <string name="visuals_header">Visualer</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">Allmänt tema</string>
@@ -717,10 +711,6 @@
     <string name="min_song_duration_summary">Hur många sekunder (minst) måste en låt vara för att visas i ditt bibliotek.</string>
     <!-- Remote preferences -->
     <string name="app_language_title">Appens språk</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">Stoppa när stängt från senaste</string>
     <string name="stop_when_closed_from_recents_summary">Uppspelning stoppas om appen är stängd från den senaste listan.</string>
     <string name="stop_when_closed_from_recents_note">Obs: Vissa enheter med aggressivt minne eller batterihantering kan ignorera denna inställning och alltid stoppa appen när den tas bort från senaste.</string>
@@ -959,8 +949,6 @@
     <string name="musicbrainz_search_message">Sök efter låtmetadata på MusicBrainz med titeln och artisten.</string>
     <string name="musicbrainz_no_results">Inga resultat hittades på MusicBrainz.</string>
     <string name="musicbrainz_select_recording">Välj ett resultat</string>
-    <string name="welcome_to">Välkommen till</string>
-    <string name="permissions_title">Behörigheter behövs</string>
     <string name="permissions_subtitle">Ge åtkomst till dina musikfiler och närliggande enheter för att få den bästa uppspelningsupplevelsen.</string>
     <string name="initial_configuration_title">Initial konfiguration</string>
     <string name="initial_configuration_subtitle">Anpassa Booming Music efter dina önskemål innan du börjar.</string>

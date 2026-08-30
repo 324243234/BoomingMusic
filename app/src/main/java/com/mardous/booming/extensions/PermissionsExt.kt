@@ -18,7 +18,6 @@
 package com.mardous.booming.extensions
 
 import android.Manifest.permission.BLUETOOTH_CONNECT
-import android.Manifest.permission.POST_NOTIFICATIONS
 import android.Manifest.permission.READ_EXTERNAL_STORAGE
 import android.Manifest.permission.READ_MEDIA_AUDIO
 import android.Manifest.permission.READ_MEDIA_IMAGES
@@ -26,12 +25,9 @@ import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 
 const val EXTRA_IS_PERMISSION_REQUEST = "is_permission_request"
 
-fun getNecessaryPermissions() = getStoragePermissions() + getNearbyDevicesPermissions()
-
 fun getStoragePermissions() = buildSet {
     if (hasT()) {
         add(READ_MEDIA_AUDIO)
-        add(POST_NOTIFICATIONS)
     } else {
         add(READ_EXTERNAL_STORAGE)
     }

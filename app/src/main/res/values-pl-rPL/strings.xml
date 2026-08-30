@@ -124,14 +124,15 @@
     <string name="permission_external_storage_denied">Musisz zezwolić na dostęp do pamięci zewnętrznej.</string>
     <string name="permission_bluetooth_title">Urządzenia w pobliżu</string>
     <string name="permission_bluetooth_description">Dostęp do pobliskich urządzeń jest wymagany do wykrywania urządzeń Bluetooth</string>
-    <string name="permission_bluetooth_denied">Nie przyznano dostępu do pobliskich urządzeń.</string>
     <string name="permission_read_images_title">Dostęp do zdjęć (opcjonalny)</string>
     <string name="permission_read_images_summary">Pozwala aplikacji Booming Music znajdować okładki albumów w folderach z muzyką. Nie jest wymagane, jeśli nie zależy ci na tej funkcji.</string>
     <string name="permission_read_images_denied">Wymagane jest uprawnienie do odczytu obrazów z urządzenia.</string>
     <string name="permissions_denied">Nie przyznano uprawnień</string>
+    <string name="permissions_needed">Wymagane uprawnienia</string>
     <string name="grant_access_action">Zezwól</string>
     <string name="action_grant">Przyznaj</string>
     <string name="granted">Przyznane</string>
+    <string name="welcome_to_x">Witamy w %s</string>
     <string name="get_started">Rozpocznij</string>
     <string name="select_storage_title">Wybierz pamięć</string>
     <string name="now_playing">Teraz odtwarzane</string>
@@ -282,10 +283,6 @@
     <string name="connection_unavailable">Połączenie niedostępne.</string>
     <string name="you_have_to_select_at_least_one_category">Musisz wybrać co najmniej jedną kategorię</string>
     <string name="you_cannot_select_more_than_five_categories">Nie możesz wybrać więcej niż pięciu kategorii.</string>
-
-
-
-
     <string name="backup_successful">Kopia zapasowa zakończona!</string>
     <string name="backup_failed">Nie udało się stworzyć kopii zapasowej.</string>
     <string name="select_content_to_restore">Wybierz zawartość do przywrócenia:</string>
@@ -551,7 +548,6 @@
     <string name="audio_focus_header">Priorytet audio</string>
     <string name="shuffle_mode_header">Tryb losowy</string>
     <string name="display_header">Wyświetlanie</string>
-
     <string name="visuals_header">Wizualne</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">Motyw ogólny</string>
@@ -733,10 +729,6 @@
     <string name="min_song_duration_summary">Ile sekund (przynajmniej) musi trwać utwór, by wyświetlić go twojej bibliotece.</string>
     <!-- Remote preferences -->
     <string name="app_language_title">Język aplikacji</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">Zatrzymaj odtwarzanie po zamknięciu z ostatnich</string>
     <string name="stop_when_closed_from_recents_summary">Zatrzymuje odtwarzanie po zamknięciu aplikacji z listy ostatnich aplikacji.</string>
     <string name="stop_when_closed_from_recents_note">Uwaga: niektóre urządzenia z agresywnym zarządzaniem pamięcią lub baterią mogą to zignorować i zatrzymać aplikację po usunięciu jej z ekranu ostatnich aplikacji.</string>
@@ -1002,8 +994,6 @@
     <string name="use_lyrically_provider_title">Używaj Lyrically</string>
     <string name="use_lyrically_provider_summary">Rozbudowane API tekstów z obsługą karaoke i podziałem na wielu wykonawców.</string>
     <string name="auto_theme_name">Auto</string>
-    <string name="welcome_to">Witaj w</string>
-    <string name="permissions_title">Wymagane uprawnienia</string>
     <string name="permissions_subtitle">Przyznaj dostęp do Muzyki i dźwięku oraz Urządzeń w pobliżu, aby poprawić komfort odtwarzania.</string>
     <string name="initial_configuration_title">Konfiguracja początkowa</string>
     <string name="initial_configuration_subtitle">Zanim zaczniemy, dostosuj Booming Music do swoich preferencji.</string>

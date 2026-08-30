@@ -124,14 +124,15 @@
     <string name="permission_external_storage_denied">必须授予访问外部存储的权限。</string>
     <string name="permission_bluetooth_title">附近设备</string>
     <string name="permission_bluetooth_description">此应用需要附近的设备权限来检查蓝牙设备</string>
-    <string name="permission_bluetooth_denied">附近设备权限被拒绝。</string>
     <string name="permission_read_images_title">查看图像（可选）</string>
     <string name="permission_read_images_summary">为了自动查找并显示歌曲的专辑封面，Booming Music 需要获取访问音乐文件夹的权限。你可以根据需要决定是否授予此权限。</string>
     <string name="permission_read_images_denied">需要授予访问所有文件的权限以允许应用读取封面图像。</string>
     <string name="permissions_denied">权限被拒绝</string>
+    <string name="permissions_needed">需要权限</string>
     <string name="grant_access_action">授予权限</string>
     <string name="action_grant">授权</string>
     <string name="granted">已授权</string>
+    <string name="welcome_to_x">欢迎使用 %s</string>
     <string name="get_started">开始</string>
     <string name="select_storage_title">选择存储</string>
     <string name="now_playing">正在播放</string>
@@ -282,10 +283,6 @@
     <string name="connection_unavailable">连接不可用。</string>
     <string name="you_have_to_select_at_least_one_category">至少需要选择一个类别</string>
     <string name="you_cannot_select_more_than_five_categories">不能选择超过五个类别。</string>
-
-
-
-
     <string name="backup_successful">备份成功！</string>
     <string name="backup_failed">备份失败。</string>
     <string name="select_content_to_restore">选择要还原的内容：</string>
@@ -527,7 +524,6 @@
     <string name="audio_focus_header">音频焦点</string>
     <string name="shuffle_mode_header">随机模式</string>
     <string name="display_header">显示</string>
-
     <string name="visuals_header">视觉效果</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">一般主题</string>
@@ -709,10 +705,6 @@
     <string name="min_song_duration_summary">歌曲时长需要至少有多少秒才会显示在曲库中。</string>
     <!-- Remote preferences -->
     <string name="app_language_title">应用语言</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">从“最近应用”关闭应用后停止播放</string>
     <string name="stop_when_closed_from_recents_summary">从“最近应用”视图关闭此应用后停止播放歌曲。</string>
     <string name="stop_when_closed_from_recents_note">注意：某些内存管理或电池管理较为严格的设备可能会忽略此设置，并在从最近使用的应用列表中移除时始终停止应用。</string>
@@ -975,8 +967,6 @@
     <string name="widget_page_previous">上一页</string>
     <string name="widget_page_next">下一页</string>
     <string name="restart_app_message">应用将重启以完成操作。</string>
-    <string name="welcome_to">欢迎使用</string>
-    <string name="permissions_title">需要权限</string>
     <string name="permissions_subtitle">请授予音乐文件和附近设备的访问权限，以获得最佳播放体验。</string>
     <string name="initial_configuration_title">初始设置</string>
     <string name="initial_configuration_subtitle">在开始之前，请根据你的喜好自定义 Booming Music。</string>

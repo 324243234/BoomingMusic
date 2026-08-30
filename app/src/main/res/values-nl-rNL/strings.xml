@@ -124,14 +124,15 @@
     <string name="permission_external_storage_denied">U moet toestemming geven om toegang te krijgen tot externe opslag.</string>
     <string name="permission_bluetooth_title">Nabijgelegen apparaten</string>
     <string name="permission_bluetooth_description">De app heeft toestemming in de buurt nodig om te controleren op bluetooth apparaten</string>
-    <string name="permission_bluetooth_denied">Machtiging in de buurt geweigerd.</string>
     <string name="permission_read_images_title">Lees afbeeldingen (optioneel)</string>
     <string name="permission_read_images_summary">Deze toestemming is vereist voor het vinden van albumhoezen in je muziekmappen. Als u niet van plan bent om deze functie te gebruiken, kunt u ervoor kiezen deze niet toe te staan.</string>
     <string name="permission_read_images_denied">Je moet toestemming geven om afbeeldingen van het apparaat te lezen.</string>
     <string name="permissions_denied">Permissies geweigerd</string>
+    <string name="permissions_needed">Machtigingen vereist</string>
     <string name="grant_access_action">Toegang verlenen</string>
     <string name="action_grant">Toestaan</string>
     <string name="granted">Toegekend</string>
+    <string name="welcome_to_x">Welkom bij %s</string>
     <string name="get_started">Nu inschrijven</string>
     <string name="select_storage_title">Opslag selecteren</string>
     <string name="now_playing">Afspelende media</string>
@@ -282,10 +283,6 @@
     <string name="connection_unavailable">Verbinding niet beschikbaar.</string>
     <string name="you_have_to_select_at_least_one_category">Je moet ten minste één categorie selecteren</string>
     <string name="you_cannot_select_more_than_five_categories">U kunt niet meer dan vijf categorieën selecteren.</string>
-
-
-
-
     <string name="backup_successful">Back-up succesvol!</string>
     <string name="backup_failed">Back-up mislukt.</string>
     <string name="select_content_to_restore">Selecteer inhoud om te herstellen:</string>
@@ -535,7 +532,6 @@
     <string name="audio_focus_header">Audio focus</string>
     <string name="shuffle_mode_header">Shuffle modus</string>
     <string name="display_header">Weergeven</string>
-
     <string name="visuals_header">Visuelen</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">Algemeen thema</string>
@@ -717,10 +713,6 @@
     <string name="min_song_duration_summary">Hoeveel seconden (tenminste) moet er een nummer meegaan in je bibliotheek.</string>
     <!-- Remote preferences -->
     <string name="app_language_title">App taal</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">Stop bij sluiten van recente apps</string>
     <string name="stop_when_closed_from_recents_summary">Afspelen stopt als de app is gesloten vanuit de lijst met recente programma\'s.</string>
     <string name="stop_when_closed_from_recents_note">Opmerking: Sommige apparaten met agressief geheugen of accubeheer kunnen deze instelling negeren en de app altijd stoppen wanneer deze uit recente apps wordt verwijderd.</string>
@@ -983,8 +975,6 @@
     <string name="widget_source_recent">Recent</string>
     <string name="widget_page_previous">Vorige liedjes</string>
     <string name="widget_page_next">Volgende liedjes</string>
-    <string name="welcome_to">Welkom bij</string>
-    <string name="permissions_title">Toestemmingen vereist</string>
     <string name="permissions_subtitle">Geeft toegang tot uw muziekbestanden en nabije apparaten om de beste terugspeelervaring te beleven.</string>
     <string name="initial_configuration_title">Eerste Installatie</string>
     <string name="initial_configuration_subtitle">Pas Booming Music naar uw smaak aan voor u begint.</string>

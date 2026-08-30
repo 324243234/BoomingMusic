@@ -140,10 +140,11 @@
     <string name="create_a_playlist_with_x_songs">ی نومگه پشک وورکل ابۊ وو %d آرنگ و هالت خوتکار و منس ٱوورده ابۊ.</string>
     <string name="permission_bluetooth_title">دسگایل نهنگ</string>
     <string name="permission_bluetooth_description">ای برنومه سی واجۊری دسگایل بۊلۊتۊس، موجوز دسگایل نهنگ ن اخو</string>
-    <string name="permission_bluetooth_denied">موجوز دسگایل نهنگ رڌ وابی.</string>
     <string name="permission_read_images_title">خوندن شؽواتا (اختیاری)</string>
     <string name="permissions_denied">موجوزا رڌ وابین</string>
+    <string name="permissions_needed">موجوزایی ک اخو</string>
     <string name="grant_access_action">هشتن دسرسی</string>
+    <string name="welcome_to_x">و %s خش ٱوۊڌین</string>
     <string name="get_started">بنین پا کار</string>
     <string name="action_remove_from_playlist">پاک کردن ز نومگه پشک</string>
     <string name="action_add_to_playing_queue">ٱووردن و سف</string>
@@ -291,7 +292,6 @@
         <item quantity="one">آرنگ</item>
         <item quantity="other">آرنگا</item>
     </plurals>
-
     <plurals name="x_songs">
         <item quantity="one">%d آرنگ</item>
         <item quantity="other">%d آرنگا</item>
@@ -312,9 +312,6 @@
     <string name="connection_unavailable">منپیز من دسرس نؽ.</string>
     <string name="you_have_to_select_at_least_one_category">ایسا ٱقلن وا ی دسته ن پسند کۊنین</string>
     <string name="you_cannot_select_more_than_five_categories">ایسا نترین بیشتر ز پنج دسته ن پسند کۊنین.</string>
-
-
-
     <string name="backup_successful">لادراری گرؽڌن وا مووفقیت ٱنجوم وابی!</string>
     <string name="backup_failed">لادراری گرؽڌن ٱنجوم نوابی.</string>
     <string name="could_not_restore_data">داده یل نوورگشتن. فایل لادرار ن تئییڌ کۊنین وو دووارته امتهووݩ کۊنین.</string>
@@ -426,8 +423,6 @@
     <string name="app_widget_library_desc">شبکه‌ای ز جلدا ز نومگهی ک پسند اکۊنین</string>
     <string name="app_widget_nothing_playing">هیچی پشک نؽبۊ</string>
     <string name="app_widget_tap_to_play">سی گۊشیڌن Booming Music زربه بزنین</string>
-    <string name="welcome_to">خش ٱوۊڌین و</string>
-    <string name="permissions_title">موجوزا موورد نیاز</string>
     <string name="permissions_subtitle">سی بؽڌرین تجروبه پشک، و فایلا آرنگ وو دسگایل نهنگ خوتووݩ دسرسی بڌین.</string>
     <string name="initial_configuration_title">سامووݩ ٱولیه</string>
     <string name="initial_configuration_subtitle">پؽش ز شۊرۊع، Booming Music ن باو دل خوتووݩ سفارشی کۊنین.</string>

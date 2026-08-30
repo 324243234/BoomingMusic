@@ -124,14 +124,15 @@
     <string name="permission_external_storage_denied">È necessario concedere l\'autorizzazione ad accedere alla memoria esterna.</string>
     <string name="permission_bluetooth_title">Dispositivi Vicini</string>
     <string name="permission_bluetooth_description">L\'app ha bisogno dell\'autorizzazione per i dispositivi nelle vicinanze per controllare i dispositivi bluetooth</string>
-    <string name="permission_bluetooth_denied">Autorizzazione dispositivi nelle vicinanze negata.</string>
     <string name="permission_read_images_title">Lettura immagini (opzionale)</string>
     <string name="permission_read_images_summary">Questa autorizzazione è richiesta da Booming Music per trovare i file di copertina degli album nelle tue cartelle musicali. Se non hai intenzione di utilizzare questa funzione, puoi scegliere di non concederla.</string>
     <string name="permission_read_images_denied">Devi concedere i permessi di lettura delle immagini dal tuo dispositivo.</string>
     <string name="permissions_denied">Permessi negati</string>
+    <string name="permissions_needed">Permessi necessari</string>
     <string name="grant_access_action">Autorizza accesso</string>
     <string name="action_grant">Autorizza</string>
     <string name="granted">Autorizzato</string>
+    <string name="welcome_to_x">Benvenuto a %s</string>
     <string name="get_started">Per Iniziare</string>
     <string name="select_storage_title">Seleziona memoria</string>
     <string name="now_playing">In riproduzione</string>
@@ -282,10 +283,6 @@
     <string name="connection_unavailable">Connessione non disponibile.</string>
     <string name="you_have_to_select_at_least_one_category">Devi selezionare almeno una categoria</string>
     <string name="you_cannot_select_more_than_five_categories">Non puoi selezionare più di cinque categorie.</string>
-
-
-
-
     <string name="backup_successful">Backup riuscito!</string>
     <string name="backup_failed">Backup non riuscito.</string>
     <string name="select_content_to_restore">Seleziona il contenuto da ripristinare:</string>
@@ -535,7 +532,6 @@
     <string name="audio_focus_header">Focus audio</string>
     <string name="shuffle_mode_header">Modalità di riproduzione casuale</string>
     <string name="display_header">Visualizzazione</string>
-
     <string name="visuals_header">Visivi</string>
     <!-- Interface preferences -->
     <string name="general_theme_title">Tema generale</string>
@@ -717,10 +713,6 @@
     <string name="min_song_duration_summary">Crea un file contenente i dati essenziali dell\'app e salvarlo nella memoria esterna.</string>
     <!-- Remote preferences -->
     <string name="app_language_title">Lingua app</string>
-
-
-
-
     <string name="stop_when_closed_from_recents_title">Ferma quando chiuso dai recenti</string>
     <string name="stop_when_closed_from_recents_summary">La riproduzione viene fermata se l\'app viene chiusa dalla lista delle app recenti.</string>
     <string name="stop_when_closed_from_recents_note">Nota: alcuni dispositivi con una gestione aggressiva della memoria e/o della batteria potrebbero ignorare questa impostazione e fermare sempre l\'app quando rimossa dalla lista delle app recenti.</string>
@@ -960,8 +952,6 @@
     <string name="musicbrainz_search_message">Cerca metadati del brano su MusicBrainz utilizzando il titolo e l\'artista.</string>
     <string name="musicbrainz_no_results">Nessun risultato trovato su MusicBrainz.</string>
     <string name="musicbrainz_select_recording">Seleziona un risultato</string>
-    <string name="welcome_to">Benvenuto su</string>
-    <string name="permissions_title">Autorizzazione necessaria</string>
     <string name="permissions_subtitle">Concedi l\'accesso ai tuoi file musiciali e ai dispositivi vicini per ottenere la migliore esperienza di riproduzione.</string>
     <string name="initial_configuration_title">Configurazione iniziale</string>
     <string name="initial_configuration_subtitle">Personalizza Booming Music a tuo piacimento prima di iniziare.</string>
