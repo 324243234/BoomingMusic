@@ -141,7 +141,7 @@ class BluetoothLyricManager(
 
         val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
 
-        var titleText = "🎵 🎵 🎵"
+        var titleText = "?? ?? ??"
         val artistParts = mutableListOf<String>()
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
@@ -155,15 +155,13 @@ class BluetoothLyricManager(
                 nextIdx++
             }
         } else {
-            // 🌟 核心破冰 4：极其严格的 IF-ELSE 互斥！有翻译绝对不要挤着放下一句
             val currentLineObj = currentLyricsList[currentIndex]
             titleText = currentLineObj.content.content
 
             val transText = currentLineObj.translation?.content
             if (showTranslation && !transText.isNullOrBlank()) {
-                artistParts.add(transText) // 只要开了翻译且存在翻译，副标题被翻译独占！
+                artistParts.add(transText)
             } else {
-                // 如果关了翻译，或者原歌没翻译，副标题才用来预告下一句
                 var nextIdx = currentIndex + 1
                 while (nextIdx < currentLyricsList.size) {
                     val nextText = currentLyricsList[nextIdx].content.content
@@ -191,10 +189,11 @@ class BluetoothLyricManager(
         val currentItem = player.getMediaItemAt(currentIndex)
         if (currentItem.mediaId != hookedMediaId) return
 
+        // ?? ��ȱ������̳��������е� CarWith װ�� Extras������Ĩ��
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
-        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
-        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"
-        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "未知专辑"
+        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "δ֪����"
+        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "δ֪����"
+        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "δ֪ר��"
 
         if (!extras.containsKey("BT_ORIGINAL_TITLE")) {
             extras.putString("BT_ORIGINAL_TITLE", cleanTitle)
@@ -203,8 +202,14 @@ class BluetoothLyricManager(
         }
 
         val updatedMetadata = currentItem.mediaMetadata.buildUpon()
-            .setTitle(titleText).setArtist(artistText).setAlbumTitle(" ").setExtras(extras).build()
-        val updatedItem = currentItem.buildUpon().setMediaMetadata(updatedMetadata).build()
+            .setTitle(titleText)
+            .setArtist(artistText)
+            .setAlbumTitle(" ")
+            .setExtras(extras)
+            .build()
+        val updatedItem = currentItem.buildUpon()
+            .setMediaMetadata(updatedMetadata)
+            .build()
 
         lastPushedTitle = titleText
         lastPushedArtist = artistText
@@ -215,7 +220,10 @@ class BluetoothLyricManager(
 
     private fun restoreOriginalMetadata() {
         if (!isHooked || hookedMediaId.isEmpty()) {
-            isHooked = false; hookedMediaId = ""; resetStateCache(); return
+            isHooked = false
+            hookedMediaId = ""
+            resetStateCache()
+            return
         }
 
         var targetIndex = -1
@@ -227,31 +235,48 @@ class BluetoothLyricManager(
             val itemToRestore = player.getMediaItemAt(targetIndex)
             val extras = itemToRestore.mediaMetadata.extras
             if (extras != null && extras.containsKey("BT_ORIGINAL_TITLE")) {
-                val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "未知歌曲"
-                val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "未知歌手"
-                val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "未知专辑"
+                val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "δ֪����"
+                val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "δ֪����"
+                val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "δ֪ר��"
 
                 val cleanExtras = Bundle(extras).apply {
-                    remove("BT_ORIGINAL_TITLE"); remove("BT_ORIGINAL_ARTIST"); remove("BT_ORIGINAL_ALBUM")
+                    remove("BT_ORIGINAL_TITLE")
+                    remove("BT_ORIGINAL_ARTIST")
+                    remove("BT_ORIGINAL_ALBUM")
                 }
 
                 val restoredMetadata = itemToRestore.mediaMetadata.buildUpon()
-                    .setTitle(cleanTitle).setArtist(cleanArtist).setAlbumTitle(cleanAlbum).setExtras(cleanExtras).build()
-                val restoredItem = itemToRestore.buildUpon().setMediaMetadata(restoredMetadata).build()
+                    .setTitle(cleanTitle)
+                    .setArtist(cleanArtist)
+                    .setAlbumTitle(cleanAlbum)
+                    .setExtras(cleanExtras)
+                    .build()
+                val restoredItem = itemToRestore.buildUpon()
+                    .setMediaMetadata(restoredMetadata)
+                    .build()
 
                 val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
                 realPlayer.replaceMediaItem(targetIndex, restoredItem)
             }
         }
-        isHooked = false; hookedMediaId = ""; resetStateCache()
+        isHooked = false
+        hookedMediaId = ""
+        resetStateCache()
     }
 
     fun stopLyrics() {
         coroutineScope.launch(Dispatchers.Main) {
-            seekTimeoutJob?.cancel(); progressObserver.stop(); fetchJob?.cancel()
-            currentLyricsList = emptyList(); currentPlayingSongKey = "" 
+            seekTimeoutJob?.cancel()
+            progressObserver.stop()
+            fetchJob?.cancel()
+            currentLyricsList = emptyList()
+            currentPlayingSongKey = "" 
             restoreOriginalMetadata()
         }
     }
-    fun release() { stopLyrics(); player.removeListener(playerListener) }
+    
+    fun release() { 
+        stopLyrics()
+        player.removeListener(playerListener) 
+    }
 }

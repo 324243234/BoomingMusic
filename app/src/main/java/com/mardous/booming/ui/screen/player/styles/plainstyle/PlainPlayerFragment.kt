@@ -342,7 +342,9 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
 			menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            menu.findItem(R.id.action_favorite)?.apply {
+            
+			
+			menu.findItem(R.id.action_favorite)?.apply {
                 setIcon(R.drawable.ic_favorite_outline_24dp)
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
@@ -367,14 +369,14 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 			}	
 
-            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 53, "下载TTML")
+            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 52, "下载TTML")
             fetchTtmlItem.apply {
-                title = "↓T"
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+                title = "↓TT"
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener { fetchTtml(); true }
             }
 
-            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 52, "切换歌词格式")
+            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 49, "切换歌词格式")
             toggleFormatItem.apply {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener { toggleLyricsFormat(); true }
