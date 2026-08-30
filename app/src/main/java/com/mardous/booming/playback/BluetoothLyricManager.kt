@@ -141,7 +141,7 @@ class BluetoothLyricManager(
 
         val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
 
-        var titleText = "?? ?? ??"
+        var titleText = "ğŸµ ... "
         val artistParts = mutableListOf<String>()
 
         if (targetState == DisplayState.PRELUDE || targetState == DisplayState.INTERLUDE) {
@@ -189,11 +189,11 @@ class BluetoothLyricManager(
         val currentItem = player.getMediaItemAt(currentIndex)
         if (currentItem.mediaId != hookedMediaId) return
 
-        // ?? Éî¶È±£»¤£º¼Ì³ĞËùÓĞÒÑÓĞµÄ CarWith ×°¼× Extras£¬¾ø²»Ä¨³ı
+        // ğŸŒŸ æ·±åº¦ä¿æŠ¤ï¼šç»§æ‰¿æ‰€æœ‰å·²æœ‰çš„ CarWith è£…ç”² Extrasï¼Œç»ä¸æŠ¹é™¤
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
-        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "Î´Öª¸èÇú"
-        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "Î´Öª¸èÊÖ"
-        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "Î´Öª×¨¼­"
+        val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "æœªçŸ¥æ­Œæ›²"
+        val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "æœªçŸ¥æ­Œæ‰‹"
+        val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: currentItem.mediaMetadata.albumTitle?.toString() ?: "æœªçŸ¥ä¸“è¾‘"
 
         if (!extras.containsKey("BT_ORIGINAL_TITLE")) {
             extras.putString("BT_ORIGINAL_TITLE", cleanTitle)
@@ -235,9 +235,9 @@ class BluetoothLyricManager(
             val itemToRestore = player.getMediaItemAt(targetIndex)
             val extras = itemToRestore.mediaMetadata.extras
             if (extras != null && extras.containsKey("BT_ORIGINAL_TITLE")) {
-                val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "Î´Öª¸èÇú"
-                val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "Î´Öª¸èÊÖ"
-                val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "Î´Öª×¨¼­"
+                val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: "æœªçŸ¥æ­Œæ›²"
+                val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: "æœªçŸ¥æ­Œæ‰‹"
+                val cleanAlbum = extras.getString("BT_ORIGINAL_ALBUM") ?: "æœªçŸ¥ä¸“è¾‘"
 
                 val cleanExtras = Bundle(extras).apply {
                     remove("BT_ORIGINAL_TITLE")
