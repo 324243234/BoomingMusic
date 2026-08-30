@@ -890,7 +890,6 @@ class PlaybackService :
         serviceScope.launch(IO) {
             val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
-            // 🌟 核心修复：切歌时精准识别电台流的收藏状态
             currentIsFavorite = if (newSong != Song.emptySong) {
                 val isRadioStream = newSong.duration == 0L || newSong.data.startsWith("http")
                 if (isRadioStream) {
@@ -905,10 +904,13 @@ class PlaybackService :
             } else false
 
             withContext(Main) {
+                // 🌟 核心修复 2：严格强制时序！先刷新内存图标布局，再挂载给车机并触发底层重绘
                 refreshMediaButtonCustomLayout()
                 if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
                     bluetoothLyricManager?.loadLyricsForSong(newSong)
                 }
+                // 🌟 将 CarWith 更新移到这里，确保它在获得最新的红心状态后执行！
+                updateCarWithMetadata()
             }
 
             val previousSong = songPlayCountHelper.song
@@ -948,7 +950,7 @@ class PlaybackService :
         }
 
         // 🌟 切歌时直接执行轻量、防爆的 CarWith 元数据注入
-        updateCarWithMetadata()
+        //updateCarWithMetadata()
 
         if (player.currentMediaItemIndex == stopIndex) {
             player.exoPlayer.pauseAtEndOfMediaItems = true
@@ -1273,7 +1275,9 @@ class PlaybackService :
             emptyList()
         }
         
-        // 🌟 核心修复：移除 isRemoteController 判断，全量广播给包括系统通知栏在内的所有控制器
+        // 🌟 核心修复 1：Media3 标准规范，设置全局 CustomLayout 唤醒手机系统通知栏红心刷新！
+        mediaSession?.setCustomLayout(buttonLayout)
+        
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
             mediaSession?.setMediaButtonPreferences(controllerInfo, buttonLayout)
         }
@@ -1454,23 +1458,12 @@ class PlaybackService :
                 val song = runCatching { repository.songByMediaItem(expectedMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
                 if (song == Song.emptySong) return@withContext
 
-                // 🌟 核心修复：同步修正推送到 CarWith 的电台收藏判定
-                val isRadioStream = song.duration == 0L || song.data.startsWith("http")
-                val isFavorite = runCatching<Boolean> {
-                    if (isRadioStream) {
-                        val radioFavName = "[Radio]我的收藏"
-                        val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
-                        if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == song.data } else false
-                    } else {
-                        repository.isSongFavorite(song.id)
-                    }
-                }.getOrDefault(false)
-                
-                val collectState = if (isFavorite) "1" else "0"
+                // 🌟 核心修复 3：砍掉冗余的 DB 查询代码，直接使用上一步算出来的真理状态！性能与准确度双升！
+                val collectState = if (currentIsFavorite) "1" else "0"
 
                 val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
                 val rawLyrics = runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = false) }.getOrNull()
-                val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
+				val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
                 val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
                     val timeMs = line.start
