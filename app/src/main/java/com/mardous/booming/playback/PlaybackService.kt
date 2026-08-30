@@ -890,8 +890,18 @@ class PlaybackService :
         serviceScope.launch(IO) {
             val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
+            // 🌟 核心修复：切歌时精准识别电台流的收藏状态
             currentIsFavorite = if (newSong != Song.emptySong) {
-                runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
+                val isRadioStream = newSong.duration == 0L || newSong.data.startsWith("http")
+                if (isRadioStream) {
+                    runCatching {
+                        val radioFavName = "[Radio]我的收藏"
+                        val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
+                        if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == newSong.data } else false
+                    }.getOrDefault(false)
+                } else {
+                    runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
+                }
             } else false
 
             withContext(Main) {
@@ -1251,21 +1261,21 @@ class PlaybackService :
 
     private fun refreshMediaButtonCustomLayout() {
         val hasTimeline = !player.currentTimeline.isEmpty
-        mediaSession?.connectedControllers?.forEach { controllerInfo ->
-            if (mediaSession?.isRemoteController(controllerInfo) == true) {
-                val buttonLayout = if (hasTimeline) {
-                    val favButton = CommandButton.Builder()
-                        .setDisplayName("Favorite")
-                        .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
-                        .setIconResId(if (currentIsFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
-                        .build()
+        val buttonLayout = if (hasTimeline) {
+            val favButton = CommandButton.Builder()
+                .setDisplayName("Favorite")
+                .setSessionCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY))
+                .setIconResId(if (currentIsFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
+                .build()
 
-                    ImmutableList.of(favButton, repeatCommand, shuffleCommand)
-                } else {
-                    emptyList()
-                }
-                mediaSession?.setMediaButtonPreferences(controllerInfo, buttonLayout)
-            }
+            ImmutableList.of(favButton, repeatCommand, shuffleCommand)
+        } else {
+            emptyList()
+        }
+        
+        // 🌟 核心修复：移除 isRemoteController 判断，全量广播给包括系统通知栏在内的所有控制器
+        mediaSession?.connectedControllers?.forEach { controllerInfo ->
+            mediaSession?.setMediaButtonPreferences(controllerInfo, buttonLayout)
         }
     }
 
@@ -1444,7 +1454,18 @@ class PlaybackService :
                 val song = runCatching { repository.songByMediaItem(expectedMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
                 if (song == Song.emptySong) return@withContext
 
-                val isFavorite = runCatching<Boolean> { repository.isSongFavorite(song.id) }.getOrDefault(false)
+                // 🌟 核心修复：同步修正推送到 CarWith 的电台收藏判定
+                val isRadioStream = song.duration == 0L || song.data.startsWith("http")
+                val isFavorite = runCatching<Boolean> {
+                    if (isRadioStream) {
+                        val radioFavName = "[Radio]我的收藏"
+                        val playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
+                        if (playlistId != null) repository.playlistSongs(playlistId).any { it.data == song.data } else false
+                    } else {
+                        repository.isSongFavorite(song.id)
+                    }
+                }.getOrDefault(false)
+                
                 val collectState = if (isFavorite) "1" else "0"
 
                 val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
