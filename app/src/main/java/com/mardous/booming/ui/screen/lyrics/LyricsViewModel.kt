@@ -48,7 +48,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Mode as LyricsViewMode
 
-// ?? ĞÂÔö£ºµ¼ÈëÄ¿±êÃ¶¾Ù£¬Çø·Ö³£¹æ×ÖÌåºÍ¼Ó´Ö×ÖÌå
+// ?? æ–°å¢ï¼šå¯¼å…¥ç›®æ ‡æšä¸¾ï¼ŒåŒºåˆ†å¸¸è§„å­—ä½“å’ŒåŠ ç²—å­—ä½“
 enum class FontTarget {
     REGULAR,
     BOLD
@@ -148,7 +148,7 @@ class LyricsViewModel(
         }
     }
 
-    // ?? ÍêÃÀÈÚÈë×÷Õß×îĞÂ¸üĞÂ£º´«µİ providers Ñ¡ÔñÁĞ±í²¢ÎŞÊÓÈ«¾ÖÍøÂçÉèÖÃ
+    // ?? å®Œç¾èå…¥ä½œè€…æœ€æ–°æ›´æ–°ï¼šä¼ é€’ providers é€‰æ‹©åˆ—è¡¨å¹¶æ— è§†å…¨å±€ç½‘ç»œè®¾ç½®
     fun downloadLyrics(song: Song, title: String, artist: String, providers: List<LyricsProvider>) =
         viewModelScope.launch(IO) {
             val uiState = _lyricsEditorUiState.updateAndGet {
@@ -180,7 +180,7 @@ class LyricsViewModel(
         repository.deleteAllLyrics()
     }
 
-    // ?? Éı¼¶°æ×ÖÌåµ¼Èë£ºÈÚºÏÄãµÄ FontTarget ²ÎÊıÓë×÷ÕßµÄ°²È«Éó²é
+    // ?? å‡çº§ç‰ˆå­—ä½“å¯¼å…¥ï¼šèåˆä½ çš„ FontTarget å‚æ•°ä¸ä½œè€…çš„å®‰å…¨å®¡æŸ¥
     fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
         try {
             val targetName = target.name.lowercase()
@@ -194,12 +194,12 @@ class LyricsViewModel(
                     } else null
                 } ?: defaultName
 
-            // ×÷ÕßĞÂ°æÎÄ¼şÃûÇåÏ´
+            // ä½œè€…æ–°ç‰ˆæ–‡ä»¶åæ¸…æ´—
             val fileName = File(rawFileName).name.sanitize().ifBlank { defaultName }
 
             var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
 
-            // ?? ×÷ÕßĞÂ°æ£ºµ÷ÓÃ¶ÀÁ¢ÑéÖ¤Æ÷Ìæ´ú±¾µØÓ²±àÂë Hex Æ¥Åä
+            // ?? ä½œè€…æ–°ç‰ˆï¼šè°ƒç”¨ç‹¬ç«‹éªŒè¯å™¨æ›¿ä»£æœ¬åœ°ç¡¬ç¼–ç  Hex åŒ¹é…
             if (isValid) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     isValid = with(FileTypeVerifier) { input.isFontFile() }
@@ -213,7 +213,7 @@ class LyricsViewModel(
 
             val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
 
-            // ?? ÇåÀí¾ÉµÄ×ÖÖØÎïÀíÎÄ¼ş
+            // ?? æ¸…ç†æ—§çš„å­—é‡ç‰©ç†æ–‡ä»¶
             val oldPath = preferences.getString(targetPrefKey, null)
             if (!oldPath.isNullOrBlank()) {
                 val oldFile = File(oldPath)
@@ -223,7 +223,7 @@ class LyricsViewModel(
             }
 
             val outFile = File(fontsDir, "font_${targetName}_$fileName")
-            if (!outFile.belongsTo(fontsDir)) { // ×÷Õß·À´©Ô½¼ì²é
+            if (!outFile.belongsTo(fontsDir)) { // ä½œè€…é˜²ç©¿è¶Šæ£€æŸ¥
                 emit(false)
                 return@liveData
             }
@@ -234,12 +234,12 @@ class LyricsViewModel(
                 }
             }
 
-            // ?? ´æ´¢ÅäÖÃ
+            // ?? å­˜å‚¨é…ç½®
             preferences.edit(commit = true) {
                 putBoolean(Key.USE_CUSTOM_FONT, true)
                 putString(targetPrefKey, outFile.absolutePath)
                 
-                // ÎªÁË¼æÈİ¾É°æÂß¼­£¬Èç¹ûÊÇµ¼Èë Regular£¬Í¬Ê±¸üĞÂÒ»ÏÂ¾É Key
+                // ä¸ºäº†å…¼å®¹æ—§ç‰ˆé€»è¾‘ï¼Œå¦‚æœæ˜¯å¯¼å…¥ Regularï¼ŒåŒæ—¶æ›´æ–°ä¸€ä¸‹æ—§ Key
                 if (target == FontTarget.REGULAR) {
                     putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
                 }
@@ -347,13 +347,13 @@ class LyricsViewModel(
         return@withContext LyricsUiState.Empty(song.id)
     }
 
-    // ?? ÄãµÄ createViewSettings (Î¬³ÖÁËÔ­±¾×¢ÊÍµô if (!mode.isFull) µÄĞĞÎªÓëË«×ÖÖØºÏ²¢Ëã·¨)
+    // ?? ä½ çš„ createViewSettings (ç»´æŒäº†åŸæœ¬æ³¨é‡Šæ‰ if (!mode.isFull) çš„è¡Œä¸ºä¸åŒå­—é‡åˆå¹¶ç®—æ³•)
     private fun createViewSettings(mode: LyricsViewMode): LyricsViewSettings {
         val background: BackgroundEffect =
-            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // ±¾µØ£ºÒÆ³ıÁË if (!mode.isFull)
+            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // æœ¬åœ°ï¼šç§»é™¤äº† if (!mode.isFull)
                 "gradient" -> BackgroundEffect.Gradient
                 "blur" -> BackgroundEffect.Blur
-                "aurora" -> BackgroundEffect.Aurora // ÄãµÄ±¾µØĞÂÔöÃ¶¾Ù
+                "aurora" -> BackgroundEffect.Aurora // ä½ çš„æœ¬åœ°æ–°å¢æšä¸¾
                 else -> BackgroundEffect.None
             }
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
@@ -365,7 +365,7 @@ class LyricsViewModel(
         val blurEffect = !background.isNone && preferences.getBoolean(Key.BLUR_EFFECT, false)
         val shadowEffect = !background.isNone && preferences.getBoolean(Key.SHADOW_EFFECT, false)
         
-        // ?? ÖØ¹¹×ÖÌå¹¹½¨Âß¼­£ºÖÇÄÜ×éºÏÔ­ÉúË«×ÖÖØ
+        // ?? é‡æ„å­—ä½“æ„å»ºé€»è¾‘ï¼šæ™ºèƒ½ç»„åˆåŸç”ŸåŒå­—é‡
         val fontFamily: FontFamily = if (preferences.getBoolean(Key.USE_CUSTOM_FONT, false)) {
             try {
                 val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
@@ -407,7 +407,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = syncedFontSize.sp,
             fontWeight = if (syncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // ?? ¶µµ×±£ÕÏ£ºÄÄÅÂÓÃ»§Ö»µ¼ÁËÒ»¸ö³£¹æ×ÖÌå£¬ÕâĞĞÒ²ÄÜÈÃËü×Ô¶¯Ëã·¨¼Ó´Ö£¡
+            fontSynthesis = FontSynthesis.Weight, // ?? å…œåº•ä¿éšœï¼šå“ªæ€•ç”¨æˆ·åªå¯¼äº†ä¸€ä¸ªå¸¸è§„å­—ä½“ï¼Œè¿™è¡Œä¹Ÿèƒ½è®©å®ƒè‡ªåŠ¨ç®—æ³•åŠ ç²—ï¼
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         val unsyncedBoldFont = preferences.getBoolean(Key.UNSYNCED_BOLD_FONT, false)
@@ -415,7 +415,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = unsyncedFontSize.sp,
             fontWeight = if (unsyncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // Í¬ÉÏ
+            fontSynthesis = FontSynthesis.Weight, // åŒä¸Š
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         
@@ -438,13 +438,13 @@ class LyricsViewModel(
         )
     }
     
-    // ?? ĞÂÔö£ºÖÇÄÜÊ±¼äÖáÆ½ÒÆËã·¨
+    // ?? æ–°å¢ï¼šæ™ºèƒ½æ—¶é—´è½´å¹³ç§»ç®—æ³•
     fun shiftTimeline(content: String, offsetMs: Long): String {
         if (offsetMs == 0L || content.isBlank()) return content
 
         var newContent = content
 
-        // 1. ´¦Àí LRC Ê±¼äÖá [mm:ss.xx] »ò [mm:ss.xxx]
+        // 1. å¤„ç† LRC æ—¶é—´è½´ [mm:ss.xx] æˆ– [mm:ss.xxx]
         val lrcRegex = Regex("""\[(\d{2,}):(\d{2})\.(\d{2,3})\]""")
         newContent = lrcRegex.replace(newContent) { match ->
             val m = match.groupValues[1].toLong()
@@ -464,7 +464,7 @@ class LyricsViewModel(
             }
         }
 
-        // 2. ´¦Àí TTML Ê±¼äÖá (HH:MM:SS.mmm)
+        // 2. å¤„ç† TTML æ—¶é—´è½´ (HH:MM:SS.mmm)
         val ttmlRegex = Regex("""(begin|end)="(\d{2,}):(\d{2}):(\d{2})\.(\d{3})"""")
         newContent = ttmlRegex.replace(newContent) { match ->
             val attr = match.groupValues[1]
@@ -487,7 +487,7 @@ class LyricsViewModel(
         return newContent
     }
 
-    // ?? ĞÂÔö£ºÍêÈ«¶ÀÁ¢µÄ±¾µØÎÄ¼ş¸²¸ÇÂß¼­£¬²»×ßÔ­×÷Õß¸´ÔÓµÄÊı¾İÍ¨µÀ
+    // ?? æ–°å¢ï¼šå®Œå…¨ç‹¬ç«‹çš„æœ¬åœ°æ–‡ä»¶è¦†ç›–é€»è¾‘ï¼Œä¸èµ°åŸä½œè€…å¤æ‚çš„æ•°æ®é€šé“
     fun saveLocalLyricsFile(context: android.content.Context, song: Song, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -505,7 +505,7 @@ class LyricsViewModel(
                 
                 for (name in possibleNames) {
                     val targetFile = java.io.File(parentDir, "$name$ext")
-                    // Èç¹û´æÔÚÍ¬ÃûÎÄ¼ş£¬»òÕßµ±Ç°³¢ÊÔ±£´æµÄ¾ÍÊÇÖ÷ÎÄ¼şÃû£¬Ö±½Ó¸²¸Ç
+                    // å¦‚æœå­˜åœ¨åŒåæ–‡ä»¶ï¼Œæˆ–è€…å½“å‰å°è¯•ä¿å­˜çš„å°±æ˜¯ä¸»æ–‡ä»¶åï¼Œç›´æ¥è¦†ç›–
                     if (targetFile.exists() || name == songFile.nameWithoutExtension) {
                         targetFile.writeText(content)
                         saved = true
@@ -515,17 +515,17 @@ class LyricsViewModel(
                 
                 withContext(Dispatchers.Main) {
                     if (saved) {
-                        android.widget.Toast.makeText(context, "³É¹¦¸²Ğ´±¾µØ $ext ÎÄ¼ş", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "æˆåŠŸè¦†å†™æœ¬åœ° $ext æ–‡ä»¶", android.widget.Toast.LENGTH_SHORT).show()
                         repository.clearMemoryCache()
                         updateSong(song)
                     } else {
-                        android.widget.Toast.makeText(context, "±£´æÊ§°Ü£ºÎ´ÕÒµ½ÓĞĞ§Ä¿Â¼", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "ä¿å­˜å¤±è´¥ï¼šæœªæ‰¾åˆ°æœ‰æ•ˆç›®å½•", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "±£´æÊ§°Ü£¬Çë¼ì²é´æ´¢È¨ÏŞ", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, "ä¿å­˜å¤±è´¥ï¼Œè¯·æ£€æŸ¥å­˜å‚¨æƒé™", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -542,7 +542,7 @@ class LyricsViewModel(
                 }
             }
 
-            // ?? ¼àÌıË«×ÖÖØ Key ±ä¶¯£¬ÊµÊ±Ë¢ĞÂ½çÃæ
+            // ?? ç›‘å¬åŒå­—é‡ Key å˜åŠ¨ï¼Œå®æ—¶åˆ·æ–°ç•Œé¢
             PREF_CUSTOM_FONT_REGULAR,
             PREF_CUSTOM_FONT_BOLD,
             Key.USE_CUSTOM_FONT,
@@ -592,7 +592,7 @@ class LyricsViewModel(
         private const val INSTRUMENTAL_TRACK_IDENTIFIERS = "instrumental_track_identifiers"
         private const val MARK_INSTRUMENTAL_BY_TITLE = "mark_instrumental_tracks_by_title"
         
-        // ?? ´æ´¢Ë«×ÖÖØÂ·¾¶µÄ³£Á¿ Key
+        // ?? å­˜å‚¨åŒå­—é‡è·¯å¾„çš„å¸¸é‡ Key
         const val PREF_CUSTOM_FONT_REGULAR = "selected_custom_font_regular"
         const val PREF_CUSTOM_FONT_BOLD = "selected_custom_font_bold"
     }
