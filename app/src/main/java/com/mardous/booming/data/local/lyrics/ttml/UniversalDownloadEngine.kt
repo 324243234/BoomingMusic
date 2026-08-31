@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Christians MartÃ­nez Alvarado
+ * Copyright (c) 2025 Christians Mart¨ªnez Alvarado
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ import javax.crypto.spec.SecretKeySpec
 object UniversalDownloadEngine {
     private const val TAG = "UniversalDownloadEngine"
 
-    // ğŸŒŸ Znnu ç»ˆæå¯†é’¥å¸¸é‡
+    // ?? Znnu ÖÕ¼«ÃÜÔ¿³£Á¿
     private const val ZNNU_HMAC_KEY = "a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0"
 
     data class NetSongItem(
@@ -53,13 +53,10 @@ object UniversalDownloadEngine {
     )
 
     // ==========================================
-    // ğŸš€ ç¬¬ 1 çº§ç«ç®­ï¼šç¨³å®šæœç´¢ä¸é“¾æ¥è§£æ (åŠ¨æ€é€‚é…æœ¬åœ°é…ç½®çš„ API åŸŸå)
+    // ?? µÚ 1 ¼¶»ğ¼ı£ºÎÈ¶¨ËÑË÷ÓëÁ´½Ó½âÎö (?? 100% ×ßÍøÒ×ÔÆ¹«¿ª API£¬³¹µ×°şÀë Render)
     // ==========================================
     suspend fun searchOrParse(context: Context, input: String, targetLevel: String): List<NetSongItem> = withContext(Dispatchers.IO) {
         try {
-            // ğŸŒŸ åŠ¨æ€è·å–ç”¨æˆ·åœ¨é«˜çº§è®¾ç½®é‡Œå¡«å†™çš„ç½‘æ˜“äº‘ API åŸŸåï¼ˆè‹¥ä¸ºç©ºåˆ™è‡ªåŠ¨å›é€€é»˜è®¤ Renderï¼‰
-            val baseUrl = NeteaseDailyApi.getBaseUrl(context)
-
             val inputTrimmed = input.trim()
             val idMatch = Regex("""[?&]id=(\d+)""").find(inputTrimmed) ?: Regex("""/song/(\d+)""").find(inputTrimmed)
             val idsToFetch = mutableListOf<Long>()
@@ -69,7 +66,9 @@ object UniversalDownloadEngine {
             } else {
                 val limit = if (inputTrimmed.contains(" ") || inputTrimmed.contains("-")) 30 else 80
                 val encodedQuery = URLEncoder.encode(inputTrimmed, "UTF-8").replace("+", "%20")
-                val searchUrl = "$baseUrl/search?keywords=$encodedQuery&type=1&limit=$limit"
+                
+                // ?? ¸ÄÔì 1£ºÈ«ÃæÅ×Æú Render API£¬»»ÓÃÍøÒ×ÔÆ¹Ù·½ Web ËÑË÷½Ó¿Ú£¬ÊµÏÖºÁÃë¼¶ÃëÇĞ£¡
+                val searchUrl = "https://music.163.com/api/search/get/web?s=$encodedQuery&type=1&limit=$limit"
                 
                 val res = httpGet(searchUrl) ?: return@withContext emptyList()
                 val songs = JSONObject(res).optJSONObject("result")?.optJSONArray("songs") ?: return@withContext emptyList()
@@ -82,12 +81,13 @@ object UniversalDownloadEngine {
             if (idsToFetch.isEmpty()) return@withContext emptyList()
 
             val idsParam = idsToFetch.joinToString(",")
-            val detailUrl = "$baseUrl/song/detail?ids=$idsParam"
+            // ?? ¸ÄÔì 2£ºÅ×Æú Render API£¬»»ÓÃÍøÒ×ÔÆ¹Ù·½ÏêÇé½Ó¿Ú»ñÈ¡×¨¼­ºÍÊ±³¤£¨×¢Òâ ids ±ØĞë´øÖĞÀ¨ºÅ£©
+            val detailUrl = "https://music.163.com/api/song/detail?ids=[$idsParam]"
             val detailRes = httpGet(detailUrl) ?: return@withContext emptyList()
             val songArray = runCatching { JSONObject(detailRes).optJSONArray("songs") }.getOrNull() ?: return@withContext emptyList()
 
-            // ğŸŒŸ ç‹¬å®¶ä¼˜åŒ–ï¼šæ”¯çº¿ä»»åŠ¡ï¼åŠ¨æ€ä¼ å…¥ targetLevelï¼ŒæŸ¥å‡ºå¯¹åº”éŸ³è´¨çš„çœŸå®å¤§å°ï¼
-            var singleSongSizeStr = "ç‚¹å‡»ç ´ç›¾ä¸‹è½½"
+            // ?? Ö§ÏßÈÎÎñ£ºZnnu µ¥ÇúÕæÊµ´óĞ¡°²È«Ì½²âÆ÷±£³Ö²»±ä£¨Ëü×ß¶ÀÁ¢ÆÆ½â½Ó¿Ú£©
+            var singleSongSizeStr = "µã»÷ÆÆ¶ÜÏÂÔØ"
             if (idsToFetch.size == 1) {
                 val realSize = fetchZnnuSingleSongSize(idsToFetch[0].toString(), targetLevel)
                 if (!realSize.isNullOrBlank()) {
@@ -113,7 +113,7 @@ object UniversalDownloadEngine {
                 } else ""
 
                 val format = if (targetLevel == "lossless") "FLAC" else "MP3"
-                val finalSizeStr = if (idsToFetch.size == 1) singleSongSizeStr else "ç‚¹å‡»ç ´ç›¾ä¸‹è½½"
+                val finalSizeStr = if (idsToFetch.size == 1) singleSongSizeStr else "µã»÷ÆÆ¶ÜÏÂÔØ"
 
                 resultList.add(NetSongItem(id, title, artist, album, duration, picUrl, finalSizeStr, format, yearStr, targetLevel))
             }
@@ -127,7 +127,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // âš”ï¸ ç¬¬ 2 çº§ç«ç®­ï¼šç ´ç›¾ä¸‹è½½æµ (100% èµ° Znnu å¼•æ“ + åŠ¨æ€é™çº§)
+    // ?? µÚ 2 ¼¶»ğ¼ı£ºÆÆ¶ÜÏÂÔØÁ÷ (100% ×ß Znnu ÒıÇæ + ¶¯Ì¬½µ¼¶)
     // ==========================================
     suspend fun downloadSong(context: Context, song: NetSongItem, targetDirectory: File, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         var targetFile: File? = null
@@ -136,8 +136,9 @@ object UniversalDownloadEngine {
             var audioUrl = extractZnnuVipUrl(song.id, song.requestedLevel)
             
             if (audioUrl.isNullOrBlank()) {
-                Log.w(TAG, "Znnu è§£æå¤±è´¥ï¼Œå¯åŠ¨åŠ¨æ€ API é™çº§å…œåº•...")
-                // ğŸŒŸ ä½¿ç”¨åŠ¨æ€ baseUrl
+                Log.w(TAG, "Znnu ½âÎöÊ§°Ü£¬Æô¶¯¶¯Ì¬ API ½µ¼¶¶µµ×...")
+                // ?? ÕâÀïÊÇÈ«Ó¦ÓÃ¡¾Î¨Ò»¡¿Ò»´¦±£ÁôµÄ Render ´úÀíÏÂÔØÍ¨µÀ£¡
+                // ÒòÎªµ± Znnu å´»úÊ±£¬ÎÒÃÇÒª»ñÈ¡ VIP ¸¶·Ñ¸èÇúµÄÒôÆµÖ±Á´£¬±ØĞëÍ¨¹ı Render ´úÀí²¢ÔÚºóÌ¨Ğ¯´øÄãµÄ VIP Cookie ²ÅÄÜ³É¹¦£¡
                 val baseUrl = NeteaseDailyApi.getBaseUrl(context)
                 val fallbackRes = httpGet("$baseUrl/song/url/v1?id=${song.id}&level=${song.requestedLevel}")
                 audioUrl = runCatching { JSONObject(fallbackRes ?: "").optJSONArray("data")?.getJSONObject(0)?.optString("url") }.getOrNull()
@@ -154,7 +155,8 @@ object UniversalDownloadEngine {
             targetFile = File(targetDirectory, fileName)
 
             conn = URL(audioUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15000 
+            // ?? ¼Ó´óÏÂÔØÊ±µÄÍøÂçÈİÈÌ¶È
+            conn.connectTimeout = 20000 
             conn.readTimeout = 60000 
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.setRequestProperty("Referer", "https://music.znnu.com/")
@@ -201,7 +203,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ğŸ¨ ç¬¬ 3 çº§ç«ç®­ï¼šå®‰å…¨éš”ç¦»çš„å…ƒæ•°æ®æ³¨å…¥
+    // ?? µÚ 3 ¼¶»ğ¼ı£º°²È«¸ôÀëµÄÔªÊı¾İ×¢Èë
     // ==========================================
     private suspend fun injectMetadataSafely(audioFile: File, song: NetSongItem) {
         try {
@@ -249,7 +251,7 @@ object UniversalDownloadEngine {
                     metaFile.commit()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "æ»¡è¡€åˆ®å‰Šå¤±è´¥ï¼Œä½†éŸ³é¢‘å·²å®‰å…¨ä¿å­˜: ${e.message}")
+                Log.w(TAG, "ÂúÑª¹ÎÏ÷Ê§°Ü£¬µ«ÒôÆµÒÑ°²È«±£´æ: ${e.message}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Metadata injection critical failure", e)
@@ -257,7 +259,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ğŸ” Znnu æ ¸å¿ƒç ´è§£é»‘å®¢ç®—æ³• (AES-GCM & HMAC)
+    // ?? Znnu ºËĞÄÆÆ½âºÚ¿ÍËã·¨ (AES-GCM & HMAC)
     // ==========================================
     private class ZnnuAuth(val ip: String, val keyToken: String, val aesKey: String)
 
@@ -361,7 +363,7 @@ object UniversalDownloadEngine {
     }
 
     // ==========================================
-    // ğŸ•µï¸ æ”¯çº¿ä»»åŠ¡ï¼šZnnu å•æ›²çœŸå®å¤§å°å®‰å…¨æ¢æµ‹å™¨ (åŠ¨æ€åŒ¹é…éŸ³è´¨)
+    // ??? Ö§ÏßÈÎÎñ£ºZnnu µ¥ÇúÕæÊµ´óĞ¡°²È«Ì½²âÆ÷ (¶¯Ì¬Æ¥ÅäÒôÖÊ)
     // ==========================================
     private suspend fun fetchZnnuSingleSongSize(songId: String, level: String): String? {
         try {
@@ -404,20 +406,25 @@ object UniversalDownloadEngine {
             return sizeStr.takeIf { it.isNotBlank() && it != "null" }
 
         } catch (e: Exception) {
-            Log.w(TAG, "Znnu æ”¯çº¿æ¢æµ‹å¤§å°å¤±è´¥: ${e.message}")
+            Log.w(TAG, "Znnu Ö§ÏßÌ½²â´óĞ¡Ê§°Ü: ${e.message}")
         }
         return null
     }
 
     // ==========================================
-    // ğŸŒ åº•å±‚åŸºç¡€ç½‘ç»œé€šè®¯åº“
+    // ?? µ×²ã»ù´¡ÍøÂçÍ¨Ñ¶¿â (?? Ôö´ó³¬Ê±²¢¼ÓÈëÎ±×°·ÀÖ¹·´°Ç)
     // ==========================================
     private suspend fun httpGet(urlString: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
             conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10000; conn.readTimeout = 10000
+            // ?? È«ÃæÔö¼Ó³¬Ê±ãĞÖµÖÁ 30 Ãë£¬ËäÈ»×ß¹«¿ª API ¼«¿ì£¬µ«Õâ¿ÉÒÔ¶µµ×ÈÎºÎÒì³£ÍøÂç²¨¶¯
+            conn.connectTimeout = 30000; conn.readTimeout = 30000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            // ?? Õë¶Ô¹«¿ª½Ó¿Ú£¬×¢ÈëÍøÒ×ÔÆ Referer ±ÜÃâ 403 À¹½Ø
+            if (urlString.contains("163.com")) {
+                conn.setRequestProperty("Referer", "https://music.163.com/")
+            }
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (conn.responseCode == 200) return@withContext conn.inputStream.bufferedReader().use { it.readText() }
         } catch (e: Exception) {} finally { conn?.disconnect() }
@@ -429,7 +436,7 @@ object UniversalDownloadEngine {
         try {
             conn = URL(urlString).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.connectTimeout = 10000; conn.readTimeout = 15000
+            conn.connectTimeout = 15000; conn.readTimeout = 15000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
@@ -448,7 +455,7 @@ object UniversalDownloadEngine {
         var conn: HttpURLConnection? = null
         try {
             conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10000; conn.readTimeout = 15000
+            conn.connectTimeout = 15000; conn.readTimeout = 15000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             if (conn.responseCode == 200) return@withContext conn.inputStream.use { it.readBytes() }
         } catch (e: Exception) {} finally { conn?.disconnect() }

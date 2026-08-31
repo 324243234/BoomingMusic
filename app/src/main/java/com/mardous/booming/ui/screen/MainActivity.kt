@@ -1,5 +1,8 @@
 package com.mardous.booming.ui.screen
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import android.app.SearchManager
 import android.content.Intent
 import android.content.pm.ShortcutManager
@@ -87,6 +90,12 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         shortcutManager?.removeDynamicShortcuts(OLD_SHORTCUT_IDS)
 
         prepareUpdateViewModel()
+		
+		// 👇================ 🌟 新增：Render 静默唤醒预热 ================👇
+        // 提前 30 秒无感唤醒后台 API，确保你点开播放界面时，动态封面能 3 秒内极速出图！
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.mardous.booming.data.network.NeteaseDailyApi.wakeUpAndRefresh(applicationContext)
+        }
     }
 
     override fun onConnected(controller: MediaController) {

@@ -18,9 +18,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 动态专辑画布引擎 (严格计分版 + 冷热双轨 LRU 缓存系统 + 隐藏文件夹防相册污染)
- * <= 3.5MB：永久落盘至歌曲所在目录的 .MP4 隐藏文件夹
- * >  3.5MB：存入临时 LRU 缓存池，最多保留 5 首，避免大文件撑爆车机空间
+ * 动态专辑画布引擎 (双轨智能超时降级 + 冷热双轨 LRU 缓存)
  */
 object AnimatedCanvasFetcher {
 
@@ -28,15 +26,11 @@ object AnimatedCanvasFetcher {
     
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
-    //private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
-    //private const val QQ_MUSIC_API_DOMAIN = "https://my-qqmusic-api.onrender.com"
-
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
 
-    // 🌟 空间保护核心常量
     private const val MAX_PERMANENT_BYTES = 3_500_000L // 3.5MB
-    private const val MAX_TEMP_CACHE_FILES = 5         // 临时大文件最多缓存 5 首
+    private const val MAX_TEMP_CACHE_FILES = 5
 
     private data class CoverMatch(val platform: Int, val score: Int, val url: String)
 
@@ -108,8 +102,6 @@ object AnimatedCanvasFetcher {
         return score
     }
 
-    // 🌟 新增 Context 参数，用于获取 Android CacheDir
-    // 🌟 2. 在主流程中加入对 BLOCKED 的秒级熔断拦截
     suspend fun fetchCanvasUri(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val cacheKey = "${song.artistName}_${song.title}"
         uriCache.get(cacheKey)?.let { 
@@ -120,47 +112,38 @@ object AnimatedCanvasFetcher {
         yield()
         val audioFileName = File(song.data).nameWithoutExtension
 
-        // 1. 检查永久冷端本地缓存 (Permanent)
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
             val hiddenVideoDir = File(parentDir, ".MP4")
 
-            // 优先去 .MP4 隐藏文件夹里找
             var songVideo = if (hiddenVideoDir.exists()) {
                 checkLocalVideo(hiddenVideoDir, audioFileName)
                     ?: checkLocalVideo(hiddenVideoDir, getSafeFilename(song.title))
                     ?: checkLocalVideo(hiddenVideoDir, "${song.artistName} - ${song.title}")
             } else null
 
-            // 兜底：兼容以前下载在父目录的旧视频
             if (songVideo == null) {
                 songVideo = checkLocalVideo(parentDir, audioFileName)
                     ?: checkLocalVideo(parentDir, getSafeFilename(song.title))
                     ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}")
             }
             
-            // 🛑 拦截生效：遇到占位黑名单，直接返回 null，不播放也不走网络下载！
             if (songVideo == "BLOCKED") {
                 Log.d(TAG, "⛔ 检测到黑名单空文件/文件夹占位，已永远跳过该歌曲的视频加载: $audioFileName")
                 return@withContext null
             }
             if (songVideo != null) return@withContext cacheAndReturn(cacheKey, songVideo)
 
-            // 同样拦截 Album 级别的黑名单
             val albumName = song.albumName
             if (!albumName.isNullOrBlank()) {
                 var albumVideo = if (hiddenVideoDir.exists()) checkLocalVideo(hiddenVideoDir, getSafeFilename(albumName)) else null
                 if (albumVideo == null) albumVideo = checkLocalVideo(parentDir, getSafeFilename(albumName))
 
-                if (albumVideo == "BLOCKED") {
-                    Log.d(TAG, "⛔ 检测到专辑黑名单占位，跳过视频加载")
-                    return@withContext null
-                }
+                if (albumVideo == "BLOCKED") return@withContext null
                 if (albumVideo != null) return@withContext cacheAndReturn(cacheKey, albumVideo)
             }
         }
 
-        // 2. 检查临时热端 LRU 缓存 (Temporary)
         val tempDir = getTempCacheDir(context)
         val tempVideoPath = checkLocalVideo(tempDir, audioFileName)
         if (tempVideoPath == "BLOCKED") return@withContext null
@@ -185,36 +168,34 @@ object AnimatedCanvasFetcher {
         val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
         if (strictQuery.isBlank()) return@withContext null
             
-        // 🌟 3. 并发全局大拉取：全网优中取优
+        // 🌟 双段式拉取：第一段 (极速 3秒并发)
         val candidates = coroutineScope {
             val aTask = async { fetchAppleMusicCover(strictQuery, song) }
-            val nTask = async { fetchNeteaseCover(context, strictQuery, song) }
-            val qTask = async { fetchQQMusicCover(context, strictQuery, song) } // 🌟 加入 context
+            val nTask = async { fetchNeteaseCover(context, strictQuery, song, timeoutMs = 3000) }
+            val qTask = async { fetchQQMusicCover(context, strictQuery, song) }
             listOfNotNull(aTask.await(), nTask.await(), qTask.await())
         }
 
-        if (candidates.isEmpty()) {
-            Log.d(TAG, "💔 宁缺毋滥，未找到严格匹配的动态封面: ${song.title}")
-            return@withContext null
-        }
-
-        val bestMatch = candidates.maxWithOrNull(Comparator { a, b ->
+        var bestMatch = candidates.maxWithOrNull(Comparator { a, b ->
             if (a.score != b.score) a.score.compareTo(b.score)
             else b.platform.compareTo(a.platform)
         })
 
-        val networkUrl = bestMatch?.url
-        if (networkUrl != null) {
-            // 🌟 4. 执行双轨下载策略
-            return@withContext downloadToDoubleTrackCache(context, networkUrl, parentDir, audioFileName)
+        // 🌟 双段式拉取：第二段 (如果全网都没找到，且刚开局网易云可能因为 Render 休眠失败了，放宽到 45 秒专等网易云！)
+        if (bestMatch == null) {
+            Log.d(TAG, "⏳ 极速模式未找到动封，进入 Render 唤醒等待模式 (最长耐心等待 45秒)...")
+            bestMatch = fetchNeteaseCover(context, strictQuery, song, timeoutMs = 45000)
         }
 
-        return@withContext networkUrl
+        if (bestMatch == null) {
+            Log.d(TAG, "💔 宁缺毋滥，极限等待后仍未找到匹配的动态封面: ${song.title}")
+            return@withContext null
+        }
+
+        val networkUrl = bestMatch.url
+        return@withContext downloadToDoubleTrackCache(context, networkUrl, parentDir, audioFileName)
     }
 
-    // ==========================================
-    // 高精网络抓取 API 逻辑保持原样...
-    // ==========================================
     private suspend fun fetchAppleMusicCover(query: String, song: Song): CoverMatch? {
         try {
             data class AMatch(val score: Int, val id: String, val country: String)
@@ -251,13 +232,13 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    // 🌟 修复：签名加上 context 参数，并动态获取 baseUrl
-    private suspend fun fetchNeteaseCover(context: Context, query: String, song: Song): CoverMatch? {
+    // 🌟 支持传入动态超时时间的网易云获取方法
+    private suspend fun fetchNeteaseCover(context: Context, query: String, song: Song, timeoutMs: Int): CoverMatch? {
         try {
-            // 动态读取网易云域名
             val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getBaseUrl(context)
             val searchUrl = "$baseUrl/search?keywords=${Uri.encode(query)}&limit=10"
-            val searchRes = httpGet(searchUrl) ?: return null
+            
+            val searchRes = httpGet(searchUrl, timeoutMs = timeoutMs) ?: return null
             val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
             
             data class NMatch(val score: Int, val id: Long)
@@ -273,9 +254,8 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null && bestMatch.id != 0L) {
                 yield()
-                // 🌟 使用动态 baseUrl
                 val dynamicCoverUrl = "$baseUrl/song/dynamic/cover?id=${bestMatch.id}"
-                val dynamicRes = httpGet(dynamicCoverUrl) ?: return null
+                val dynamicRes = httpGet(dynamicCoverUrl, timeoutMs = timeoutMs) ?: return null
                 val dataObj = JSONObject(dynamicRes).optJSONObject("data")
                 if (dataObj != null) {
                     var coverUrl = dataObj.optString("videoPlayUrl")
@@ -291,7 +271,6 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    // 🌟 签名加上 context，URL 动态获取
     private suspend fun fetchQQMusicCover(context: Context, query: String, song: Song): CoverMatch? {
         try {
             val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getQqBaseUrl(context)
@@ -313,7 +292,6 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null) {
                 yield()
-                // 🌟 使用动态 baseUrl
                 val mvUrl = "$baseUrl/api/mv?id=${bestMatch.vid}"
                 val mvRes = httpGet(mvUrl) ?: return null
                 val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
@@ -346,9 +324,6 @@ object AnimatedCanvasFetcher {
         return null
     }
 
-    // ==========================================
-    // 🌟 热端 LRU 缓存管理模块
-    // ==========================================
     private fun getTempCacheDir(context: Context): File {
         val dir = File(context.externalCacheDir ?: context.cacheDir, "canvas_temp_cache")
         if (!dir.exists()) dir.mkdirs()
@@ -358,7 +333,6 @@ object AnimatedCanvasFetcher {
     private fun manageTempCacheLRU(tempDir: File) {
         val files = tempDir.listFiles()?.filter { it.isFile && it.extension in listOf("mp4", "webm") } ?: return
         if (files.size >= MAX_TEMP_CACHE_FILES) {
-            // 按最后修改时间升序排列（最旧的在前面），清理出空间
             files.sortedBy { it.lastModified() }
                 .take(files.size - MAX_TEMP_CACHE_FILES + 1)
                 .forEach { 
@@ -368,9 +342,6 @@ object AnimatedCanvasFetcher {
         }
     }
 
-    /**
-     * 对外暴露的方法：用于在关闭 APP 时 (如 MainActivity onDestroy 或 Service 中) 调用清空临时库
-     */
     fun clearAllTempCache(context: Context) {
         runCatching {
             getTempCacheDir(context).deleteRecursively()
@@ -378,9 +349,6 @@ object AnimatedCanvasFetcher {
         }
     }
 
-    // ==========================================
-    // 🌟 核心分发：双轨下载体系
-    // ==========================================
     private suspend fun downloadToDoubleTrackCache(context: Context, urlStr: String, parentDir: File?, audioFileName: String): String? {
         if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) {
             return urlStr
@@ -411,15 +379,14 @@ object AnimatedCanvasFetcher {
                         val contentLength = conn.contentLengthLong
                         val targetFile: File
 
-                        // 🌟 根据体积决定它是进入冷端（永久隐藏）还是热端（临时LRU）
                         if (contentLength <= MAX_PERMANENT_BYTES && parentDir != null) {
                             val hiddenVideoDir = File(parentDir, ".MP4")
-                            if (!hiddenVideoDir.exists()) hiddenVideoDir.mkdirs() // 自动创建隐藏文件夹
+                            if (!hiddenVideoDir.exists()) hiddenVideoDir.mkdirs()
                             targetFile = File(hiddenVideoDir, "$audioFileName.mp4")
                             Log.d(TAG, "⬇️ 文件较小 (${contentLength/1024}KB) -> 转入永久存储: ${targetFile.absolutePath}")
                         } else {
                             val tempDir = getTempCacheDir(context)
-                            manageTempCacheLRU(tempDir) // 存放前先检查并淘汰旧缓存
+                            manageTempCacheLRU(tempDir)
                             targetFile = File(tempDir, "$audioFileName.mp4")
                             Log.w(TAG, "⚠️ 发现巨型 MV (${contentLength/1024/1024}MB) -> 转入 LRU 临时热缓存: ${targetFile.absolutePath}")
                         }
@@ -454,18 +421,14 @@ object AnimatedCanvasFetcher {
         return name.replace(Regex("""[\\/:*?"<>|]"""), "_")
     }
 
-    // 🌟 1. 修改检查逻辑，支持 0字节/文件夹 占位熔断
     private fun checkLocalVideo(dir: File, targetName: String): String? {
         val safeName = getSafeFilename(targetName)
         for (ext in VIDEO_EXTENSIONS) {
             val file = File(dir, "$safeName$ext")
-            // 只要同名对象存在
             if (file.exists()) {
-                // 如果是正常的非空文件，正常返回去播放
                 if (file.isFile && file.length() > 0) {
                     return file.absolutePath
                 } else {
-                    // 🛑 核心：如果是 0 字节的空文件，或者是用户新建的同名文件夹，视为“黑名单拦截标记”！
                     return "BLOCKED"
                 }
             }
@@ -473,15 +436,17 @@ object AnimatedCanvasFetcher {
         return null
     }
 
+    // 🌟 支持动态传入 timeout 阈值
     @Throws(Exception::class)
-    private suspend fun httpGet(urlString: String, useAuth: Boolean = false): String? {
+    private suspend fun httpGet(urlString: String, useAuth: Boolean = false, timeoutMs: Int = 3000): String? {
         yield()
         var conn: HttpURLConnection? = null
         try {
             val url = URL(urlString)
             conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 3000 
-            conn.readTimeout = 5000
+            conn.connectTimeout = timeoutMs 
+            // readTimeout 放宽，容忍大数据包读取时间
+            conn.readTimeout = timeoutMs + 2000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             
             if (useAuth) {

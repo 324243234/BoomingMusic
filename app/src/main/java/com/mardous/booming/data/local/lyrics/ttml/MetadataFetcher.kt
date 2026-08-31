@@ -16,7 +16,7 @@ import kotlin.math.abs
 
 object MetadataFetcher {
     private const val TAG = "MetadataFetcher"
-    private const val NETEASE_API_DOMAIN = "https://my-wangyi-api.onrender.com"
+    // 🌟 彻底移除对 Render API 域名的依赖！
 
     data class FetchResult(
         val lrcWithTrans: String?,
@@ -84,7 +84,8 @@ object MetadataFetcher {
     }
 
     private suspend fun fetchNeteaseMeta(query: String, localTitle: String, localArtist: String, localAlbum: String, localDur: Long): MatchResult? {
-        val url = "$NETEASE_API_DOMAIN/search?keywords=${Uri.encode(query)}&type=1&limit=15"
+        // 🌟 核心斩断：不再使用私有 Render API，强制使用网易云官方公开 Web 搜索接口，秒级响应！
+        val url = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=15"
         val res = httpGet(url) ?: return null
         val songs = runCatching { JSONObject(res).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
         
@@ -251,7 +252,6 @@ object MetadataFetcher {
         }.getOrDefault(-1L)
     }
 
-    // 🌟 核心防泄漏补丁：彻底添加 use{} 和 disconnect()
     private suspend fun httpGet(urlString: String): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
