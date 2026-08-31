@@ -1,116 +1,35 @@
-@file:SuppressLint("LocalContextGetResourceValueCall")
 package com.mardous.booming.ui.screen.lyrics
 
-import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
-import android.os.BatteryManager
-import android.os.Build
-import android.os.Bundle
-import android.os.PowerManager
 import android.os.Process
-import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.add
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.selectAll
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.CircularWavyProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FlexibleBottomAppBar
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LinearWavyProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.livedata.observeAsState
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.keepScreenOn
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
+import androidx.compose.ui.platform.*
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -121,72 +40,31 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.preference.PreferenceManager
-import coil3.SingletonImageLoader
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.SuccessResult
-import coil3.request.crossfade
-import coil3.toBitmap
 import com.mardous.booming.R
-import com.mardous.booming.core.model.LibraryMargin
-import com.mardous.booming.core.model.lyrics.LyricsViewSettings
-import com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect
-import com.mardous.booming.core.model.lyrics.LyricsViewState
-import com.mardous.booming.core.model.player.PlayerColorScheme
-import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsMode
 import com.mardous.booming.data.model.lyrics.LyricsSource
 import com.mardous.booming.data.model.lyrics.RawLyrics
-import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.remote.lyrics.api.LyricsProvider
 import com.mardous.booming.extensions.hasR
-import com.mardous.booming.extensions.isPowerSaveMode
 import com.mardous.booming.extensions.media.displayArtistName
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import com.mardous.booming.extensions.openUrl
-import com.mardous.booming.extensions.resolveColor
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.extensions.webSearch
-import com.mardous.booming.ui.component.compose.AnimatedEqBars
 import com.mardous.booming.ui.component.compose.ButtonGroup
 import com.mardous.booming.ui.component.compose.DialogListItemWithCheckBox
 import com.mardous.booming.ui.component.compose.DialogListItemWithRadio
 import com.mardous.booming.ui.component.compose.MediaImage
 import com.mardous.booming.ui.component.compose.ObserveAsEvent
-import com.mardous.booming.ui.component.compose.color.extractGradientColors
-import com.mardous.booming.ui.component.compose.decoration.FadingEdges
-import com.mardous.booming.ui.component.compose.decoration.animatedGradient
-import com.mardous.booming.ui.component.compose.decoration.fadingEdges
-import com.mardous.booming.ui.component.compose.lyrics.LyricsView
 import com.mardous.booming.ui.component.compose.menu.MenuItem
 import com.mardous.booming.ui.component.compose.menu.OverflowMenu
 import com.mardous.booming.ui.component.compose.menu.TopAppBarMenu
-import com.mardous.booming.ui.component.views.PlaceholderDrawable
-import com.mardous.booming.ui.screen.library.LibraryViewModel
-import com.mardous.booming.ui.screen.player.PlayerViewModel
-import com.mardous.booming.ui.theme.PlayerTheme
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinActivityViewModel
 import kotlin.time.Duration.Companion.milliseconds
-
-sealed class LyricsUiState(open val id: Long) {
-    data class Loading(override val id: Long) : LyricsUiState(id)
-    data class Empty(override val id: Long) : LyricsUiState(id)
-    data class Instrumental(override val id: Long) : LyricsUiState(id)
-    data class Plain(override val id: Long, val lyrics: String) : LyricsUiState(id)
-    data class Synced(override val id: Long, val syncedLyrics: SyncedLyrics) : LyricsUiState(id)
-}
-
-@Composable
-private fun rememberLyricsViewState(lyrics: SyncedLyrics): LyricsViewState {
-    return remember(lyrics) { LyricsViewState(lyrics) }
-}
 
 private val SnapshotMapSaver = Saver<SnapshotStateMap<LyricsSource, String>, Bundle>(
     save = { map ->
@@ -389,6 +267,7 @@ fun LyricsEditorScreen(
         )
     }
 
+    // ?? 作者 #537 更新点：多提供商支持
     if (showLyricsDownloadDialog) {
         LyricsSearchDialog(
             song = song,
@@ -435,7 +314,7 @@ fun LyricsEditorScreen(
         viewModel.saveLyrics(song, editedContent)
     }
 
-    // ?? 完美结合作者更新 #537：放开移动网络限制（ignoreWifiSetting = true），无网时拦截
+    // ?? 作者 #537 更新点：忽略网络配置限制，全天候开放下载弹窗
     fun downloadLyrics() {
         if (NetworkFeature.isOnline(ignoreWifiSetting = true)) {
             showLyricsDownloadDialog = true
@@ -502,8 +381,7 @@ fun LyricsEditorScreen(
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.download_lyrics),
                                     icon = painterResource(R.drawable.ic_download_24dp),
-                                    // ?? 完美结合作者更新 #537：移除 visible 限制，按钮常驻可用
-                                    enabled = !uiState.isLoading && !isFileSource,
+                                    enabled = !uiState.isLoading && !isFileSource, // 移除了冗余的 isLyricsDownloadEnabled 限制
                                     onClick = { downloadLyrics() }
                                 ),
                                 MenuItem.Button.DropDown(
@@ -545,7 +423,6 @@ fun LyricsEditorScreen(
         },
         bottomBar = {
             if (!isLandscape) {
-                // ?? 完美结合作者更新 #537：移除底栏的 downloadEnabled 限制
                 LyricsEditorBottomBar(
                     enabled = !uiState.isLoading,
                     isFileSource = isFileSource,
@@ -590,7 +467,7 @@ fun LyricsEditorScreen(
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = false, // 解除限制，完全开放可编辑
+                    readOnly = false,
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -624,7 +501,7 @@ fun LyricsEditorScreen(
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = false, // 解除限制，完全开放可编辑
+                    readOnly = false,
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -689,7 +566,6 @@ fun LyricsSelectorDialog(
     )
 }
 
-// 时间调整弹窗组件
 @Composable
 fun TimeShiftDialog(
     onDismissRequest: () -> Unit,
@@ -1039,324 +915,5 @@ private fun LyricsEditorBottomBar(
                 )
             )
         )
-    }
-}
-
-@Composable
-fun CoverLyricsScreen(
-    lyricsViewModel: LyricsViewModel,
-    playerViewModel: PlayerViewModel,
-    onExpandClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val isPowerSaveMode = context.isPowerSaveMode()
-    val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
-    val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
-    val hasBackgroundEffects = lyricsViewSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
-    val uiState by lyricsViewModel.lyricsUiState.collectAsState()
-    val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
-        initial = PlayerColorScheme.themeColorScheme(context)
-    )
-
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val currentScreen = Preferences.nowPlayingScreen
-    val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient || currentScreen == NowPlayingScreen.Plain)
-    
-    val translationKey = "lyrics_show_translation"
-    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
-    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
-
-    var hasTranslation by remember(uiState) { mutableStateOf(false) }
-    
-    LaunchedEffect(uiState) {
-        withContext(Dispatchers.Default) {
-            hasTranslation = try {
-                when (val currentState = uiState) {
-                    is LyricsUiState.Synced -> {
-                        currentState.syncedLyrics.lines.any { line -> 
-                            line.translation != null && !line.translation.isEmpty 
-                        }
-                    }
-                    is LyricsUiState.Plain -> {
-                        currentState.lyrics.contains("x-translation", ignoreCase = true)
-                    }
-                    else -> false
-                }
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    PlayerTheme(playerColorScheme) {
-        Box(modifier = modifier.fillMaxSize()) {
-            LyricsSurface(
-                uiState = uiState,
-                playerViewModel = playerViewModel,
-                settings = lyricsViewSettings,
-                contentPadding = PaddingValues(vertical = 72.dp, horizontal = 12.dp),
-                fadingEdges = FadingEdges(top = 72.dp, bottom = 64.dp),
-                textAlign = TextAlign.Center,
-                isPlaying = isPlaying,
-                isPowerSaveMode = isPowerSaveMode,
-                hasBackgroundEffects = hasBackgroundEffects,
-                onSeekTo = { position ->
-                    playerViewModel.seekTo(position) 
-                    if (lyricsViewSettings.resumeOnSeek) {
-                        playerViewModel.play()
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            Column(
-                modifier = Modifier
-                    .wrapContentSize()
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 8.dp), 
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (!hideExpandButton) {
-                    FilledIconButton(
-                        modifier = Modifier.size(36.dp), 
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.onSurface,
-                            contentColor = MaterialTheme.colorScheme.surface
-                        ),
-                        onClick = onExpandClick
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
-                            contentDescription = stringResource(R.string.action_lyrics_editor),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                if (hasTranslation) {
-                    IconButton(
-                        modifier = Modifier.size(36.dp),
-                        onClick = {
-                            try {
-                                val newState = !isTranslationEnabled
-                                isTranslationEnabled = newState
-                                prefs.edit().putBoolean(translationKey, newState).apply()
-                            } catch (e: Exception) { e.printStackTrace() }
-                        }
-                    ) {
-                        Text(
-                            text = "\u8BD1", 
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.6f else 1.0f) 
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun LyricsSurface(
-    playerViewModel: PlayerViewModel,
-    uiState: LyricsUiState,
-    settings: LyricsViewSettings,
-    contentPadding: PaddingValues,
-    fadingEdges: FadingEdges,
-    textAlign: TextAlign?,
-    isPlaying: Boolean,
-    isPowerSaveMode: Boolean,
-    hasBackgroundEffects: Boolean,
-    onSeekTo: (Long) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val colorScheme = MaterialTheme.colorScheme
-    
-    var isOverheating by remember { mutableStateOf(false) }
-    var isLowBattery by remember { mutableStateOf(false) }
-
-    DisposableEffect(Unit) {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val initialIntent = context.registerReceiver(null, filter)
-        initialIntent?.let { intent ->
-            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-            if (level != -1 && scale != -1) {
-                isLowBattery = (level * 100 / scale.toFloat()) <= 20f
-            }
-        }
-
-        val batteryReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                if (level != -1 && scale != -1) {
-                    isLowBattery = (level * 100 / scale.toFloat()) <= 20f
-                }
-            }
-        }
-        context.registerReceiver(batteryReceiver, filter)
-        onDispose { context.unregisterReceiver(batteryReceiver) }
-    }
-        
-    DisposableEffect(Unit) {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            isOverheating = (powerManager?.currentThermalStatus ?: 0) >= PowerManager.THERMAL_STATUS_SEVERE
-        }
-
-        val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            PowerManager.OnThermalStatusChangedListener { status ->
-                isOverheating = status >= PowerManager.THERMAL_STATUS_SEVERE
-            }
-        } else null
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null) {
-            powerManager?.addThermalStatusListener(thermalListener)
-        }
-
-        onDispose {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null) {
-                powerManager?.removeThermalStatusListener(thermalListener)
-            }
-        }
-    }
-
-    val contentColor = when {
-        hasBackgroundEffects -> Color.White
-        else -> when (settings.mode) {
-            LyricsViewSettings.Mode.Player -> colorScheme.onSurface
-            else -> colorScheme.secondary
-        }
-    }
-    
-    Box(modifier) {
-        when (uiState) {
-            is LyricsUiState.Empty -> {
-                Text(
-                    text = stringResource(R.string.no_lyrics_found),
-                    color = contentColor,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp)
-                        .align(Alignment.Center)
-                )
-            }
-
-            is LyricsUiState.Loading -> {
-                CircularWavyProgressIndicator(
-                    color = contentColor,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            }
-
-            is LyricsUiState.Instrumental -> {
-                AnimatedEqBars(
-                    color = contentColor,
-                    isPlaying = isPlaying,
-                    barCount = 5,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .align(Alignment.Center)
-                )
-            }
-
-            is LyricsUiState.Plain -> {
-                val scrollState = rememberScrollState()
-                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
-                
-                LaunchedEffect(song) { scrollState.scrollTo(0) }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .nestedScroll(rememberNestedScrollInteropConnection())
-                        .fadingEdges(fadingEdges)
-                        .verticalScroll(scrollState)
-                        .padding(contentPadding)
-                ) {
-                    Text(
-                        text = uiState.lyrics,
-                        color = contentColor,
-                        textAlign = textAlign,
-                        style = settings.unsyncedStyle,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            is LyricsUiState.Synced -> {
-                val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
-                val view = LocalView.current
-
-                var basePosition by remember { mutableLongStateOf(0L) }
-                var baseRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-                var playbackSpeed by remember { mutableFloatStateOf(1f) }
-
-                LaunchedEffect(playerViewModel) {
-                    playerViewModel.playbackSpeed.collect { speed ->
-                        playbackSpeed = speed
-                    }
-                }
-
-                LaunchedEffect(lyricsViewState, playerViewModel) {
-                    playerViewModel.progressFlow.collect { position ->
-                        basePosition = position
-                        baseRealtime = SystemClock.elapsedRealtime()
-                        
-                        if (view.isShown) {
-                            lyricsViewState.updatePosition(position)
-                        }
-                    }
-                }
-
-                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode, isOverheating, isLowBattery) {
-                    var wasVisible = view.isShown
-                    
-                    while (isActive) {
-                        val isVisible = view.isShown
-
-                        if (isVisible && !wasVisible) {
-                            delay(150L)
-                        }
-
-                        if (isPlaying && isVisible) {
-                            if (isPowerSaveMode || isOverheating || isLowBattery) {
-                                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                                val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
-                                lyricsViewState.updatePosition(smoothPosition)
-                                delay(33L)
-                            } else {
-                                withFrameNanos {
-                                    val elapsed = SystemClock.elapsedRealtime() - baseRealtime
-                                    val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
-                                    lyricsViewState.updatePosition(smoothPosition)
-                                }
-                            }
-                        } else {
-                            delay(100L)
-                        }
-
-                        wasVisible = isVisible
-                    }
-                }
-
-                LyricsView(
-                    state = lyricsViewState,
-                    settings = settings,
-                    contentPadding = contentPadding,
-                    fadingEdges = fadingEdges,
-                    contentColor = contentColor,
-                    isPowerSaveMode = isPowerSaveMode,
-                    hasBackgroundEffects = hasBackgroundEffects,
-                    onSeekTo = onSeekTo
-                )
-            }
-        }
     }
 }

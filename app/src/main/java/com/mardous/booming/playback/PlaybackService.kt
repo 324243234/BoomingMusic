@@ -900,7 +900,6 @@ class PlaybackService :
                 }.getOrDefault(false)
             } else if (isOnlineStream) {
                 // 🌟 智能全局探针：查遍全手机，只要这首歌已经下载过（不管你移到哪个文件夹），红心自动点亮！
-                // 这完美解决了网易云 API 不返回红心状态的问题：只要亮红心，就代表你手机里已经有这首歌了，别再下了！
                 runCatching {
                     var exists = false
                     val cursor = applicationContext.contentResolver.query(
@@ -1147,7 +1146,7 @@ class PlaybackService :
                         val targetSong = song
 
                         // 将耗时的网易云 API 和下载任务扔进独立后台协程
-                        serviceScope.launch(Dispatchers.IO) {
+                        serviceScope.launch(IO) {
                             try {
                                 if (targetFavState) {
                                     // 1. 云端同步点赞
@@ -1166,7 +1165,7 @@ class PlaybackService :
 
                                     if (alreadyExistsLocally) {
                                         // 哪怕你把歌移到了 Music/ACG 目录下，也能瞬间拦截，绝对不重复下载！
-                                        withContext(Dispatchers.Main) {
+                                        withContext(Main) {
                                             showToast("已同步网易云喜欢 (手机内已有此歌，跳过下载)")
                                         }
                                     } else {
@@ -1202,9 +1201,8 @@ class PlaybackService :
 
                                         if (downloadedFile != null && downloadedFile.exists()) {
                                             com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(targetSong, needLrc = true, needCover = true)
-                                            repository.updateSongPath(targetSong.id, downloadedFile.absolutePath)
                                             
-                                            withContext(Dispatchers.Main) {
+                                            withContext(Main) {
                                                 showToast("已同步网易云并完成 ${currentQuality.uppercase()} 下载")
                                             }
                                         }
