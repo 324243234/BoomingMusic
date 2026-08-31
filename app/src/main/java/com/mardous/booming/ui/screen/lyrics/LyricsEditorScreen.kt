@@ -3,37 +3,63 @@ package com.mardous.booming.ui.screen.lyrics
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.selectAll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FlexibleBottomAppBar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,17 +67,22 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,15 +91,26 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.keepScreenOn
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,30 +119,74 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.preference.PreferenceManager
+import coil3.SingletonImageLoader
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.crossfade
+import coil3.toBitmap
 import com.mardous.booming.R
+import com.mardous.booming.core.model.LibraryMargin
+import com.mardous.booming.core.model.lyrics.LyricsViewSettings
+import com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect
+import com.mardous.booming.core.model.lyrics.LyricsViewState
+import com.mardous.booming.core.model.player.PlayerColorScheme
+import com.mardous.booming.core.model.theme.NowPlayingScreen
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsMode
 import com.mardous.booming.data.model.lyrics.LyricsSource
 import com.mardous.booming.data.model.lyrics.RawLyrics
+import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import com.mardous.booming.data.model.network.NetworkFeature
+import com.mardous.booming.data.remote.lyrics.api.LyricsProvider
 import com.mardous.booming.extensions.hasR
+import com.mardous.booming.extensions.isPowerSaveMode
 import com.mardous.booming.extensions.media.displayArtistName
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import com.mardous.booming.extensions.openUrl
+import com.mardous.booming.extensions.resolveColor
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.extensions.webSearch
+import com.mardous.booming.ui.component.compose.AnimatedEqBars
 import com.mardous.booming.ui.component.compose.ButtonGroup
+import com.mardous.booming.ui.component.compose.DialogListItemWithCheckBox
 import com.mardous.booming.ui.component.compose.DialogListItemWithRadio
 import com.mardous.booming.ui.component.compose.MediaImage
 import com.mardous.booming.ui.component.compose.ObserveAsEvent
+import com.mardous.booming.ui.component.compose.color.extractGradientColors
+import com.mardous.booming.ui.component.compose.decoration.FadingEdges
+import com.mardous.booming.ui.component.compose.decoration.animatedGradient
+import com.mardous.booming.ui.component.compose.decoration.fadingEdges
+import com.mardous.booming.ui.component.compose.lyrics.LyricsView
 import com.mardous.booming.ui.component.compose.menu.MenuItem
 import com.mardous.booming.ui.component.compose.menu.OverflowMenu
 import com.mardous.booming.ui.component.compose.menu.TopAppBarMenu
+import com.mardous.booming.ui.component.views.PlaceholderDrawable
+import com.mardous.booming.ui.screen.library.LibraryViewModel
+import com.mardous.booming.ui.screen.player.PlayerViewModel
+import com.mardous.booming.ui.theme.PlayerTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import org.koin.compose.viewmodel.koinActivityViewModel
 import kotlin.time.Duration.Companion.milliseconds
+
+sealed class LyricsUiState(open val id: Long) {
+    data class Loading(override val id: Long) : LyricsUiState(id)
+    data class Empty(override val id: Long) : LyricsUiState(id)
+    data class Instrumental(override val id: Long) : LyricsUiState(id)
+    data class Plain(override val id: Long, val lyrics: String) : LyricsUiState(id)
+    data class Synced(override val id: Long, val syncedLyrics: SyncedLyrics) : LyricsUiState(id)
+}
+
+@Composable
+private fun rememberLyricsViewState(lyrics: SyncedLyrics): LyricsViewState {
+    return remember(lyrics) { LyricsViewState(lyrics) }
+}
 
 private val SnapshotMapSaver = Saver<SnapshotStateMap<LyricsSource, String>, Bundle>(
     save = { map ->
@@ -227,8 +313,6 @@ fun LyricsEditorScreen(
         viewModel.loadEditorContent(song)
     }
 
-    val isLyricsDownloadEnabled by viewModel.lyricsDownloadEnabled.collectAsStateWithLifecycle()
-
     val uiState by viewModel.lyricsEditorUiState.collectAsStateWithLifecycle()
     val editedContent = rememberSaveable(saver = SnapshotMapSaver) { mutableStateMapOf() }
     var selectedSource by rememberSaveable { mutableStateOf(LyricsSource.Embedded) }
@@ -309,8 +393,9 @@ fun LyricsEditorScreen(
         LyricsSearchDialog(
             song = song,
             title = stringResource(R.string.download_lyrics),
-            onSearchClick = { title, artist ->
-                viewModel.downloadLyrics(song, title, artist)
+            showProviders = true,
+            onSearchClick = { title, artist, providers ->
+                viewModel.downloadLyrics(song, title, artist, providers)
                 showLyricsDownloadDialog = false
             },
             onDismissRequest = { showLyricsDownloadDialog = false }
@@ -321,7 +406,8 @@ fun LyricsEditorScreen(
         LyricsSearchDialog(
             song = song,
             title = stringResource(R.string.search_lyrics),
-            onSearchClick = { title, artist ->
+            showProviders = false,
+            onSearchClick = { title, artist, _ ->
                 val searchSuffix = context.getString(R.string.lyrics).lowercase()
                 if (artist.isArtistNameUnknown()) {
                     context.webSearch(title, searchSuffix)
@@ -349,6 +435,7 @@ fun LyricsEditorScreen(
         viewModel.saveLyrics(song, editedContent)
     }
 
+    // ?? ÍêÃÀ½áºÏ×÷Õß¸üÐÂ #537£º·Å¿ªÒÆ¶¯ÍøÂçÏÞÖÆ£¨ignoreWifiSetting = true£©£¬ÎÞÍøÊ±À¹½Ø
     fun downloadLyrics() {
         if (NetworkFeature.isOnline(ignoreWifiSetting = true)) {
             showLyricsDownloadDialog = true
@@ -409,25 +496,23 @@ fun LyricsEditorScreen(
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.action_save),
                                     icon = painterResource(R.drawable.ic_save_24dp),
-                                    // ðŸŒŸ æ¢å¤åŽŸä½œè€…é”å®šï¼šå¦‚æžœæ˜¯æœ¬åœ°æ–‡ä»¶ï¼Œç½®ç°ç³»ç»Ÿä¿å­˜æŒ‰é’®ï¼
                                     enabled = !uiState.isLoading && !isFileSource,
                                     onClick = { saveContent() }
                                 ),
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.download_lyrics),
                                     icon = painterResource(R.drawable.ic_download_24dp),
-                                    enabled = !uiState.isLoading,
-                                    visible = isLyricsDownloadEnabled,
+                                    // ?? ÍêÃÀ½áºÏ×÷Õß¸üÐÂ #537£ºÒÆ³ý visible ÏÞÖÆ£¬°´Å¥³£×¤¿ÉÓÃ
+                                    enabled = !uiState.isLoading && !isFileSource,
                                     onClick = { downloadLyrics() }
                                 ),
                                 MenuItem.Button.DropDown(
-                                    text = "æ—¶é—´è½´å¹³ç§»",
+                                    text = "Ê±¼äÖáÆ½ÒÆ",
                                     icon = painterResource(R.drawable.ic_timer_24dp),
                                     onClick = { showTimeShiftDialog = true }
                                 ),
-                                // ðŸŒŸ æ–°å¢žç‹¬ç«‹çš„ä¸“å±žæŒ‰é’®
                                 MenuItem.Button.DropDown(
-                                    text = "ä¿å­˜ä¸ºæœ¬åœ°æ–‡ä»¶",
+                                    text = "±£´æÎª±¾µØÎÄ¼þ",
                                     icon = painterResource(R.drawable.ic_save_24dp),
                                     onClick = { viewModel.saveLocalLyricsFile(context, song, textFieldState.text.toString()) }
                                 ),
@@ -460,10 +545,10 @@ fun LyricsEditorScreen(
         },
         bottomBar = {
             if (!isLandscape) {
+                // ?? ÍêÃÀ½áºÏ×÷Õß¸üÐÂ #537£ºÒÆ³ýµ×À¸µÄ downloadEnabled ÏÞÖÆ
                 LyricsEditorBottomBar(
                     enabled = !uiState.isLoading,
-                    isFileSource = isFileSource, // ðŸŒŸ ä¼ å…¥çŠ¶æ€
-                    downloadEnabled = isLyricsDownloadEnabled,
+                    isFileSource = isFileSource,
                     onSearchClick = { showLyricsSearchDialog = true },
                     onDownloadClick = { downloadLyrics() },
                     onSelectAllClick = { selectAllText() },
@@ -471,7 +556,7 @@ fun LyricsEditorScreen(
                     onUndoChangesClick = { undoChanges() },
                     onSaveClick = { saveContent() },
                     onTimeShiftClick = { showTimeShiftDialog = true },
-                    onSaveFileClick = { viewModel.saveLocalLyricsFile(context, song, textFieldState.text.toString()) } // ðŸŒŸ è§¦å‘æˆ‘ä»¬çš„ç‹¬ç«‹æ–¹æ³•
+                    onSaveFileClick = { viewModel.saveLocalLyricsFile(context, song, textFieldState.text.toString()) }
                 )
             }
         }
@@ -501,13 +586,11 @@ fun LyricsEditorScreen(
                         onSourceSelected = { selectedSource = it },
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                    // ðŸŒŸ åˆ é™¤äº† LyricsFileNoticeï¼ˆä¸å†æ˜¾ç¤ºâ€œä¸èƒ½ç¼–è¾‘æœ¬åœ°æ–‡ä»¶â€çš„è­¦å‘Šï¼‰
                 }
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = false, // ðŸŒŸ æ ¸å¿ƒè§£é™¤ï¼šå°† TextField å®Œå…¨é‡Šæ”¾ä¸ºå¯ç¼–è¾‘çŠ¶æ€
+                    readOnly = false, // ½â³ýÏÞÖÆ£¬ÍêÈ«¿ª·Å¿É±à¼­
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -541,7 +624,7 @@ fun LyricsEditorScreen(
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = false, // ðŸŒŸ æ ¸å¿ƒè§£é™¤ï¼šå®Œå…¨é‡Šæ”¾å¯ç¼–è¾‘
+                    readOnly = false, // ½â³ýÏÞÖÆ£¬ÍêÈ«¿ª·Å¿É±à¼­
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
@@ -606,7 +689,7 @@ fun LyricsSelectorDialog(
     )
 }
 
-// ðŸŒŸ æ–°å¢žï¼šæ—¶é—´è°ƒæ•´å¼¹çª—ç»„ä»¶
+// Ê±¼äµ÷Õûµ¯´°×é¼þ
 @Composable
 fun TimeShiftDialog(
     onDismissRequest: () -> Unit,
@@ -617,14 +700,14 @@ fun TimeShiftDialog(
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
-        title = { Text("è°ƒæ•´æ—¶é—´è½´") },
+        title = { Text("µ÷ÕûÊ±¼äÖá") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("è¾“å…¥å¹³ç§»çš„æ¯«ç§’æ•° (1000æ¯«ç§’ = 1ç§’)ï¼š")
+                Text("ÊäÈëÆ½ÒÆµÄºÁÃëÊý (1000ºÁÃë = 1Ãë)£º")
                 OutlinedTextField(
                     value = offsetText,
                     onValueChange = { if (it.all { char -> char.isDigit() }) offsetText = it },
-                    label = { Text("æ¯«ç§’") },
+                    label = { Text("ºÁÃë") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -635,11 +718,11 @@ fun TimeShiftDialog(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = !isAdvance, onClick = { isAdvance = false })
-                        Text("å»¶åŽ (+)")
+                        Text("ÑÓºó (+)")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = isAdvance, onClick = { isAdvance = true })
-                        Text("æå‰ (-)")
+                        Text("ÌáÇ° (-)")
                     }
                 }
             }
@@ -649,7 +732,7 @@ fun TimeShiftDialog(
                 val ms = offsetText.toLongOrNull() ?: 0L
                 onConfirm(if (isAdvance) -ms else ms)
             }) {
-                Text("ç¡®å®š")
+                Text("È·¶¨")
             }
         },
         dismissButton = {
@@ -665,40 +748,83 @@ fun TimeShiftDialog(
 private fun LyricsSearchDialog(
     song: Song,
     title: String,
-    onSearchClick: (title: String, artist: String) -> Unit,
+    showProviders: Boolean,
+    onSearchClick: (title: String, artist: String, providers: List<LyricsProvider>) -> Unit,
     onDismissRequest: () -> Unit
 ) {
     var searchTitle by remember { mutableStateOf(song.title) }
     var searchArtist by remember { mutableStateOf(song.artistName) }
 
+    val allProviders = remember { LyricsProvider.AvailableProviders }
+    val selectedProviders = remember {
+        mutableStateListOf<LyricsProvider>().apply {
+            addAll(allProviders.filter { it.isEnabled })
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismissRequest,
         title = { Text(title) },
         text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedTextField(
-                    value = searchTitle,
-                    onValueChange = { searchTitle = it },
-                    label = { Text(stringResource(R.string.title)) },
-                    placeholder = { Text(song.title) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                item {
+                    OutlinedTextField(
+                        value = searchTitle,
+                        onValueChange = { searchTitle = it },
+                        label = { Text(stringResource(R.string.title)) },
+                        placeholder = { Text(song.title) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
-                OutlinedTextField(
-                    value = searchArtist,
-                    onValueChange = { searchArtist = it },
-                    label = { Text(stringResource(R.string.artist)) },
-                    placeholder = { Text(song.artistName) },
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Words
-                    ),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                item { Spacer(Modifier.height(16.dp)) }
+
+                item {
+                    OutlinedTextField(
+                        value = searchArtist,
+                        onValueChange = { searchArtist = it },
+                        label = { Text(stringResource(R.string.artist)) },
+                        placeholder = { Text(song.artistName) },
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Words
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (showProviders) {
+                    item { Spacer(Modifier.height(16.dp)) }
+
+                    item {
+                        Text(
+                            text = stringResource(R.string.allow_lyrics_download_from),
+                            style = MaterialTheme.typography.labelMedium,
+                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp)
+                                .padding(bottom = 4.dp)
+                        )
+                    }
+
+                    items(allProviders, key = { it.name }) {
+                        DialogListItemWithCheckBox(
+                            title = it.displayName,
+                            isSelected = it in selectedProviders,
+                            onClick = {
+                                if (it in selectedProviders) {
+                                    selectedProviders.remove(it)
+                                } else {
+                                    selectedProviders.add(it)
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
@@ -706,9 +832,11 @@ private fun LyricsSearchDialog(
                 onClick = {
                     onSearchClick(
                         searchTitle.ifEmpty { song.title },
-                        searchArtist.ifEmpty { song.artistName }
+                        searchArtist.ifEmpty { song.artistName },
+                        selectedProviders
                     )
-                }
+                },
+                enabled = !showProviders || selectedProviders.isNotEmpty()
             ) {
                 Text(stringResource(R.string.continue_action))
             }
@@ -834,8 +962,7 @@ private fun LyricsEditorHeader(
 @Composable
 private fun LyricsEditorBottomBar(
     enabled: Boolean,
-	isFileSource: Boolean, // ðŸŒŸ æ–°å¢žå‚æ•°
-    downloadEnabled: Boolean,
+    isFileSource: Boolean,
     onSearchClick: () -> Unit,
     onDownloadClick: () -> Unit,
     onPasteClick: () -> Unit,
@@ -843,7 +970,7 @@ private fun LyricsEditorBottomBar(
     onUndoChangesClick: () -> Unit,
     onSelectAllClick: () -> Unit,
     onTimeShiftClick: () -> Unit,
-	onSaveFileClick: () -> Unit // ðŸŒŸ æ–°å¢žä¸“å±žä¿å­˜äº‹ä»¶
+    onSaveFileClick: () -> Unit 
 ) {
     FlexibleBottomAppBar {
         IconButton(
@@ -857,7 +984,7 @@ private fun LyricsEditorBottomBar(
         }
         IconButton(
             onClick = onDownloadClick,
-            enabled = enabled && downloadEnabled
+            enabled = enabled 
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_download_24dp),
@@ -889,15 +1016,13 @@ private fun LyricsEditorBottomBar(
         OverflowMenu(
             enabled = enabled,
             items = listOf(
-                // ðŸŒŸ æ–°å¢žï¼šæ”¶çº³åœ¨ç«–å±çš„æ›´å¤šèœå•é‡Œ
                 MenuItem.Button.DropDown(
-                    text = "æ—¶é—´è½´å¹³ç§»",
+                    text = "Ê±¼äÖáÆ½ÒÆ",
                     icon = painterResource(R.drawable.ic_timer_24dp),
                     onClick = { onTimeShiftClick() }
                 ),
-				// ðŸŒŸ æ–°å¢žï¼šè—åœ¨ç«–å±ä¸‰ç‚¹èœå•é‡Œçš„ç‹¬ç«‹ä¿å­˜æŒ‰é’®
                 MenuItem.Button.DropDown(
-                    text = "ä¿å­˜ä¸ºæœ¬åœ°æ–‡ä»¶",
+                    text = "±£´æÎª±¾µØÎÄ¼þ",
                     icon = painterResource(R.drawable.ic_save_24dp),
                     onClick = { onSaveFileClick() }
                 ),
@@ -914,5 +1039,324 @@ private fun LyricsEditorBottomBar(
                 )
             )
         )
+    }
+}
+
+@Composable
+fun CoverLyricsScreen(
+    lyricsViewModel: LyricsViewModel,
+    playerViewModel: PlayerViewModel,
+    onExpandClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isPowerSaveMode = context.isPowerSaveMode()
+    val isPlaying by playerViewModel.isPlayingFlow.collectAsStateWithLifecycle()
+    val lyricsViewSettings by lyricsViewModel.playerLyricsViewSettings.collectAsState()
+    val hasBackgroundEffects = lyricsViewSettings.backgroundEffect == LyricsViewSettings.BackgroundEffect.Aurora
+    val uiState by lyricsViewModel.lyricsUiState.collectAsState()
+    val playerColorScheme by playerViewModel.colorSchemeFlow.collectAsState(
+        initial = PlayerColorScheme.themeColorScheme(context)
+    )
+
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val currentScreen = Preferences.nowPlayingScreen
+    val hideExpandButton = isLandscape && (currentScreen == NowPlayingScreen.Default || currentScreen == NowPlayingScreen.Gradient || currentScreen == NowPlayingScreen.Plain)
+    
+    val translationKey = "lyrics_show_translation"
+    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
+    var isTranslationEnabled by remember { mutableStateOf(prefs.getBoolean(translationKey, true)) }
+
+    var hasTranslation by remember(uiState) { mutableStateOf(false) }
+    
+    LaunchedEffect(uiState) {
+        withContext(Dispatchers.Default) {
+            hasTranslation = try {
+                when (val currentState = uiState) {
+                    is LyricsUiState.Synced -> {
+                        currentState.syncedLyrics.lines.any { line -> 
+                            line.translation != null && !line.translation.isEmpty 
+                        }
+                    }
+                    is LyricsUiState.Plain -> {
+                        currentState.lyrics.contains("x-translation", ignoreCase = true)
+                    }
+                    else -> false
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    PlayerTheme(playerColorScheme) {
+        Box(modifier = modifier.fillMaxSize()) {
+            LyricsSurface(
+                uiState = uiState,
+                playerViewModel = playerViewModel,
+                settings = lyricsViewSettings,
+                contentPadding = PaddingValues(vertical = 72.dp, horizontal = 12.dp),
+                fadingEdges = FadingEdges(top = 72.dp, bottom = 64.dp),
+                textAlign = TextAlign.Center,
+                isPlaying = isPlaying,
+                isPowerSaveMode = isPowerSaveMode,
+                hasBackgroundEffects = hasBackgroundEffects,
+                onSeekTo = { position ->
+                    playerViewModel.seekTo(position) 
+                    if (lyricsViewSettings.resumeOnSeek) {
+                        playerViewModel.play()
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            Column(
+                modifier = Modifier
+                    .wrapContentSize()
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 8.dp), 
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (!hideExpandButton) {
+                    FilledIconButton(
+                        modifier = Modifier.size(36.dp), 
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        ),
+                        onClick = onExpandClick
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_open_in_full_24dp),
+                            contentDescription = stringResource(R.string.action_lyrics_editor),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                if (hasTranslation) {
+                    IconButton(
+                        modifier = Modifier.size(36.dp),
+                        onClick = {
+                            try {
+                                val newState = !isTranslationEnabled
+                                isTranslationEnabled = newState
+                                prefs.edit().putBoolean(translationKey, newState).apply()
+                            } catch (e: Exception) { e.printStackTrace() }
+                        }
+                    ) {
+                        Text(
+                            text = "\u8BD1", 
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isTranslationEnabled) 0.6f else 1.0f) 
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun LyricsSurface(
+    playerViewModel: PlayerViewModel,
+    uiState: LyricsUiState,
+    settings: LyricsViewSettings,
+    contentPadding: PaddingValues,
+    fadingEdges: FadingEdges,
+    textAlign: TextAlign?,
+    isPlaying: Boolean,
+    isPowerSaveMode: Boolean,
+    hasBackgroundEffects: Boolean,
+    onSeekTo: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val colorScheme = MaterialTheme.colorScheme
+    
+    var isOverheating by remember { mutableStateOf(false) }
+    var isLowBattery by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val initialIntent = context.registerReceiver(null, filter)
+        initialIntent?.let { intent ->
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            if (level != -1 && scale != -1) {
+                isLowBattery = (level * 100 / scale.toFloat()) <= 20f
+            }
+        }
+
+        val batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (level != -1 && scale != -1) {
+                    isLowBattery = (level * 100 / scale.toFloat()) <= 20f
+                }
+            }
+        }
+        context.registerReceiver(batteryReceiver, filter)
+        onDispose { context.unregisterReceiver(batteryReceiver) }
+    }
+        
+    DisposableEffect(Unit) {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            isOverheating = (powerManager?.currentThermalStatus ?: 0) >= PowerManager.THERMAL_STATUS_SEVERE
+        }
+
+        val thermalListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            PowerManager.OnThermalStatusChangedListener { status ->
+                isOverheating = status >= PowerManager.THERMAL_STATUS_SEVERE
+            }
+        } else null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null) {
+            powerManager?.addThermalStatusListener(thermalListener)
+        }
+
+        onDispose {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null) {
+                powerManager?.removeThermalStatusListener(thermalListener)
+            }
+        }
+    }
+
+    val contentColor = when {
+        hasBackgroundEffects -> Color.White
+        else -> when (settings.mode) {
+            LyricsViewSettings.Mode.Player -> colorScheme.onSurface
+            else -> colorScheme.secondary
+        }
+    }
+    
+    Box(modifier) {
+        when (uiState) {
+            is LyricsUiState.Empty -> {
+                Text(
+                    text = stringResource(R.string.no_lyrics_found),
+                    color = contentColor,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .align(Alignment.Center)
+                )
+            }
+
+            is LyricsUiState.Loading -> {
+                CircularWavyProgressIndicator(
+                    color = contentColor,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+
+            is LyricsUiState.Instrumental -> {
+                AnimatedEqBars(
+                    color = contentColor,
+                    isPlaying = isPlaying,
+                    barCount = 5,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .align(Alignment.Center)
+                )
+            }
+
+            is LyricsUiState.Plain -> {
+                val scrollState = rememberScrollState()
+                val song by playerViewModel.currentSongFlow.collectAsStateWithLifecycle()
+                
+                LaunchedEffect(song) { scrollState.scrollTo(0) }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .nestedScroll(rememberNestedScrollInteropConnection())
+                        .fadingEdges(fadingEdges)
+                        .verticalScroll(scrollState)
+                        .padding(contentPadding)
+                ) {
+                    Text(
+                        text = uiState.lyrics,
+                        color = contentColor,
+                        textAlign = textAlign,
+                        style = settings.unsyncedStyle,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
+            is LyricsUiState.Synced -> {
+                val lyricsViewState = rememberLyricsViewState(uiState.syncedLyrics)
+                val view = LocalView.current
+
+                var basePosition by remember { mutableLongStateOf(0L) }
+                var baseRealtime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+                var playbackSpeed by remember { mutableFloatStateOf(1f) }
+
+                LaunchedEffect(playerViewModel) {
+                    playerViewModel.playbackSpeed.collect { speed ->
+                        playbackSpeed = speed
+                    }
+                }
+
+                LaunchedEffect(lyricsViewState, playerViewModel) {
+                    playerViewModel.progressFlow.collect { position ->
+                        basePosition = position
+                        baseRealtime = SystemClock.elapsedRealtime()
+                        
+                        if (view.isShown) {
+                            lyricsViewState.updatePosition(position)
+                        }
+                    }
+                }
+
+                LaunchedEffect(lyricsViewState, isPlaying, isPowerSaveMode, isOverheating, isLowBattery) {
+                    var wasVisible = view.isShown
+                    
+                    while (isActive) {
+                        val isVisible = view.isShown
+
+                        if (isVisible && !wasVisible) {
+                            delay(150L)
+                        }
+
+                        if (isPlaying && isVisible) {
+                            if (isPowerSaveMode || isOverheating || isLowBattery) {
+                                val elapsed = SystemClock.elapsedRealtime() - baseRealtime
+                                val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                lyricsViewState.updatePosition(smoothPosition)
+                                delay(33L)
+                            } else {
+                                withFrameNanos {
+                                    val elapsed = SystemClock.elapsedRealtime() - baseRealtime
+                                    val smoothPosition = basePosition + (elapsed * playbackSpeed).toLong()
+                                    lyricsViewState.updatePosition(smoothPosition)
+                                }
+                            }
+                        } else {
+                            delay(100L)
+                        }
+
+                        wasVisible = isVisible
+                    }
+                }
+
+                LyricsView(
+                    state = lyricsViewState,
+                    settings = settings,
+                    contentPadding = contentPadding,
+                    fadingEdges = fadingEdges,
+                    contentColor = contentColor,
+                    isPowerSaveMode = isPowerSaveMode,
+                    hasBackgroundEffects = hasBackgroundEffects,
+                    onSeekTo = onSeekTo
+                )
+            }
+        }
     }
 }
