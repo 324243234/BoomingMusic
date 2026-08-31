@@ -357,11 +357,11 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 setOnMenuItemClickListener { toggleVideoCover(); true }
             }
 			
-			// 🌟 新增：音质切换按钮 (放在下载 TTML 和歌词格式旁边)
-            val toggleQualityItem = menu.findItem(R.id.action_toggle_download_quality) ?: menu.add(Menu.NONE, R.id.action_toggle_download_quality, 51, "下载音质")
+			// 🌟 新增：音质切换按钮 
+            val toggleQualityItem = menu.findItem(R.id.action_toggle_download_quality) ?: menu.add(Menu.NONE, R.id.action_toggle_download_quality, 52, "下载音质")
             toggleQualityItem.apply {
                 title = "↓"
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
                 setOnMenuItemClickListener { 
                     toggleDownloadQuality() 
                     updateQualityIcon(this)
@@ -369,7 +369,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 }
 			}	
 
-            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 52, "下载TTML")
+            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "下载TTML")
             fetchTtmlItem.apply {
                 title = "↓TT"
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
