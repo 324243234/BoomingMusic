@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
+import android.os.Bundle
 import android.os.Process
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -267,7 +268,6 @@ fun LyricsEditorScreen(
         )
     }
 
-    // ?? 作者 #537 更新点：多提供商支持
     if (showLyricsDownloadDialog) {
         LyricsSearchDialog(
             song = song,
@@ -314,7 +314,6 @@ fun LyricsEditorScreen(
         viewModel.saveLyrics(song, editedContent)
     }
 
-    // ?? 作者 #537 更新点：忽略网络配置限制，全天候开放下载弹窗
     fun downloadLyrics() {
         if (NetworkFeature.isOnline(ignoreWifiSetting = true)) {
             showLyricsDownloadDialog = true
@@ -381,7 +380,7 @@ fun LyricsEditorScreen(
                                 MenuItem.Button.Action(
                                     text = stringResource(R.string.download_lyrics),
                                     icon = painterResource(R.drawable.ic_download_24dp),
-                                    enabled = !uiState.isLoading && !isFileSource, // 移除了冗余的 isLyricsDownloadEnabled 限制
+                                    enabled = !uiState.isLoading && !isFileSource, 
                                     onClick = { downloadLyrics() }
                                 ),
                                 MenuItem.Button.DropDown(
@@ -467,7 +466,7 @@ fun LyricsEditorScreen(
 
                 OutlinedTextField(
                     state = textFieldState,
-                    readOnly = false,
+                    readOnly = false, 
                     placeholder = {
                         Text(stringResource(R.string.write_lyrics_here))
                     },
