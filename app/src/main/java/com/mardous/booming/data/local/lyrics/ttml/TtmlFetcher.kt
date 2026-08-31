@@ -146,7 +146,7 @@ object TtmlFetcher {
             val (appleMatch, neteaseMatch, qqMatch) = coroutineScope {
                 val aTask = async { fetchBestAppleMatch(cleanQuery, song) }
                 val nTask = async { fetchBestNeteaseMatch(context, cleanQuery, song) }
-                val qTask = async { fetchBestQQMatch(context, cleanQuery, song) } // 🌟 传入 Context
+                val qTask = async { fetchBestQQMatch(context, cleanQuery, song) }
                 Triple(aTask.await(), nTask.await(), qTask.await())
             }
 
@@ -257,7 +257,6 @@ object TtmlFetcher {
         
         var list = if (start != -1 && end != -1) runCatching { JSONObject(searchRes!!.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() else null
         
-        // 🛡️ QQ音乐搜素双活降级
         if (list == null || list.length() == 0) {
             val qqBaseUrl = context?.let { ApiConfigManager.getQqBaseUrl(it) } ?: ApiConfigManager.DEFAULT_QQ_DOMAIN
             searchRes = httpGet("$qqBaseUrl/search?key=${Uri.encode(query)}&limit=10", timeoutMs = 45000)
@@ -282,7 +281,6 @@ object TtmlFetcher {
         var lrcData = lrcObj?.optString("lyric")
         var transData = transBase64
         
-        // 🛡️ QQ音乐歌词获取双活降级
         if (lrcData.isNullOrBlank() && lrcObj?.optInt("retcode") != 0) {
             val qqBaseUrl = context?.let { ApiConfigManager.getQqBaseUrl(it) } ?: ApiConfigManager.DEFAULT_QQ_DOMAIN
             lrcRes = httpGet("$qqBaseUrl/lyric?songmid=${best.third}", timeoutMs = 45000)
@@ -606,6 +604,31 @@ object TtmlFetcher {
         val hours = seconds / 3600
         seconds %= 60
         return String.format("%02d:%02d:%02d.%03d", hours, minutes, seconds, remMs)
+    }
+
+    // 🌟 补全缺少的 timeStrToMs
+    private fun timeStrToMs(timeStr: String): Long {
+        return runCatching {
+            var ms = 0L
+            val parts = timeStr.split(":")
+            if (parts.size == 3) {
+                ms += (parts[0].toLongOrNull() ?: 0L) * 3600000L
+                ms += (parts[1].toLongOrNull() ?: 0L) * 60000L
+                val secParts = parts[2].split(".")
+                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
+                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+            } else if (parts.size == 2) {
+                ms += (parts[0].toLongOrNull() ?: 0L) * 60000L
+                val secParts = parts[1].split(".")
+                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
+                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+            } else if (parts.size == 1) {
+                val secParts = parts[0].split(".")
+                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
+                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+            }
+            ms
+        }.getOrDefault(0L)
     }
 
     private suspend fun fetchAppleOfficial(trackId: String, country: String): String? = withContext(Dispatchers.IO) {

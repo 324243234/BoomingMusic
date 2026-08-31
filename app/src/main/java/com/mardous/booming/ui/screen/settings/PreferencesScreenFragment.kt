@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Christians MartÃ­nez Alvarado
+ * Copyright (c) 2024 Christians Mart¨ªnez Alvarado
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -169,7 +169,6 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
 
     private val preferences: SharedPreferences by inject()
 
-    // ğŸŒŸ 1. å¸¸è§„å­—ä½“å¯¼å…¥é€‰æ‹©å™¨ (ä¿ç•™æœ¬åœ°å®šåˆ¶)
     private val importRegularFontLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
@@ -181,7 +180,6 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
             }
         }
 
-    // ğŸŒŸ 2. åŠ ç²—å­—ä½“å¯¼å…¥é€‰æ‹©å™¨ (ä¿ç•™æœ¬åœ°å®šåˆ¶)
     private val importBoldFontLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
@@ -260,14 +258,12 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
 
         findPreference<Preference>(LyricsViewSettings.Key.BLUR_EFFECT)?.isVisible = hasS()
 
-        // ğŸŒŸ ç»‘å®šå¸¸è§„/Medium å­—ä½“ç‚¹å‡»äº‹ä»¶ (ä¿ç•™æœ¬åœ°å®šåˆ¶)
         findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_REGULAR)
             ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
             importRegularFontLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf"))
             true
         }
 
-        // ğŸŒŸ ç»‘å®šåŠ ç²—/Bold å­—ä½“ç‚¹å‡»äº‹ä»¶ (ä¿ç•™æœ¬åœ°å®šåˆ¶)
         findPreference<Preference>(LyricsViewSettings.Key.SELECTED_CUSTOM_FONT_BOLD)
             ?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
             importBoldFontLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-otf"))
@@ -325,7 +321,6 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
             true
         }
 
-        // ğŸ”¥ æ¥å…¥åŸä½œè€…æ–°ç‰ˆå¤‡ä»½ä¸æ¢å¤é¡µé¢
         findPreference<Preference>("backup_and_restore")?.setOnPreferenceClickListener {
             startActivity(Intent(requireContext(), BackupActivity::class.java))
             true
@@ -407,7 +402,6 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
                 findActivityNavController(R.id.fragment_container).navigate(R.id.nav_about)
                 true
             }
-            // ğŸ‘‡ æ‹¦æˆªé«˜çº§è®¾ç½®ä¸­çš„ç‚¹å‡»äº‹ä»¶ï¼Œå‘¼å‡ºå¼¹çª—
             preference.key == "pref_netease_cookie" -> {
                 showCookieInputDialog(requireContext())
                 true
@@ -416,21 +410,21 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
     }
 
-    // ğŸ‘‡ å‘¼å‡ºé…ç½® Cookie å¼¹çª—çš„å…·ä½“å®ç°æ–¹æ³•
+    // ?? È«Á¿¶Ô½Ó ApiConfigManager ½â¾öÕÒ²»µ½·½·¨µÄ±àÒë±¨´í
     private fun showCookieInputDialog(context: android.content.Context) {
-        val apiClass = com.mardous.booming.data.network.NeteaseDailyApi
-        val currentDomain = apiClass.getCustomDomain(context)
+        val apiClass = com.mardous.booming.data.network.ApiConfigManager
+        val currentDomain = apiClass.getNeteaseCustomDomain(context)
         val currentQqDomain = apiClass.getQqCustomDomain(context)
         val currentCookie = apiClass.getCookie(context)
         
         val domainInput = android.widget.EditText(context).apply {
-            hint = "ç½‘æ˜“ API åŸŸå (ç•™ç©ºä½¿ç”¨é»˜è®¤ Render)"
+            hint = "ÍøÒ× API ÓòÃû (Áô¿ÕÊ¹ÓÃÄ¬ÈÏ Render)"
             setText(currentDomain)
             setSingleLine()
         }
         
         val qqDomainInput = android.widget.EditText(context).apply {
-            hint = "QQ éŸ³ä¹ API åŸŸå (ç•™ç©ºä½¿ç”¨é»˜è®¤ Render)"
+            hint = "QQ ÒôÀÖ API ÓòÃû (Áô¿ÕÊ¹ÓÃÄ¬ÈÏ Render)"
             setText(currentQqDomain)
             setSingleLine()
             val lp = android.widget.LinearLayout.LayoutParams(
@@ -442,7 +436,7 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
         
         val cookieInput = android.widget.EditText(context).apply {
-            hint = "ç½‘æ˜“ Cookie (è§£é”æ¨èï¼Œç•™ç©ºè·³è¿‡)"
+            hint = "ÍøÒ× Cookie (½âËøÍÆ¼ö£¬Áô¿ÕÌø¹ı)"
             setText(currentCookie)
             setLines(3)
             gravity = android.view.Gravity.TOP
@@ -463,20 +457,20 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
 
         com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-            .setTitle("é…ç½® API ä¸ Cookie")
-            .setMessage("æ‰€æœ‰è®¾ç½®ä»…ä¿å­˜äºæ‰‹æœºæœ¬åœ°ã€‚")
+            .setTitle("ÅäÖÃ API Óë Cookie")
+            .setMessage("ËùÓĞÉèÖÃ½ö±£´æÓÚÊÖ»ú±¾µØ¡£")
             .setView(layout)
-            .setPositiveButton("ä¿å­˜") { dialog, _ ->
+            .setPositiveButton("±£´æ") { dialog, _ ->
                 apiClass.saveConfig(
                     context, 
                     domainInput.text.toString(), 
                     cookieInput.text.toString(),
                     qqDomainInput.text.toString()
                 )
-                android.widget.Toast.makeText(context, "API ä¸ Cookie é…ç½®å·²ä¿å­˜", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "API Óë Cookie ÅäÖÃÒÑ±£´æ", android.widget.Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
             }
-            .setNegativeButton("å–æ¶ˆ", null)
+            .setNegativeButton("È¡Ïû", null)
             .show()
     }
 
