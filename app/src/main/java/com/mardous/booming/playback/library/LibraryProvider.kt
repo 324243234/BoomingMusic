@@ -36,7 +36,7 @@ import com.mardous.booming.util.Preferences
 
 class LibraryProvider(private val repository: Repository) {
 
-    // ðŸŒŸ CarWith ä¸“å±žæ‹¦æˆªå™¨ï¼šç»“åˆåŽŸä½œè€…çš„æ–°ç‰ˆæž„å»ºå™¨ä¸Žä½ çš„é˜²æ–­è¿žè£…ç”²
+    // ?? CarWith ×¨ÊôÀ¹½ØÆ÷£º½áºÏÔ­×÷ÕßµÄÐÂ°æ¹¹½¨Æ÷ÓëÄãµÄ·À¶ÏÁ¬×°¼×
     private fun Song.toPlayableMediaItemWithArmor(mediaId: String? = null): MediaItem {
         val baseItem = if (mediaId != null) {
             buildPlayableMediaItem(this, mediaId)
@@ -44,14 +44,14 @@ class LibraryProvider(private val repository: Repository) {
             buildPlayableMediaItem(this)
         }
 
-        // ðŸŒŸ CarWith é˜²æ–­è¿žè£…ç”²
+        // ?? CarWith ·À¶ÏÁ¬×°¼×
         if (this.duration == 0L || this.data.contains(".m3u8")) {
             return baseItem.buildUpon()
                 .setLiveConfiguration(
                     MediaItem.LiveConfiguration.Builder()
                         .setMaxPlaybackSpeed(1.02f) 
                         .setMinPlaybackSpeed(0.98f) 
-                        .setTargetOffsetMs(5000) // å»¶è¿Ÿ 5s èµ·æ’­ï¼Œå¯¹æŠ—è¿‡éš§é“ç½‘ç»œæŠ–åŠ¨
+                        .setTargetOffsetMs(5000) // ÑÓ³Ù 5s Æð²¥£¬¶Ô¿¹¹ýËíµÀÍøÂç¶¶¶¯
                         .build()
                 ).build()
         }
@@ -101,8 +101,12 @@ class LibraryProvider(private val repository: Repository) {
     ): MediaItemsWithStartPosition? {
         try {
             val mediaItem = mediaItems.single()
-            if (!mediaItem.requestMetadata.searchQuery.isNullOrEmpty()) {
-                val songs = searchWithRequestMetadata(mediaItem.requestMetadata)
+            // ?? ÍêÃÀÈÚÈë×÷Õß×îÐÂ¸üÐÂ£ºÖ§³ÖÓïÒôÖúÊÖµÄ¿Õ²éÑ¯Ö¸Áî
+            if (mediaItem.mediaId == MediaItem.DEFAULT_MEDIA_ID) {
+                val songs = if (mediaItem.requestMetadata.searchQuery?.trim() == "") {
+                    repository.allSongs()
+                } else searchWithRequestMetadata(mediaItem.requestMetadata)
+                
                 if (songs.isNotEmpty()) {
                     return MediaItemsWithStartPosition(
                         songs.map { it.toPlayableMediaItemWithArmor() },
@@ -112,6 +116,7 @@ class LibraryProvider(private val repository: Repository) {
                 }
                 return null
             }
+            
             val path = MediaIDs.splitPath(mediaItem.mediaId)
             return when (path.firstOrNull()) {
                 MediaIDs.SONGS -> {

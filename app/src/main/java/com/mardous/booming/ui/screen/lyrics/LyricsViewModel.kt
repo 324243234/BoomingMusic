@@ -27,10 +27,8 @@ import com.mardous.booming.data.local.lyrics.InstrumentalDetector
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsSource
 import com.mardous.booming.data.model.lyrics.RawLyrics
-import com.mardous.booming.data.model.network.NetworkFeature
-import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.BetterLyrics
-import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.LRCLib
-import com.mardous.booming.data.model.network.NetworkFeature.Lyrics.Lyrically
+import com.mardous.booming.data.remote.lyrics.api.LyricsProvider
+import com.mardous.booming.data.remote.lyrics.LyricsProviderParams
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.extensions.files.belongsTo
 import com.mardous.booming.extensions.media.isArtistNameUnknown
@@ -50,7 +48,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Mode as LyricsViewMode
 
-// ğŸŒŸ 1. æ–°å¢ï¼šå¯¼å…¥ç›®æ ‡æšä¸¾ï¼ŒåŒºåˆ†å¸¸è§„å­—ä½“å’ŒåŠ ç²—å­—ä½“
+// ?? ĞÂÔö£ºµ¼ÈëÄ¿±êÃ¶¾Ù£¬Çø·Ö³£¹æ×ÖÌåºÍ¼Ó´Ö×ÖÌå
 enum class FontTarget {
     REGULAR,
     BOLD
@@ -72,9 +70,6 @@ class LyricsViewModel(
 
     private val _lyricsEditorUiState = MutableStateFlow<LyricsEditorUiState>(LyricsEditorUiState.Disposed)
     val lyricsEditorUiState = _lyricsEditorUiState.asStateFlow()
-
-    private val _lyricsDownloadEnabled = MutableStateFlow(isLyricsDownloadEnabled())
-    val lyricsDownloadEnabled = _lyricsDownloadEnabled.asStateFlow()
 
     private val _saveEvent = Channel<LyricsEditorResult>(Channel.BUFFERED)
     val saveEvent = _saveEvent.receiveAsFlow()
@@ -153,7 +148,8 @@ class LyricsViewModel(
         }
     }
 
-    fun downloadLyrics(song: Song, title: String, artist: String) =
+    // ?? ÍêÃÀÈÚÈë×÷Õß×îĞÂ¸üĞÂ£º´«µİ providers Ñ¡ÔñÁĞ±í²¢ÎŞÊÓÈ«¾ÖÍøÂçÉèÖÃ
+    fun downloadLyrics(song: Song, title: String, artist: String, providers: List<LyricsProvider>) =
         viewModelScope.launch(IO) {
             val uiState = _lyricsEditorUiState.updateAndGet {
                 if (it is LyricsEditorUiState.Visible) {
@@ -161,7 +157,12 @@ class LyricsViewModel(
                 } else it
             }
             if (uiState is LyricsEditorUiState.Visible) {
-                val onlineLyrics = repository.downloadLyrics(song, title, artist)
+                val providerParams = LyricsProviderParams(
+                    providers = providers,
+                    ignoreWifiSetting = true,
+                    ignoreProviderSetting = true
+                )
+                val onlineLyrics = repository.downloadLyrics(song, title, artist, providerParams)
                 if (onlineLyrics != null) {
                     _downloadEvent.send(onlineLyrics)
                 } else {
@@ -179,77 +180,77 @@ class LyricsViewModel(
         repository.deleteAllLyrics()
     }
 
-    // ğŸŒŸ 1. å‡çº§ç‰ˆå­—ä½“å¯¼å…¥ï¼šèåˆä½ çš„ FontTarget å‚æ•°ä¸ä½œè€…çš„å®‰å…¨å®¡æŸ¥
-fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
-    try {
-        val targetName = target.name.lowercase()
-        val defaultName = "custom_font_${targetName}_${System.currentTimeMillis()}.ttf"
-        val fontsDir = FileUtil.fontsDirectory() ?: return@liveData // ä½œè€…æ–°ç‰ˆç›®å½•è·å–
-        val rawFileName = context.contentResolver.query(uri, null, null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex != -1) cursor.getString(nameIndex) else null
-                } else null
-            } ?: defaultName
+    // ?? Éı¼¶°æ×ÖÌåµ¼Èë£ºÈÚºÏÄãµÄ FontTarget ²ÎÊıÓë×÷ÕßµÄ°²È«Éó²é
+    fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
+        try {
+            val targetName = target.name.lowercase()
+            val defaultName = "custom_font_${targetName}_${System.currentTimeMillis()}.ttf"
+            val fontsDir = FileUtil.fontsDirectory() ?: return@liveData
+            val rawFileName = context.contentResolver.query(uri, null, null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) cursor.getString(nameIndex) else null
+                    } else null
+                } ?: defaultName
 
-        // ä½œè€…æ–°ç‰ˆæ–‡ä»¶åæ¸…æ´—
-        val fileName = File(rawFileName).name.sanitize().ifBlank { defaultName }
+            // ×÷ÕßĞÂ°æÎÄ¼şÃûÇåÏ´
+            val fileName = File(rawFileName).name.sanitize().ifBlank { defaultName }
 
-        var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
+            var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
 
-        // ğŸ”¥ ä½œè€…æ–°ç‰ˆï¼šè°ƒç”¨ç‹¬ç«‹éªŒè¯å™¨æ›¿ä»£æœ¬åœ°ç¡¬ç¼–ç  Hex åŒ¹é…
-        if (isValid) {
+            // ?? ×÷ÕßĞÂ°æ£ºµ÷ÓÃ¶ÀÁ¢ÑéÖ¤Æ÷Ìæ´ú±¾µØÓ²±àÂë Hex Æ¥Åä
+            if (isValid) {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    isValid = with(FileTypeVerifier) { input.isFontFile() }
+                }
+            }
+
+            if (!isValid) {
+                emit(false)
+                return@liveData
+            }
+
+            val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
+
+            // ?? ÇåÀí¾ÉµÄ×ÖÖØÎïÀíÎÄ¼ş
+            val oldPath = preferences.getString(targetPrefKey, null)
+            if (!oldPath.isNullOrBlank()) {
+                val oldFile = File(oldPath)
+                if (oldFile.exists() && oldFile.belongsTo(fontsDir)) {
+                    oldFile.delete()
+                }
+            }
+
+            val outFile = File(fontsDir, "font_${targetName}_$fileName")
+            if (!outFile.belongsTo(fontsDir)) { // ×÷Õß·À´©Ô½¼ì²é
+                emit(false)
+                return@liveData
+            }
+
             context.contentResolver.openInputStream(uri)?.use { input ->
-                isValid = with(FileTypeVerifier) { input.isFontFile() }
+                outFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
             }
-        }
 
-        if (!isValid) {
+            // ?? ´æ´¢ÅäÖÃ
+            preferences.edit(commit = true) {
+                putBoolean(Key.USE_CUSTOM_FONT, true)
+                putString(targetPrefKey, outFile.absolutePath)
+                
+                // ÎªÁË¼æÈİ¾É°æÂß¼­£¬Èç¹ûÊÇµ¼Èë Regular£¬Í¬Ê±¸üĞÂÒ»ÏÂ¾É Key
+                if (target == FontTarget.REGULAR) {
+                    putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
+                }
+            }
+
+            emit(outFile.length() > 0)
+        } catch (e: Exception) {
+            e.printStackTrace()
             emit(false)
-            return@liveData
         }
-
-        val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
-
-        // ğŸŒŸ æ¸…ç†æ—§çš„å­—é‡ç‰©ç†æ–‡ä»¶
-        val oldPath = preferences.getString(targetPrefKey, null)
-        if (!oldPath.isNullOrBlank()) {
-            val oldFile = File(oldPath)
-            if (oldFile.exists() && oldFile.belongsTo(fontsDir)) {
-                oldFile.delete()
-            }
-        }
-
-        val outFile = File(fontsDir, "font_${targetName}_$fileName")
-        if (!outFile.belongsTo(fontsDir)) { // ä½œè€…é˜²ç©¿è¶Šæ£€æŸ¥
-            emit(false)
-            return@liveData
-        }
-
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            outFile.outputStream().use { output ->
-                input.copyTo(output)
-            }
-        }
-
-        // ğŸŒŸ å­˜å‚¨é…ç½®
-        preferences.edit(commit = true) {
-            putBoolean(Key.USE_CUSTOM_FONT, true)
-            putString(targetPrefKey, outFile.absolutePath)
-            
-            // ä¸ºäº†å…¼å®¹æ—§ç‰ˆé€»è¾‘ï¼Œå¦‚æœæ˜¯å¯¼å…¥ Regularï¼ŒåŒæ—¶æ›´æ–°ä¸€ä¸‹æ—§ Key
-            if (target == FontTarget.REGULAR) {
-                putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
-            }
-        }
-
-        emit(outFile.length() > 0)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        emit(false)
     }
-}
 
     fun updateSong(song: Song) {
         lyricsJob?.cancel()
@@ -346,15 +347,15 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
         return@withContext LyricsUiState.Empty(song.id)
     }
 
-    // ğŸŒŸ 2. ä½ çš„ createViewSettings (ç»´æŒäº†åŸæœ¬æ³¨é‡Šæ‰ if (!mode.isFull) çš„è¡Œä¸ºä¸åŒå­—é‡å¹¶åˆ FontFamily ç®—æ³•)
+    // ?? ÄãµÄ createViewSettings (Î¬³ÖÁËÔ­±¾×¢ÊÍµô if (!mode.isFull) µÄĞĞÎªÓëË«×ÖÖØºÏ²¢Ëã·¨)
     private fun createViewSettings(mode: LyricsViewMode): LyricsViewSettings {
-    val background: BackgroundEffect =
-        when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // æœ¬åœ°ï¼šç§»é™¤äº† if (!mode.isFull)
-            "gradient" -> BackgroundEffect.Gradient
-            "blur" -> BackgroundEffect.Blur
-            "aurora" -> BackgroundEffect.Aurora // ä½ çš„æœ¬åœ°æ–°å¢æšä¸¾
-            else -> BackgroundEffect.None
-        }
+        val background: BackgroundEffect =
+            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // ±¾µØ£ºÒÆ³ıÁË if (!mode.isFull)
+                "gradient" -> BackgroundEffect.Gradient
+                "blur" -> BackgroundEffect.Blur
+                "aurora" -> BackgroundEffect.Aurora // ÄãµÄ±¾µØĞÂÔöÃ¶¾Ù
+                else -> BackgroundEffect.None
+            }
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
         val enableKaraokeStyle = preferences.getBoolean(Key.ENABLE_KARAOKE_STYLE, false)
         val progressiveColoring = preferences.getBoolean(Key.PROGRESSIVE_COLORING, false)
@@ -364,31 +365,31 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
         val blurEffect = !background.isNone && preferences.getBoolean(Key.BLUR_EFFECT, false)
         val shadowEffect = !background.isNone && preferences.getBoolean(Key.SHADOW_EFFECT, false)
         
-        // ğŸŒŸ 3. é‡æ„å­—ä½“æ„å»ºé€»è¾‘ï¼šæ™ºèƒ½ç»„åˆåŸç”ŸåŒå­—é‡
+        // ?? ÖØ¹¹×ÖÌå¹¹½¨Âß¼­£ºÖÇÄÜ×éºÏÔ­ÉúË«×ÖÖØ
         val fontFamily: FontFamily = if (preferences.getBoolean(Key.USE_CUSTOM_FONT, false)) {
-        try {
-            val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
-                ?: preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
-            val boldPath = preferences.getString(PREF_CUSTOM_FONT_BOLD, null)
-            val fonts = mutableListOf<Font>()
+            try {
+                val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
+                    ?: preferences.getString(Key.SELECTED_CUSTOM_FONT, null)
+                val boldPath = preferences.getString(PREF_CUSTOM_FONT_BOLD, null)
+                val fonts = mutableListOf<Font>()
 
-            if (!regularPath.isNullOrBlank()) {
-                val file = File(regularPath)
-                if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Normal))
+                if (!regularPath.isNullOrBlank()) {
+                    val file = File(regularPath)
+                    if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Normal))
+                }
+
+                if (!boldPath.isNullOrBlank()) {
+                    val file = File(boldPath)
+                    if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Bold))
+                }
+
+                if (fonts.isNotEmpty()) FontFamily(fonts) else FontFamily.Default
+            } catch (_: Exception) {
+                FontFamily.Default
             }
-
-            if (!boldPath.isNullOrBlank()) {
-                val file = File(boldPath)
-                if (file.exists()) fonts.add(Font(file = file, weight = FontWeight.Bold))
-            }
-
-            if (fonts.isNotEmpty()) FontFamily(fonts) else FontFamily.Default
-        } catch (_: Exception) {
+        } else {
             FontFamily.Default
         }
-    } else {
-        FontFamily.Default
-    }
         
         val lineSpacing = preferences.getInt(Key.LINE_SPACING, 40)
         val syncedFontSize = if (mode == LyricsViewMode.Player) {
@@ -406,7 +407,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
             fontFamily = fontFamily,
             fontSize = syncedFontSize.sp,
             fontWeight = if (syncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // ğŸŒŸ å…œåº•ä¿éšœï¼šå“ªæ€•ç”¨æˆ·åªå¯¼äº†ä¸€ä¸ªå¸¸è§„å­—ä½“ï¼Œè¿™è¡Œä¹Ÿèƒ½è®©å®ƒè‡ªåŠ¨ç®—æ³•åŠ ç²—ï¼
+            fontSynthesis = FontSynthesis.Weight, // ?? ¶µµ×±£ÕÏ£ºÄÄÅÂÓÃ»§Ö»µ¼ÁËÒ»¸ö³£¹æ×ÖÌå£¬ÕâĞĞÒ²ÄÜÈÃËü×Ô¶¯Ëã·¨¼Ó´Ö£¡
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         val unsyncedBoldFont = preferences.getBoolean(Key.UNSYNCED_BOLD_FONT, false)
@@ -414,7 +415,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
             fontFamily = fontFamily,
             fontSize = unsyncedFontSize.sp,
             fontWeight = if (unsyncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // åŒä¸Š
+            fontSynthesis = FontSynthesis.Weight, // Í¬ÉÏ
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         
@@ -436,14 +437,14 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
             lineSpacing = ((lineSpacing / 2) + 8).coerceIn(8, 48)
         )
     }
-	
-	// ğŸŒŸ æ–°å¢ï¼šæ™ºèƒ½æ—¶é—´è½´å¹³ç§»ç®—æ³•
+    
+    // ?? ĞÂÔö£ºÖÇÄÜÊ±¼äÖáÆ½ÒÆËã·¨
     fun shiftTimeline(content: String, offsetMs: Long): String {
         if (offsetMs == 0L || content.isBlank()) return content
 
         var newContent = content
 
-        // 1. å¤„ç† LRC æ—¶é—´è½´ [mm:ss.xx] æˆ– [mm:ss.xxx]
+        // 1. ´¦Àí LRC Ê±¼äÖá [mm:ss.xx] »ò [mm:ss.xxx]
         val lrcRegex = Regex("""\[(\d{2,}):(\d{2})\.(\d{2,3})\]""")
         newContent = lrcRegex.replace(newContent) { match ->
             val m = match.groupValues[1].toLong()
@@ -463,7 +464,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
             }
         }
 
-        // 2. å¤„ç† TTML æ—¶é—´è½´ (HH:MM:SS.mmm)
+        // 2. ´¦Àí TTML Ê±¼äÖá (HH:MM:SS.mmm)
         val ttmlRegex = Regex("""(begin|end)="(\d{2,}):(\d{2}):(\d{2})\.(\d{3})"""")
         newContent = ttmlRegex.replace(newContent) { match ->
             val attr = match.groupValues[1]
@@ -486,7 +487,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
         return newContent
     }
 
-	// ğŸŒŸ æ–°å¢ï¼šå®Œå…¨ç‹¬ç«‹çš„æœ¬åœ°æ–‡ä»¶è¦†ç›–é€»è¾‘ï¼Œä¸èµ°åŸä½œè€…å¤æ‚çš„æ•°æ®åº“å’Œæ ‡ç­¾é€šé“
+    // ?? ĞÂÔö£ºÍêÈ«¶ÀÁ¢µÄ±¾µØÎÄ¼ş¸²¸ÇÂß¼­£¬²»×ßÔ­×÷Õß¸´ÔÓµÄÊı¾İÍ¨µÀ
     fun saveLocalLyricsFile(context: android.content.Context, song: Song, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -504,7 +505,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
                 
                 for (name in possibleNames) {
                     val targetFile = java.io.File(parentDir, "$name$ext")
-                    // å¦‚æœå­˜åœ¨åŒåæ–‡ä»¶ï¼Œæˆ–è€…å½“å‰å°è¯•ä¿å­˜çš„å°±æ˜¯ä¸»æ–‡ä»¶åï¼Œç›´æ¥è¦†å†™
+                    // Èç¹û´æÔÚÍ¬ÃûÎÄ¼ş£¬»òÕßµ±Ç°³¢ÊÔ±£´æµÄ¾ÍÊÇÖ÷ÎÄ¼şÃû£¬Ö±½Ó¸²¸Ç
                     if (targetFile.exists() || name == songFile.nameWithoutExtension) {
                         targetFile.writeText(content)
                         saved = true
@@ -514,24 +515,20 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
                 
                 withContext(Dispatchers.Main) {
                     if (saved) {
-                        android.widget.Toast.makeText(context, "æˆåŠŸè¦†å†™æœ¬åœ° $ext æ–‡ä»¶", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "³É¹¦¸²Ğ´±¾µØ $ext ÎÄ¼ş", android.widget.Toast.LENGTH_SHORT).show()
                         repository.clearMemoryCache()
                         updateSong(song)
                     } else {
-                        android.widget.Toast.makeText(context, "ä¿å­˜å¤±è´¥ï¼šæœªæ‰¾åˆ°æœ‰æ•ˆç›®å½•", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "±£´æÊ§°Ü£ºÎ´ÕÒµ½ÓĞĞ§Ä¿Â¼", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "ä¿å­˜å¤±è´¥ï¼Œè¯·æ£€æŸ¥å­˜å‚¨æƒé™", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, "±£´æÊ§°Ü£¬Çë¼ì²é´æ´¢È¨ÏŞ", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         }
-    }
-	
-    private fun isLyricsDownloadEnabled(): Boolean {
-        return BetterLyrics.isEnabled || Lyrically.isEnabled || LRCLib.isEnabled
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
@@ -545,7 +542,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
                 }
             }
 
-            // ğŸŒŸ ç›‘å¬åŒå­—é‡ Key å˜åŠ¨ï¼Œå®æ—¶åˆ·æ–°ç•Œé¢
+            // ?? ¼àÌıË«×ÖÖØ Key ±ä¶¯£¬ÊµÊ±Ë¢ĞÂ½çÃæ
             PREF_CUSTOM_FONT_REGULAR,
             PREF_CUSTOM_FONT_BOLD,
             Key.USE_CUSTOM_FONT,
@@ -575,12 +572,6 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
             Key.UNSYNCED_FONT_SIZE_FULL -> {
                 _fullLyricsViewSettings.value = createViewSettings(LyricsViewMode.Full)
             }
-            NetworkFeature.NETWORK_FEATURES_KEY,
-            NetworkFeature.BETTERLYRICS_ENABLED_KEY,
-            NetworkFeature.LYRICALLY_ENABLED_KEY,
-            NetworkFeature.LRCLIB_ENABLED_KEY -> {
-                _lyricsDownloadEnabled.value = isLyricsDownloadEnabled()
-            }
             INSTRUMENTAL_TRACK_IDENTIFIERS,
             MARK_INSTRUMENTAL_BY_TITLE -> {
                 instrumentalDetector = createInstrumentalDetector()
@@ -601,7 +592,7 @@ fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget
         private const val INSTRUMENTAL_TRACK_IDENTIFIERS = "instrumental_track_identifiers"
         private const val MARK_INSTRUMENTAL_BY_TITLE = "mark_instrumental_tracks_by_title"
         
-        // ğŸŒŸ å­˜å‚¨åŒå­—é‡è·¯å¾„çš„å¸¸é‡ Key
+        // ?? ´æ´¢Ë«×ÖÖØÂ·¾¶µÄ³£Á¿ Key
         const val PREF_CUSTOM_FONT_REGULAR = "selected_custom_font_regular"
         const val PREF_CUSTOM_FONT_BOLD = "selected_custom_font_bold"
     }
