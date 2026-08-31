@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Christians Mart®™nez Alvarado
+ * Copyright (c) 2024 Christians Mart√≠nez Alvarado
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -410,7 +410,7 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
     }
 
-    // ?? »´¡ø∂‘Ω” ApiConfigManager Ω‚æˆ’“≤ªµΩ∑Ω∑®µƒ±‡“Î±®¥Ì
+    // ?? ÂÖ®ÈáèÂØπÊé• ApiConfigManager Ëß£ÂÜ≥Êâæ‰∏çÂà∞ÊñπÊ≥ïÁöÑÁºñËØëÊä•Èîô
     private fun showCookieInputDialog(context: android.content.Context) {
         val apiClass = com.mardous.booming.data.network.ApiConfigManager
         val currentDomain = apiClass.getNeteaseCustomDomain(context)
@@ -418,13 +418,13 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         val currentCookie = apiClass.getCookie(context)
         
         val domainInput = android.widget.EditText(context).apply {
-            hint = "Õ¯“◊ API ”Ú√˚ (¡Ùø’ π”√ƒ¨»œ Render)"
+            hint = "ÁΩëÊòì API ÂüüÂêç (ÁïôÁ©∫‰ΩøÁî®ÈªòËÆ§ Render)"
             setText(currentDomain)
             setSingleLine()
         }
         
         val qqDomainInput = android.widget.EditText(context).apply {
-            hint = "QQ “Ù¿÷ API ”Ú√˚ (¡Ùø’ π”√ƒ¨»œ Render)"
+            hint = "QQ Èü≥‰πê API ÂüüÂêç (ÁïôÁ©∫‰ΩøÁî®ÈªòËÆ§ Render)"
             setText(currentQqDomain)
             setSingleLine()
             val lp = android.widget.LinearLayout.LayoutParams(
@@ -436,7 +436,7 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
         
         val cookieInput = android.widget.EditText(context).apply {
-            hint = "Õ¯“◊ Cookie (Ω‚À¯Õ∆ºˆ£¨¡Ùø’Ã¯π˝)"
+            hint = "ÁΩëÊòì Cookie (Ëß£ÈîÅÊé®ËçêÔºåÁïôÁ©∫Ë∑≥Ëøá)"
             setText(currentCookie)
             setLines(3)
             gravity = android.view.Gravity.TOP
@@ -457,20 +457,20 @@ open class PreferenceScreenFragment : PreferenceFragmentCompat(),
         }
 
         com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-            .setTitle("≈‰÷√ API ”Î Cookie")
-            .setMessage("À˘”–…Ë÷√Ωˆ±£¥Ê”⁄ ÷ª˙±æµÿ°£")
+            .setTitle("ÈÖçÁΩÆ API ‰∏é Cookie")
+            .setMessage("ÊâÄÊúâËÆæÁΩÆ‰ªÖ‰øùÂ≠ò‰∫éÊâãÊú∫Êú¨Âú∞„ÄÇ")
             .setView(layout)
-            .setPositiveButton("±£¥Ê") { dialog, _ ->
+            .setPositiveButton("‰øùÂ≠ò") { dialog, _ ->
                 apiClass.saveConfig(
                     context, 
                     domainInput.text.toString(), 
                     cookieInput.text.toString(),
                     qqDomainInput.text.toString()
                 )
-                android.widget.Toast.makeText(context, "API ”Î Cookie ≈‰÷√“—±£¥Ê", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "API ‰∏é Cookie ÈÖçÁΩÆÂ∑≤‰øùÂ≠ò", android.widget.Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
             }
-            .setNegativeButton("»°œ˚", null)
+            .setNegativeButton("ÂèñÊ∂à", null)
             .show()
     }
 
