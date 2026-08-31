@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import android.util.LruCache
 import com.mardous.booming.data.model.Song
+import com.mardous.booming.data.network.ApiConfigManager
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -17,19 +18,14 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * 动态专辑画布引擎 (双轨智能超时降级 + 冷热双轨 LRU 缓存)
- */
 object AnimatedCanvasFetcher {
 
     private const val TAG = "AnimatedCanvasFetcher"
-    
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
     
     private val VIDEO_EXTENSIONS = listOf(".mp4", ".webm")
     private val uriCache = LruCache<String, String>(30)
-
-    private const val MAX_PERMANENT_BYTES = 3_500_000L // 3.5MB
+    private const val MAX_PERMANENT_BYTES = 3_500_000L 
     private const val MAX_TEMP_CACHE_FILES = 5
 
     private data class CoverMatch(val platform: Int, val score: Int, val url: String)
@@ -104,14 +100,10 @@ object AnimatedCanvasFetcher {
 
     suspend fun fetchCanvasUri(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val cacheKey = "${song.artistName}_${song.title}"
-        uriCache.get(cacheKey)?.let { 
-            Log.d(TAG, "🎯 命中内存缓存直接返回: $cacheKey")
-            return@withContext it 
-        }
+        uriCache.get(cacheKey)?.let { return@withContext it }
 
         yield()
         val audioFileName = File(song.data).nameWithoutExtension
-
         val parentDir = File(song.data).parentFile
         if (parentDir != null && parentDir.exists()) {
             val hiddenVideoDir = File(parentDir, ".MP4")
@@ -128,17 +120,13 @@ object AnimatedCanvasFetcher {
                     ?: checkLocalVideo(parentDir, "${song.artistName} - ${song.title}")
             }
             
-            if (songVideo == "BLOCKED") {
-                Log.d(TAG, "⛔ 检测到黑名单空文件/文件夹占位，已永远跳过该歌曲的视频加载: $audioFileName")
-                return@withContext null
-            }
+            if (songVideo == "BLOCKED") return@withContext null
             if (songVideo != null) return@withContext cacheAndReturn(cacheKey, songVideo)
 
             val albumName = song.albumName
             if (!albumName.isNullOrBlank()) {
                 var albumVideo = if (hiddenVideoDir.exists()) checkLocalVideo(hiddenVideoDir, getSafeFilename(albumName)) else null
                 if (albumVideo == null) albumVideo = checkLocalVideo(parentDir, getSafeFilename(albumName))
-
                 if (albumVideo == "BLOCKED") return@withContext null
                 if (albumVideo != null) return@withContext cacheAndReturn(cacheKey, albumVideo)
             }
@@ -168,11 +156,10 @@ object AnimatedCanvasFetcher {
         val strictQuery = strictQueryParts.joinToString(" ").replace(Regex("""[-_／/]"""), " ").replace(Regex("""\s+"""), " ").trim()
         if (strictQuery.isBlank()) return@withContext null
             
-        // 🌟 双段式拉取：第一段 (极速 3秒并发)
         val candidates = coroutineScope {
             val aTask = async { fetchAppleMusicCover(strictQuery, song) }
             val nTask = async { fetchNeteaseCover(context, strictQuery, song, timeoutMs = 3000) }
-            val qTask = async { fetchQQMusicCover(context, strictQuery, song) }
+            val qTask = async { fetchQQMusicCover(context, strictQuery, song, timeoutMs = 3000) }
             listOfNotNull(aTask.await(), nTask.await(), qTask.await())
         }
 
@@ -181,16 +168,16 @@ object AnimatedCanvasFetcher {
             else b.platform.compareTo(a.platform)
         })
 
-        // 🌟 双段式拉取：第二段 (如果全网都没找到，且刚开局网易云可能因为 Render 休眠失败了，放宽到 45 秒专等网易云！)
         if (bestMatch == null) {
-            Log.d(TAG, "⏳ 极速模式未找到动封，进入 Render 唤醒等待模式 (最长耐心等待 45秒)...")
-            bestMatch = fetchNeteaseCover(context, strictQuery, song, timeoutMs = 45000)
+            Log.d(TAG, "⏳ 极速模式未找到动封，进入 QQ/网易 Render 唤醒等待模式 (耐心等待 45秒)...")
+            bestMatch = coroutineScope {
+                val nRetry = async { fetchNeteaseCover(context, strictQuery, song, timeoutMs = 45000) }
+                val qRetry = async { fetchQQMusicCover(context, strictQuery, song, timeoutMs = 45000) }
+                listOfNotNull(nRetry.await(), qRetry.await()).maxByOrNull { it.score }
+            }
         }
 
-        if (bestMatch == null) {
-            Log.d(TAG, "💔 宁缺毋滥，极限等待后仍未找到匹配的动态封面: ${song.title}")
-            return@withContext null
-        }
+        if (bestMatch == null) return@withContext null
 
         val networkUrl = bestMatch.url
         return@withContext downloadToDoubleTrackCache(context, networkUrl, parentDir, audioFileName)
@@ -226,20 +213,22 @@ object AnimatedCanvasFetcher {
                     return CoverMatch(1, bestMatch.score, videoUrl)
                 }
             }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "Apple Music fetch failed", e)
-        }
+        } catch (e: Exception) {}
         return null
     }
 
-    // 🌟 支持传入动态超时时间的网易云获取方法
     private suspend fun fetchNeteaseCover(context: Context, query: String, song: Song, timeoutMs: Int): CoverMatch? {
         try {
-            val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getBaseUrl(context)
-            val searchUrl = "$baseUrl/search?keywords=${Uri.encode(query)}&limit=10"
-            
-            val searchRes = httpGet(searchUrl, timeoutMs = timeoutMs) ?: return null
-            val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+            val publicUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=10"
+            var searchRes = httpGet(publicUrl, timeoutMs = timeoutMs)
+            var songs = runCatching { JSONObject(searchRes ?: "").optJSONObject("result")?.optJSONArray("songs") }.getOrNull()
+
+            if (songs == null || songs.length() == 0) {
+                if (timeoutMs <= 5000) return null 
+                val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
+                searchRes = httpGet("$baseUrl/search?keywords=${Uri.encode(query)}&limit=10", timeoutMs = timeoutMs)
+                songs = runCatching { JSONObject(searchRes ?: "").optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+            }
             
             data class NMatch(val score: Int, val id: Long)
             val validItems = mutableListOf<NMatch>()
@@ -254,8 +243,9 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null && bestMatch.id != 0L) {
                 yield()
-                val dynamicCoverUrl = "$baseUrl/song/dynamic/cover?id=${bestMatch.id}"
-                val dynamicRes = httpGet(dynamicCoverUrl, timeoutMs = timeoutMs) ?: return null
+                val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
+                // 网易云动封直接走自定义代理，因为无公开免验接口
+                val dynamicRes = httpGet("$baseUrl/song/dynamic/cover?id=${bestMatch.id}", timeoutMs = timeoutMs) ?: return null
                 val dataObj = JSONObject(dynamicRes).optJSONObject("data")
                 if (dataObj != null) {
                     var coverUrl = dataObj.optString("videoPlayUrl")
@@ -265,18 +255,25 @@ object AnimatedCanvasFetcher {
                     }
                 }
             }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "Netease fetch error", e)
-        }
+        } catch (e: Exception) {}
         return null
     }
 
-    private suspend fun fetchQQMusicCover(context: Context, query: String, song: Song): CoverMatch? {
+    private suspend fun fetchQQMusicCover(context: Context, query: String, song: Song, timeoutMs: Int): CoverMatch? {
         try {
-            val baseUrl = com.mardous.booming.data.network.NeteaseDailyApi.getQqBaseUrl(context)
-            val searchUrl = "$baseUrl/api/search?key=${Uri.encode(query)}"
-            val searchRes = httpGet(searchUrl) ?: return null
-            val list = runCatching { JSONObject(searchRes).optJSONObject("data")?.optJSONArray("list") }.getOrNull() ?: return null
+            val publicUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=${Uri.encode(query)}"
+            var searchRes = httpGet(publicUrl, timeoutMs = timeoutMs)
+            var start = searchRes?.indexOf("{") ?: -1
+            var end = searchRes?.lastIndexOf("}") ?: -1
+            var list = if (start != -1 && end != -1) runCatching { JSONObject(searchRes!!.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() else null
+
+            // 🛡️ QQ 搜索降级
+            if (list == null || list.length() == 0) {
+                if (timeoutMs <= 5000) return null
+                val qqBaseUrl = ApiConfigManager.getQqBaseUrl(context)
+                searchRes = httpGet("$qqBaseUrl/search?key=${Uri.encode(query)}&limit=10", timeoutMs = timeoutMs)
+                list = runCatching { JSONObject(searchRes ?: "").optJSONObject("data")?.optJSONArray("list") }.getOrNull() ?: return null
+            }
 
             data class QMatch(val score: Int, val vid: String)
             val validItems = mutableListOf<QMatch>()
@@ -292,8 +289,9 @@ object AnimatedCanvasFetcher {
             val bestMatch = validItems.maxByOrNull { it.score }
             if (bestMatch != null) {
                 yield()
-                val mvUrl = "$baseUrl/api/mv?id=${bestMatch.vid}"
-                val mvRes = httpGet(mvUrl) ?: return null
+                // QQ 动封 (MV) 走代理
+                val qqBaseUrl = ApiConfigManager.getQqBaseUrl(context)
+                val mvRes = httpGet("$qqBaseUrl/api/mv?id=${bestMatch.vid}", timeoutMs = timeoutMs) ?: return null
                 val urlsObj = JSONObject(mvRes).optJSONObject("data") ?: return null
                 
                 val preferredKeys = listOf("480", "720", "mp4", "360", "240", "1080")
@@ -305,10 +303,7 @@ object AnimatedCanvasFetcher {
                         break
                     }
                 }
-                
-                if (selectedResolutionKey == null && urlsObj.keys().hasNext()) {
-                    selectedResolutionKey = urlsObj.keys().next()
-                }
+                if (selectedResolutionKey == null && urlsObj.keys().hasNext()) selectedResolutionKey = urlsObj.keys().next()
 
                 if (selectedResolutionKey != null) {
                     val urlList = urlsObj.optJSONArray(selectedResolutionKey)
@@ -318,9 +313,7 @@ object AnimatedCanvasFetcher {
                     }
                 }
             }
-        } catch (e: Exception) {
-            if (e !is CancellationException) Log.e(TAG, "QQ Music fetch error", e)
-        }
+        } catch (e: Exception) {}
         return null
     }
 
@@ -337,22 +330,16 @@ object AnimatedCanvasFetcher {
                 .take(files.size - MAX_TEMP_CACHE_FILES + 1)
                 .forEach { 
                     it.delete()
-                    Log.d(TAG, "🧹 LRU 清理大体积临时视频: ${it.name}")
                 }
         }
     }
 
     fun clearAllTempCache(context: Context) {
-        runCatching {
-            getTempCacheDir(context).deleteRecursively()
-            Log.d(TAG, "💥 App 关闭，已抹除所有临时大视频缓存！")
-        }
+        runCatching { getTempCacheDir(context).deleteRecursively() }
     }
 
     private suspend fun downloadToDoubleTrackCache(context: Context, urlStr: String, parentDir: File?, audioFileName: String): String? {
-        if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) {
-            return urlStr
-        }
+        if (urlStr.endsWith(".m3u8") || urlStr.contains(".m3u8")) return urlStr
 
         return withContext(Dispatchers.IO) {
             try {
@@ -383,17 +370,13 @@ object AnimatedCanvasFetcher {
                             val hiddenVideoDir = File(parentDir, ".MP4")
                             if (!hiddenVideoDir.exists()) hiddenVideoDir.mkdirs()
                             targetFile = File(hiddenVideoDir, "$audioFileName.mp4")
-                            Log.d(TAG, "⬇️ 文件较小 (${contentLength/1024}KB) -> 转入永久存储: ${targetFile.absolutePath}")
                         } else {
                             val tempDir = getTempCacheDir(context)
                             manageTempCacheLRU(tempDir)
                             targetFile = File(tempDir, "$audioFileName.mp4")
-                            Log.w(TAG, "⚠️ 发现巨型 MV (${contentLength/1024/1024}MB) -> 转入 LRU 临时热缓存: ${targetFile.absolutePath}")
                         }
 
-                        if (targetFile.exists() && targetFile.length() == contentLength && contentLength > 0) {
-                            return@withContext targetFile.absolutePath
-                        }
+                        if (targetFile.exists() && targetFile.length() == contentLength && contentLength > 0) return@withContext targetFile.absolutePath
 
                         conn.inputStream.use { input ->
                             targetFile.outputStream().use { output ->
@@ -406,7 +389,6 @@ object AnimatedCanvasFetcher {
                     }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) Log.e(TAG, "视频下载失败", e)
             }
             return@withContext urlStr
         }
@@ -426,17 +408,13 @@ object AnimatedCanvasFetcher {
         for (ext in VIDEO_EXTENSIONS) {
             val file = File(dir, "$safeName$ext")
             if (file.exists()) {
-                if (file.isFile && file.length() > 0) {
-                    return file.absolutePath
-                } else {
-                    return "BLOCKED"
-                }
+                if (file.isFile && file.length() > 0) return file.absolutePath
+                else return "BLOCKED"
             }
         }
         return null
     }
 
-    // 🌟 支持动态传入 timeout 阈值
     @Throws(Exception::class)
     private suspend fun httpGet(urlString: String, useAuth: Boolean = false, timeoutMs: Int = 3000): String? {
         yield()
@@ -445,17 +423,14 @@ object AnimatedCanvasFetcher {
             val url = URL(urlString)
             conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = timeoutMs 
-            // readTimeout 放宽，容忍大数据包读取时间
             conn.readTimeout = timeoutMs + 2000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            
             if (useAuth) {
                 conn.setRequestProperty("Authorization", "Bearer $APPLE_TOKEN")
                 conn.setRequestProperty("Origin", "https://music.apple.com")
             }
-            
             if (conn.responseCode == 200) {
-                return conn.inputStream.bufferedReader().readText()
+                return conn.inputStream.bufferedReader().use { it.readText() }
             }
         } finally {
             conn?.disconnect()

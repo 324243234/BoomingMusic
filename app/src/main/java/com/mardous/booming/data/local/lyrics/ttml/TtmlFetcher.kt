@@ -1,9 +1,11 @@
 package com.mardous.booming.data.local.lyrics.ttml
 
+import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.mardous.booming.data.model.Song
+import com.mardous.booming.data.network.ApiConfigManager
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -16,16 +18,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.Inflater
 
-/**
- * TTML 级联网络获取引擎 (包含极致多歌手重合度评分 + 基因级残缺标点修复)
- * 三大平台并发检索 -> 严苛打分 -> 全局优中取优 -> 宁缺毋滥
- */
 object TtmlFetcher {
 
     private const val TAG = "TtmlFetcher"
     private const val APPLE_TOKEN = "eyJhbGciOiJFUzI1NiIsImtpZCI6MldVTUZPQjA2MyJ9.eyJpc3MiOiJBNTZEUjg1TTRTIiwiaWF0IjoxNTc4NTI2NzI2LCJleHAiOjE3NzA0MzYzMjZ9.S6x2XGf7OqS6cZJ_3eG0W8gA4vN4aT3q9Z1aW3bX5cY"
 
-    // 🌟 万能多歌手切割正则：无视各大平台的格式差异，精准抽离歌手实体
     private val ARTIST_SPLIT_REGEX = Regex("""\s*(?:[/,&、;]|\band\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b)\s*""", RegexOption.IGNORE_CASE)
 
     private data class LyricSpan(var start: Long, var dur: Long, var text: String)
@@ -44,9 +41,6 @@ object TtmlFetcher {
         return input.lowercase().replace(Regex("""[^\w\u4e00-\u9fa5]"""), "")
     }
 
-    // ==========================================
-    // 🌟 核心引擎：高精深度多歌手评分算法
-    // ==========================================
     private fun calculateMatchScore(localSong: Song, rTitle: String, rArtist: String, rAlbum: String, rDurMs: Long): Int {
         val cleanLocalTitle = cleanTitle(localSong.title)
         val normLt = normalizeStr(cleanLocalTitle)
@@ -134,16 +128,10 @@ object TtmlFetcher {
             if (!durationMatched) return -1 
         }
 
-        val compKws = Regex("best of|greatest hits|collection|精选|the ultimate|essential|platinum|anthology|soundtrack|ost", RegexOption.IGNORE_CASE)
-        if (compKws.containsMatchIn(rAlbum) && !compKws.containsMatchIn(localSong.albumName ?: "")) score -= 800
-        
-        val remasterKws = Regex("remaster|deluxe|expanded|bonus|anniversary|edition", RegexOption.IGNORE_CASE)
-        if (remasterKws.containsMatchIn(rAlbum) && !remasterKws.containsMatchIn(localSong.albumName ?: "")) score -= 300
-
         return score
     }
 
-    suspend fun fetchTtmlForSong(song: Song): String? = withContext(Dispatchers.IO) {
+    suspend fun fetchTtmlForSong(song: Song, context: Context? = null): String? = withContext(Dispatchers.IO) {
         val rawTitle = cleanTitle(song.title)
         val rawArtist = if (song.isArtistNameUnknown()) "" else song.artistName.replace(Regex("""^\s*\d{1,4}\s*[-_.]?\s*"""), "")
         
@@ -152,23 +140,18 @@ object TtmlFetcher {
         if (rawTitle.isEmpty()) return@withContext null
 
         val query = if (primaryArtist.isBlank()) rawTitle else "$primaryArtist $rawTitle"
-        
-        // 🌟 修复正则漏洞：转义了左中括号 \[ 避免正则引擎将其识别为嵌套字符类
         val cleanQuery = query.replace(Regex("""[-_／/()\[\]【】{}]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
         try {
             val (appleMatch, neteaseMatch, qqMatch) = coroutineScope {
                 val aTask = async { fetchBestAppleMatch(cleanQuery, song) }
-                val nTask = async { fetchBestNeteaseMatch(cleanQuery, song) }
-                val qTask = async { fetchBestQQMatch(cleanQuery, song) }
+                val nTask = async { fetchBestNeteaseMatch(context, cleanQuery, song) }
+                val qTask = async { fetchBestQQMatch(context, cleanQuery, song) } // 🌟 传入 Context
                 Triple(aTask.await(), nTask.await(), qTask.await())
             }
 
             val candidates = listOfNotNull(appleMatch, neteaseMatch, qqMatch)
-            if (candidates.isEmpty()) {
-                Log.d(TAG, "💔 严格匹配未找到符合 [合作者+专辑+时长] 的版本，宁缺毋滥，已放弃。")
-                return@withContext null
-            }
+            if (candidates.isEmpty()) return@withContext null
 
             val globalTransMap = mutableMapOf<Long, String>()
             neteaseMatch?.trans?.let { globalTransMap.putAll(parseLrcTranslations(it)) }
@@ -207,9 +190,6 @@ object TtmlFetcher {
         return@withContext null
     }
 
-    // ==========================================
-    // 高精网络抓取 API
-    // ==========================================
     private suspend fun fetchBestAppleMatch(query: String, song: Song): MatchResult? {
         val validItems = mutableListOf<Pair<Int, MatchResult>>()
         for (country in listOf("cn", "us")) {
@@ -229,10 +209,16 @@ object TtmlFetcher {
         return validItems.maxByOrNull { it.first }?.second
     }
 
-    private suspend fun fetchBestNeteaseMatch(query: String, song: Song): MatchResult? {
-        val searchUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=10"
-        val searchRes = httpGet(searchUrl) ?: return null
-        val songs = runCatching { JSONObject(searchRes).optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+    private suspend fun fetchBestNeteaseMatch(context: Context?, query: String, song: Song): MatchResult? {
+        val publicUrl = "https://music.163.com/api/search/get/web?s=${Uri.encode(query)}&type=1&limit=10"
+        var searchRes = httpGet(publicUrl, timeoutMs = 4000)
+        var songs = runCatching { JSONObject(searchRes ?: "").optJSONObject("result")?.optJSONArray("songs") }.getOrNull()
+        
+        if (songs == null || songs.length() == 0) {
+            val baseUrl = context?.let { ApiConfigManager.getNeteaseBaseUrl(it) } ?: ApiConfigManager.DEFAULT_NETEASE_DOMAIN
+            searchRes = httpGet("$baseUrl/search?keywords=${Uri.encode(query)}&type=1&limit=10", timeoutMs = 45000)
+            songs = runCatching { JSONObject(searchRes ?: "").optJSONObject("result")?.optJSONArray("songs") }.getOrNull() ?: return null
+        }
         
         val validItems = mutableListOf<Pair<Int, String>>()
         for (i in 0 until songs.length()) {
@@ -243,25 +229,40 @@ object TtmlFetcher {
         }
         val best = validItems.maxByOrNull { it.first } ?: return null
         
-        val lyricRes = httpGet("https://music.163.com/api/song/lyric?id=${best.second}&lv=-1&kv=-1&tv=-1&yv=1")
-        if (lyricRes != null) {
-            val jsonObj = runCatching { JSONObject(lyricRes) }.getOrNull()
+        var lyricRes = httpGet("https://music.163.com/api/song/lyric?id=${best.second}&lv=-1&kv=-1&tv=-1&yv=1", timeoutMs = 4000)
+        var jsonObj = runCatching { JSONObject(lyricRes ?: "") }.getOrNull()
+        
+        if (jsonObj == null || !jsonObj.has("yrc")) {
+            val baseUrl = context?.let { ApiConfigManager.getNeteaseBaseUrl(it) } ?: ApiConfigManager.DEFAULT_NETEASE_DOMAIN
+            lyricRes = httpGet("$baseUrl/song/lyric?id=${best.second}", timeoutMs = 45000)
+            jsonObj = runCatching { JSONObject(lyricRes ?: "") }.getOrNull()
+        }
+        
+        if (jsonObj != null) {
             return MatchResult(
                 platform = 2, score = best.first, id = best.second,
-                yrc = jsonObj?.optJSONObject("yrc")?.optString("lyric"),
-                lrc = jsonObj?.optJSONObject("lrc")?.optString("lyric"),
-                trans = jsonObj?.optJSONObject("tlyric")?.optString("lyric")
+                yrc = jsonObj.optJSONObject("yrc")?.optString("lyric"),
+                lrc = jsonObj.optJSONObject("lrc")?.optString("lyric"),
+                trans = jsonObj.optJSONObject("tlyric")?.optString("lyric")
             )
         }
         return null
     }
 
-    private suspend fun fetchBestQQMatch(query: String, song: Song): MatchResult? {
-        val searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=${Uri.encode(query)}"
-        val searchRes = httpGet(searchUrl) ?: return null
-        val start = searchRes.indexOf("{"); val end = searchRes.lastIndexOf("}")
-        if (start == -1 || end == -1) return null
-        val list = runCatching { JSONObject(searchRes.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() ?: return null
+    private suspend fun fetchBestQQMatch(context: Context?, query: String, song: Song): MatchResult? {
+        val publicUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=${Uri.encode(query)}"
+        var searchRes = httpGet(publicUrl, timeoutMs = 4000)
+        var start = searchRes?.indexOf("{") ?: -1
+        var end = searchRes?.lastIndexOf("}") ?: -1
+        
+        var list = if (start != -1 && end != -1) runCatching { JSONObject(searchRes!!.substring(start, end + 1)).optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") }.getOrNull() else null
+        
+        // 🛡️ QQ音乐搜素双活降级
+        if (list == null || list.length() == 0) {
+            val qqBaseUrl = context?.let { ApiConfigManager.getQqBaseUrl(it) } ?: ApiConfigManager.DEFAULT_QQ_DOMAIN
+            searchRes = httpGet("$qqBaseUrl/search?key=${Uri.encode(query)}&limit=10", timeoutMs = 45000)
+            list = runCatching { JSONObject(searchRes ?: "").optJSONObject("data")?.optJSONArray("list") }.getOrNull() ?: return null
+        }
         
         val validItems = mutableListOf<Triple<Int, JSONObject, String>>()
         for (i in 0 until list.length()) {
@@ -273,14 +274,28 @@ object TtmlFetcher {
         
         val best = validItems.maxByOrNull { it.first } ?: return null
         val songItem = best.second
-        val (qrcHex, transBase64) = fetchQqQrc(songItem)
-        val lrcRes = httpGet("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${best.third}&format=json&nobase64=1")
+        val (qrcHex, transBase64) = fetchQqQrc(context, songItem)
+        
+        val lrcPublicUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${best.third}&format=json&nobase64=1"
+        var lrcRes = httpGet(lrcPublicUrl, timeoutMs = 4000)
+        var lrcObj = runCatching { JSONObject(lrcRes ?: "") }.getOrNull()
+        var lrcData = lrcObj?.optString("lyric")
+        var transData = transBase64
+        
+        // 🛡️ QQ音乐歌词获取双活降级
+        if (lrcData.isNullOrBlank() && lrcObj?.optInt("retcode") != 0) {
+            val qqBaseUrl = context?.let { ApiConfigManager.getQqBaseUrl(it) } ?: ApiConfigManager.DEFAULT_QQ_DOMAIN
+            lrcRes = httpGet("$qqBaseUrl/lyric?songmid=${best.third}", timeoutMs = 45000)
+            val fallbackObj = runCatching { JSONObject(lrcRes ?: "").optJSONObject("data") }.getOrNull()
+            lrcData = fallbackObj?.optString("lyric")
+            transData = fallbackObj?.optString("trans")
+        }
         
         return MatchResult(
             platform = 3, score = best.first, id = songItem.optString("songid"), mid = best.third,
             qrc = qrcHex,
-            lrc = runCatching { JSONObject(lrcRes!!).optString("lyric") }.getOrNull(),
-            trans = runCatching { if (!transBase64.isNullOrBlank()) String(Base64.decode(transBase64, Base64.NO_WRAP), Charsets.UTF_8) else null }.getOrNull()
+            lrc = lrcData,
+            trans = runCatching { if (!transData.isNullOrBlank()) String(Base64.decode(transData, Base64.NO_WRAP), Charsets.UTF_8) else null }.getOrNull()
         )
     }
 
@@ -295,9 +310,6 @@ object TtmlFetcher {
         }
     }
 
-    // ==========================================
-    // 🌟 基因级溯源补全与闪烁修复引擎
-    // ==========================================
     private fun healSpansWithLrc(spans: MutableList<LyricSpan>, lrcLine: String?): MutableList<LyricSpan> {
         if (spans.isEmpty()) return spans
         
@@ -363,9 +375,6 @@ object TtmlFetcher {
         return healed
     }
 
-    // ==========================================
-    // 解析与 XML 构建
-    // ==========================================
     private fun injectTranslationIntoTtml(ttml: String, transMap: Map<Long, String>): String {
         if (transMap.isEmpty() || ttml.contains("x-translation")) return ttml
 
@@ -542,9 +551,6 @@ object TtmlFetcher {
         }.getOrNull()
     }
 
-    // ==========================================
-    // 时间转换与基础工具
-    // ==========================================
     private fun parseLrcTranslations(lrcText: String?): Map<Long, String> {
         if (lrcText.isNullOrBlank()) return emptyMap()
         val map = mutableMapOf<Long, String>()
@@ -602,60 +608,29 @@ object TtmlFetcher {
         return String.format("%02d:%02d:%02d.%03d", hours, minutes, seconds, remMs)
     }
 
-    private fun timeStrToMs(timeStr: String): Long {
-        return runCatching {
-            var ms = 0L
-            val parts = timeStr.split(":")
-            if (parts.size == 3) {
-                ms += (parts[0].toLongOrNull() ?: 0L) * 3600000L
-                ms += (parts[1].toLongOrNull() ?: 0L) * 60000L
-                val secParts = parts[2].split(".")
-                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
-                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
-            } else if (parts.size == 2) {
-                ms += (parts[0].toLongOrNull() ?: 0L) * 60000L
-                val secParts = parts[1].split(".")
-                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
-                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
-            } else if (parts.size == 1) {
-                val secParts = parts[0].split(".")
-                ms += (secParts[0].toLongOrNull() ?: 0L) * 1000L
-                if (secParts.size > 1) ms += secParts[1].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
-            }
-            ms
-        }.getOrDefault(0L)
-    }
-
-    private fun httpGet(urlString: String): String? {
-        try {
-            val url = URL(urlString)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.readTimeout = 3000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            if (urlString.contains("163.com")) conn.setRequestProperty("Referer", "https://music.163.com/")
-            else if (urlString.contains("qq.com")) conn.setRequestProperty("Referer", "https://y.qq.com/")
-            if (conn.responseCode == 200) return conn.inputStream.bufferedReader().readText()
-        } catch (e: Exception) {}
-        return null
-    }
-
-    private fun fetchAppleOfficial(trackId: String, country: String): String? {
+    private suspend fun fetchAppleOfficial(trackId: String, country: String): String? = withContext(Dispatchers.IO) {
         val url = URL("https://amp-api.music.apple.com/v1/catalog/$country/songs/$trackId/lyrics")
+        var conn: HttpURLConnection? = null
         try {
-            val conn = url.openConnection() as HttpURLConnection
-            conn.readTimeout = 3000
+            conn = url.openConnection() as HttpURLConnection
+            conn.readTimeout = 4000
+            conn.connectTimeout = 4000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.setRequestProperty("Authorization", "Bearer $APPLE_TOKEN")
             conn.setRequestProperty("Origin", "https://music.apple.com")
             if (conn.responseCode == 200) {
-                val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                return json.optJSONArray("data")?.getJSONObject(0)?.optJSONObject("attributes")?.optString("ttml")
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                return@withContext json.optJSONArray("data")?.getJSONObject(0)?.optJSONObject("attributes")?.optString("ttml")
             }
-        } catch (e: Exception) {}
-        return null
+        } catch (e: Exception) {
+        } finally {
+            conn?.disconnect()
+        }
+        null
     }
 
-    private fun fetchQqQrc(songObj: JSONObject): Pair<String?, String?> {
+    private suspend fun fetchQqQrc(context: Context?, songObj: JSONObject): Pair<String?, String?> = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
             val songName = songObj.optString("songname")
             val artist = songObj.optJSONArray("singer")?.optJSONObject(0)?.optString("name") ?: ""
@@ -686,21 +661,28 @@ object TtmlFetcher {
             }
 
             val url = URL("https://u.y.qq.com/cgi-bin/musicu.fcg")
-            val conn = url.openConnection() as HttpURLConnection
+            conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.readTimeout = 3000
+            conn.readTimeout = 4000
+            conn.connectTimeout = 4000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
-            conn.outputStream.write(bodyObj.toString().toByteArray())
+            conn.outputStream.use { os ->
+                val bytes = bodyObj.toString().toByteArray()
+                os.write(bytes, 0, bytes.size)
+            }
 
             if (conn.responseCode == 200) {
-                val resJson = JSONObject(conn.inputStream.bufferedReader().readText())
+                val resJson = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 val dataObj = resJson.optJSONObject("request")?.optJSONObject("data")
-                return Pair(dataObj?.optString("lyric"), dataObj?.optString("trans"))
+                return@withContext Pair(dataObj?.optString("lyric"), dataObj?.optString("trans"))
             }
-        } catch (e: Exception) {}
-        return Pair(null, null)
+        } catch (e: Exception) {
+        } finally {
+            conn?.disconnect()
+        }
+        Pair(null, null)
     }
 
     private fun decryptQrc(hexStr: String): String? {
@@ -723,5 +705,25 @@ object TtmlFetcher {
             Log.e(TAG, "Native QQMusicDES Decrypt Error", e)
         }
         return null
+    }
+
+    private suspend fun httpGet(urlString: String, timeoutMs: Int = 10000): String? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
+        try {
+            val url = URL(urlString)
+            conn = url.openConnection() as HttpURLConnection
+            conn.readTimeout = timeoutMs
+            conn.connectTimeout = timeoutMs
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            if (urlString.contains("163.com")) conn.setRequestProperty("Referer", "https://music.163.com/")
+            else if (urlString.contains("qq.com")) conn.setRequestProperty("Referer", "https://y.qq.com/")
+            if (conn.responseCode == 200) {
+                return@withContext conn.inputStream.bufferedReader().use { it.readText() }
+            }
+        } catch (e: Exception) {
+        } finally {
+            conn?.disconnect()
+        }
+        null
     }
 }
