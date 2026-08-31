@@ -22,34 +22,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 
-// 1. 移除这里的 (private val targetDir: File)，改为空构造函数
-class DownloadSheetFragment : BottomSheetDialogFragment() {
-    
-    // 2. 延迟获取 targetDir
-    private val targetDir: File by lazy {
-        val path = arguments?.getString("KEY_TARGET_DIR") ?: ""
-        File(path)
-    }
-
+class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFragment() {
     private lateinit var etInput: EditText
     private lateinit var btnSearch: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var recyclerView: RecyclerView
-    private lateinit var rgQuality: RadioGroup 
+    private lateinit var rgQuality: RadioGroup // 🌟 绑定音质选项
     private val resultList = mutableListOf<UniversalDownloadEngine.NetSongItem>()
     
+    // 🌟 内存防漏核心：持有当前正在进行的搜索任务
     private var searchJob: Job? = null 
-
-    // 3. 添加 companion object 规范实例化方法
-    companion object {
-        fun newInstance(targetDir: File): DownloadSheetFragment {
-            return DownloadSheetFragment().apply {
-                arguments = Bundle().apply {
-                    putString("KEY_TARGET_DIR", targetDir.absolutePath)
-                }
-            }
-        }
-    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_download_sheet, container, false)
@@ -76,6 +58,7 @@ class DownloadSheetFragment : BottomSheetDialogFragment() {
             override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
                 val item = resultList[position]
                 
+                // 🌟 将毫秒换算为 MM:SS 格式，列表显示更加直观
                 val totalSeconds = item.durationMs / 1000
                 val minutes = totalSeconds / 60
                 val seconds = totalSeconds % 60
@@ -90,6 +73,7 @@ class DownloadSheetFragment : BottomSheetDialogFragment() {
         btnSearch.setOnClickListener {
             val input = etInput.text.toString()
             if (input.isNotBlank()) {
+                // 🌟 细节优化：点击搜索后自动隐藏软键盘，留出空间看 80 首列表
                 val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(etInput.windowToken, 0)
 
@@ -98,9 +82,11 @@ class DownloadSheetFragment : BottomSheetDialogFragment() {
                 recyclerView.visibility = View.GONE
                 progressBar.visibility = View.VISIBLE
                 
+                // 🌟 性能核弹 1：如果用户狂点搜索，立刻切断上一个网络请求，防止内存溢出！
                 searchJob?.cancel()
                 
                 searchJob = lifecycleScope.launch {
+                    // 🌟 性能核弹 2：在发起新请求前，立刻清空旧的数据对象，为 GC 腾出空间
                     resultList.clear()
                     recyclerView.adapter?.notifyDataSetChanged()
 
@@ -126,7 +112,6 @@ class DownloadSheetFragment : BottomSheetDialogFragment() {
         Toast.makeText(context, "正在提取 [${song.format}] 直链...", Toast.LENGTH_SHORT).show()
         
         lifecycleScope.launch {
-            // 4. 这里依然可以直接使用 targetDir，因为上面通过 by lazy 初始化了
             val file = UniversalDownloadEngine.downloadSong(requireContext(), song, targetDir) { }
             
             isCancelable = true 
