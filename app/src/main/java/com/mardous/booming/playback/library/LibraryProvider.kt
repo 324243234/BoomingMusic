@@ -36,7 +36,7 @@ import com.mardous.booming.util.Preferences
 
 class LibraryProvider(private val repository: Repository) {
 
-    // ?? CarWith ×¨ÊôÀ¹½ØÆ÷£º½áºÏÔ­×÷ÕßµÄĞÂ°æ¹¹½¨Æ÷ÓëÄãµÄ·À¶ÏÁ¬×°¼×
+    // ?? CarWith ä¸“å±æ‹¦æˆªå™¨ï¼šç»“åˆåŸä½œè€…çš„æ–°ç‰ˆæ„å»ºå™¨ä¸ä½ çš„é˜²æ–­è¿è£…ç”²
     private fun Song.toPlayableMediaItemWithArmor(mediaId: String? = null): MediaItem {
         val baseItem = if (mediaId != null) {
             buildPlayableMediaItem(this, mediaId)
@@ -44,14 +44,14 @@ class LibraryProvider(private val repository: Repository) {
             buildPlayableMediaItem(this)
         }
 
-        // ?? CarWith ·À¶ÏÁ¬×°¼×
+        // ?? CarWith é˜²æ–­è¿è£…ç”²
         if (this.duration == 0L || this.data.contains(".m3u8")) {
             return baseItem.buildUpon()
                 .setLiveConfiguration(
                     MediaItem.LiveConfiguration.Builder()
                         .setMaxPlaybackSpeed(1.02f) 
                         .setMinPlaybackSpeed(0.98f) 
-                        .setTargetOffsetMs(5000) // ÑÓ³Ù 5s Æğ²¥£¬¶Ô¿¹¹ıËíµÀÍøÂç¶¶¶¯
+                        .setTargetOffsetMs(5000) // å»¶è¿Ÿ 5s èµ·æ’­ï¼Œå¯¹æŠ—è¿‡éš§é“ç½‘ç»œæŠ–åŠ¨
                         .build()
                 ).build()
         }
@@ -101,7 +101,7 @@ class LibraryProvider(private val repository: Repository) {
     ): MediaItemsWithStartPosition? {
         try {
             val mediaItem = mediaItems.single()
-            // ?? ÍêÃÀÈÚÈë×÷Õß×îĞÂ¸üĞÂ£ºÖ§³ÖÓïÒôÖúÊÖµÄ¿Õ²éÑ¯Ö¸Áî
+            // ?? å®Œç¾èå…¥ä½œè€…æœ€æ–°æ›´æ–°ï¼šæ”¯æŒè¯­éŸ³åŠ©æ‰‹çš„ç©ºæŸ¥è¯¢æŒ‡ä»¤
             if (mediaItem.mediaId == MediaItem.DEFAULT_MEDIA_ID) {
                 val songs = if (mediaItem.requestMetadata.searchQuery?.trim() == "") {
                     repository.allSongs()
