@@ -358,7 +358,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             }
 			
 			// 🌟 新增：音质切换按钮 
-            val toggleQualityItem = menu.findItem(R.id.action_toggle_download_quality) ?: menu.add(Menu.NONE, R.id.action_toggle_download_quality, 52, "下载音质")
+            val toggleQualityItem = menu.findItem(R.id.action_toggle_download_quality) ?: menu.add(Menu.NONE, R.id.action_toggle_download_quality, 5, "下载音质")
             toggleQualityItem.apply {
                 title = "↓"
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
