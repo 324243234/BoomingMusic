@@ -272,7 +272,7 @@ private fun handleNeteaseFavorite(context: Context, song: Song) {
     // 🌟 在括号最前面加上 context,
     val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "lossless")
     targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
-}
+} 
 
 if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
     // 🌟 在括号最前面加上 context,
