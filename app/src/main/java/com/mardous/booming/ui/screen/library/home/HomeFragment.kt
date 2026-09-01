@@ -25,6 +25,9 @@ import com.mardous.booming.data.local.room.SongEntity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuInflater
@@ -200,7 +203,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         val lastDate = prefs.getString("last_daily_date", "")
         val plName = "网易云今日推荐"
 
-        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 // 1. 明确声明类型，防止 Kotlin 泛型推导崩溃
                 val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
@@ -208,7 +211,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
                 if (playlistId != null && lastDate == todayStr) {
                     // 今日已拉取过，直接秒开本地歌单
-                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    withContext(Dispatchers.Main) {
                         findNavController().navigate(
                             R.id.nav_playlist_detail, 
                             com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
@@ -223,22 +226,22 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     playlistId = null
                 }
 
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(appContext, "正在生成今日推荐歌单...", android.widget.Toast.LENGTH_SHORT).show()
                 }
 
                 val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend(appContext)
                 if (dailyJsonList.isEmpty()) {
-                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    withContext(Dispatchers.Main) {
                         android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络或Cookie", android.widget.Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
 
-                // 🌟 核心修复 1：加入 coroutineScope 完美解决 async 语法编译报错
-                val realUrlsMap = kotlinx.coroutines.coroutineScope {
+                // 🌟 核心修复 1：利用 coroutineScope 和导入后的纯净 async 完美解决编译报错
+                val realUrlsMap = coroutineScope {
                     dailyJsonList.map { item ->
-                        kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+                        async(Dispatchers.IO) {
                             val sid = item.optLong("id", 0L)
                             var finalUrl = "https://music.163.com/song/media/outer/url?id=$sid.mp3"
                             if (sid != 0L) {
@@ -306,14 +309,14 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                 prefs.edit().putString("last_daily_date", todayStr).apply()
 
                 // 4. 丝滑跳转到歌单详情页
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     findNavController().navigate(
                         R.id.nav_playlist_detail, 
                         com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
                     )
                 }
             } catch (e: Exception) {
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     val errorMsg = e.message ?: "网络超时或拒绝访问"
                     android.widget.Toast.makeText(appContext, "加载失败: $errorMsg", android.widget.Toast.LENGTH_LONG).show()
                 }
