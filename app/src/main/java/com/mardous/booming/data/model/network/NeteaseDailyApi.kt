@@ -98,7 +98,8 @@ object NeteaseDailyApi {
         // 通道 1：优先通过新版 /song/url/v1 批量解析官方高音质 CDN 直链
         try {
             val idsStr = songIds.joinToString(",")
-            val url = buildUrlWithCookie("$baseUrl/song/url/v1?id=$idsStr&level=exhigh", cookie)
+            // 🌟 降级为标准音质，确保所有日推免流歌曲100%下发真实播放直链
+           val url = buildUrlWithCookie("$baseUrl/song/url/v1?id=$idsStr&level=standard", cookie)
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 15000
