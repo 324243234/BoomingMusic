@@ -25,8 +25,6 @@ import com.mardous.booming.data.local.room.SongEntity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import android.os.Bundle
 import android.view.Menu
@@ -90,7 +88,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
     private var _binding: HomeBinding? = null
     private val binding get() = _binding!!
-    // 🌟 注入 Repository 以便将网络日推转化为本地可视歌单
     private val repository: Repository by inject()
 
     private var homeAdapter: HomeAdapter? = null
@@ -162,7 +159,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         binding.lastAdded.setOnClickListener(this)
         binding.history.setOnClickListener(this)
         binding.shuffleButton.setOnClickListener(this)
-        // 🌟 核心修复：强制从 binding.root 视图树中精确查找
         binding.root.findViewById<View>(R.id.dailyRecommendCard)?.setOnClickListener {
             handleDailyRecommendClick()
         }
@@ -195,7 +191,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         }
     }
 
-    // 🌟 将网络请求转化为带“自动清盘”功能的本地临时歌单 (完美洁癖版)
     private fun handleDailyRecommendClick() {
         val appContext = requireContext().applicationContext
         val prefs = appContext.getSharedPreferences("netease_api_prefs", android.content.Context.MODE_PRIVATE)
@@ -205,12 +200,10 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 1. 明确声明类型，防止 Kotlin 泛型推导崩溃
                 val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
                 var playlistId: Long? = existingPlaylists.firstOrNull()?.playListId
 
                 if (playlistId != null && lastDate == todayStr) {
-                    // 今日已拉取过，直接秒开本地歌单
                     withContext(Dispatchers.Main) {
                         findNavController().navigate(
                             R.id.nav_playlist_detail, 
@@ -220,7 +213,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 2. 🌟 阅后即焚：调用底层合法的 deletePlaylists 接口，执行真正的物理清除！不留任何历史垃圾！
                 if (existingPlaylists.isNotEmpty() && lastDate != todayStr) {
                     runCatching { repository.deletePlaylists(existingPlaylists) }
                     playlistId = null
@@ -238,28 +230,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 🌟 核心修复 1：利用 coroutineScope 和导入后的纯净 async 完美解决编译报错
-                val realUrlsMap = coroutineScope {
-                    dailyJsonList.map { item ->
-                        async(Dispatchers.IO) {
-                            val sid = item.optLong("id", 0L)
-                            var finalUrl = "https://music.163.com/song/media/outer/url?id=$sid.mp3"
-                            if (sid != 0L) {
-                                try {
-                                    val conn = java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection
-                                    conn.instanceFollowRedirects = false // 拦截 302 自动跳转
-                                    conn.connectTimeout = 3000
-                                    conn.requestMethod = "HEAD"
-                                    val loc = conn.getHeaderField("Location")
-                                    if (!loc.isNullOrEmpty()) {
-                                        finalUrl = loc.replace("http://", "https://") // 强转 HTTPS 避开安卓封杀
-                                    }
-                                } catch (e: Exception) {}
-                            }
-                            sid to finalUrl
-                        }
-                    }.map { it.await() }.toMap()
-                }
+                // 🌟 干净调用网络层批量解析，杜绝 Fragment 内的协程编译错误
+                val songIds = dailyJsonList.map { it.optLong("id", 0L) }.filter { it != 0L }
+                val realUrlsMap = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(appContext, songIds)
 
                 playlistId = repository.createPlaylist(PlaylistEntity(playlistName = plName))
                 val songEntities = mutableListOf<SongEntity>()
@@ -275,11 +248,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     } else "未知歌手"
 
                     val albumName = item.optJSONObject("al")?.optString("name") ?: item.optJSONObject("album")?.optString("name") ?: "未知专辑"
-                    
-                    // 🌟 核心修复 2：如果解析不到时长，强行兜底 200 秒（200000L），绝对不让播放器把它当成“未知电台”！
                     val durationMs = item.optLong("dt", item.optLong("duration", 200000L)) 
                     
-                    // 提取已经并发解密好的 HTTPS 真实播放链接
+                    // 存储直接可播放的 HTTPS 直链
                     val playUrl = realUrlsMap[songId] ?: "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
                     songEntities.add(
@@ -288,7 +259,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                             title = item.optString("name", "未知歌曲"),
                             artistName = artistName,
                             albumName = albumName,
-                            duration = durationMs, // 修复电台错乱的关键
+                            duration = durationMs,
                             data = playUrl,
                             playlistCreatorId = playlistId!!,
                             trackNumber = 0,
@@ -304,11 +275,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     )
                 }
 
-                // 批量插入数据库并更新日期记录
                 repository.insertSongsInPlaylist(songEntities)
                 prefs.edit().putString("last_daily_date", todayStr).apply()
 
-                // 4. 丝滑跳转到歌单详情页
                 withContext(Dispatchers.Main) {
                     findNavController().navigate(
                         R.id.nav_playlist_detail, 

@@ -1,9 +1,9 @@
 package com.mardous.booming.data.network
 
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -32,7 +32,7 @@ object NeteaseDailyApi {
             conn.connectTimeout = 45000 
             conn.readTimeout = 45000
             conn.requestMethod = "GET"
-            conn.responseCode // 触发请求
+            conn.responseCode
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
@@ -86,36 +86,78 @@ object NeteaseDailyApi {
         }
         return@withContext false
     }
-	
-	// 🌟 新增：批量解析真实 HTTPS 播放地址，0.5秒内搞定30首歌
-    // 🌟 核心：并发拦截 outer/url 的 302 重定向，完美突破 VIP 30秒限制并强转 HTTPS
-    suspend fun fetchRealUrls(songIds: List<Long>): Map<Long, String> = withContext(Dispatchers.IO) {
+
+    // 🌟 核心：批量解析直接可播放的 HTTPS 直链（解决 ExoPlayer 跨协议重定向失败与卡顿）
+    suspend fun fetchRealUrls(context: Context, songIds: List<Long>): Map<Long, String> = withContext(Dispatchers.IO) {
         val urlMap = mutableMapOf<Long, String>()
-        val deferreds = songIds.map { id ->
-            async {
-                try {
-                    // 利用网易云外链通道绕过 VIP 限制
-                    val outerUrl = java.net.URL("https://music.163.com/song/media/outer/url?id=$id.mp3")
-                    val conn = outerUrl.openConnection() as java.net.HttpURLConnection
-                    conn.instanceFollowRedirects = false // 拦截 302 重定向
-                    conn.connectTimeout = 3000
-                    conn.readTimeout = 3000
-                    conn.requestMethod = "HEAD"
-                    val location = conn.getHeaderField("Location")
-                    if (!location.isNullOrEmpty()) {
-                        // 拿到真实底层 IP 并强转 HTTPS 突破安卓限制
-                        Pair(id, location.replace("http://", "https://"))
-                    } else null
-                } catch (e: Exception) { null }
+        if (songIds.isEmpty()) return@withContext urlMap
+
+        val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
+        val cookie = ApiConfigManager.getCookie(context)
+
+        // 通道 1：优先通过 Node API 的 /song/url 批量解析官方 CDN 直链
+        try {
+            val idsStr = songIds.joinToString(",")
+            val url = buildUrlWithCookie("$baseUrl/song/url?id=$idsStr", cookie)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+
+            if (conn.responseCode == 200) {
+                val jsonRes = conn.inputStream.bufferedReader().use { it.readText() }
+                val dataArr = JSONObject(jsonRes).optJSONArray("data")
+                if (dataArr != null) {
+                    for (i in 0 until dataArr.length()) {
+                        val obj = dataArr.getJSONObject(i)
+                        val id = obj.optLong("id", 0L)
+                        val realUrl = obj.optString("url", "")
+                        if (id != 0L && realUrl.isNotEmpty() && realUrl != "null") {
+                            urlMap[id] = realUrl.replace("http://", "https://")
+                        }
+                    }
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 通道 2：对未命中直链的歌曲，使用带 Headers 的 GET 请求并发拦截 302 Location
+        val missingIds = songIds.filter { !urlMap.containsKey(it) || urlMap[it].isNullOrEmpty() }
+        if (missingIds.isNotEmpty()) {
+            val deferreds = missingIds.map { id ->
+                async {
+                    var finalUrl: String? = null
+                    var conn: HttpURLConnection? = null
+                    try {
+                        val outerUrl = URL("https://music.163.com/song/media/outer/url?id=$id.mp3")
+                        conn = outerUrl.openConnection() as HttpURLConnection
+                        conn.instanceFollowRedirects = false
+                        conn.connectTimeout = 5000
+                        conn.readTimeout = 5000
+                        conn.requestMethod = "GET"
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                        val location = conn.getHeaderField("Location")
+                        if (!location.isNullOrEmpty() && !location.contains("music.163.com/404")) {
+                            finalUrl = location.replace("http://", "https://")
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    } finally {
+                        conn?.disconnect()
+                    }
+                    id to finalUrl
+                }
+            }
+            deferreds.awaitAll().forEach { (id, directUrl) ->
+                if (!directUrl.isNullOrEmpty()) {
+                    urlMap[id] = directUrl
+                }
             }
         }
-        
-        // 等待所有并发请求完成（30首歌不到 0.5 秒即可解析完毕）
-        deferreds.awaitAll().forEach { pair ->
-            if (pair != null) {
-                urlMap[pair.first] = pair.second
-            }
-        }
+
         return@withContext urlMap
     }
 }
