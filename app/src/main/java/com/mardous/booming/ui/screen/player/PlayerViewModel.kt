@@ -4,21 +4,12 @@
 
 package com.mardous.booming.ui.screen.player
 
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
-import com.mardous.booming.core.model.AudioSourceType
-import com.mardous.booming.core.model.getAudioSourceType
-import android.os.Environment
-import android.widget.Toast
-import java.io.File
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.liveData
 import androidx.lifecycle.viewModelScope
@@ -31,10 +22,12 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
+import com.mardous.booming.core.model.AudioSourceType
 import com.mardous.booming.core.model.MediaEvent
 import com.mardous.booming.core.model.PaletteColor
 import com.mardous.booming.core.model.action.QueueClearingBehavior
 import com.mardous.booming.core.model.action.SongClickBehavior
+import com.mardous.booming.core.model.getAudioSourceType
 import com.mardous.booming.core.model.player.MetadataField
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
@@ -72,28 +65,17 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
+import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 1. 列表转换：加入 Context 和协程，拦截并解析网易云流媒体真实 URL
-private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
-    mapNotNull { song ->
-        song.toResolvedMediaItem(context)
-    }
-}
-
-// 🌟 2. 单曲转换：通过 ExoPlayer Builder 直接覆盖 Uri，彻底避开 Song.copy 的参数报错！
-private suspend fun Song.toResolvedMediaItem(context: Context): MediaItem? = withContext(Dispatchers.IO) {
-    val originalItem = this@toResolvedMediaItem.toMediaItem()
-    if (originalItem == MediaItem.EMPTY) return@withContext null
-    
-    if (this@toResolvedMediaItem.genreName == "Netease" && this@toResolvedMediaItem.size > 0L) {
-        val realUrl = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealSongUrl(context, this@toResolvedMediaItem.size)
-        if (!realUrl.isNullOrEmpty()) {
-            return@withContext originalItem.buildUpon().setUri(realUrl).build()
-        }
-    }
-    return@withContext originalItem
+// 🌟 最干净的列表转换，直接读取数据库中已经解析好的真实 HTTPS 链接
+private fun List<Song>.toMediaItems() = mapNotNull { song ->
+    song.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -269,32 +251,21 @@ class PlayerViewModel(
         }
     }
 
+    // 🌟 已更新：红心收藏时彻底废弃搜索，直接使用歌曲的真实网易云 ID 极速下载！
     private fun handleNeteaseFavorite(context: Context, song: Song) {
-        val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
-        Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "❤️ 正在同步并极速下载...", Toast.LENGTH_SHORT).show()
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val realNeteaseId = song.size 
-                if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(context, realNeteaseId)
+                if (realNeteaseId > 0) {
+                    com.mardous.booming.data.network.NeteaseDailyApi.likeSong(context, realNeteaseId)
+                }
                 
                 val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
                 if (!targetDir.exists()) targetDir.mkdirs()
 
-                val query = "${song.artistName} ${song.title}"
-                var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
-
-                if (targetQuality == "flac") {
-                    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "lossless")
-                    targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
-                } 
-
-                if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
-                    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "exhigh")
-                    targetItem = results.firstOrNull()
-                }
-
-                val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
+                val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
                     id = realNeteaseId, 
                     title = song.title,
                     artist = song.artistName,
@@ -302,30 +273,25 @@ class PlayerViewModel(
                     picUrl = "", 
                     durationMs = song.duration,
                     year = "",
-                    format = "mp3",
-                    fileSizeStr = "标准音质兜底",
-                    requestedLevel = targetQuality 
+                    format = "flac", // 优先请求高音质
+                    fileSizeStr = "红心极速直连",
+                    requestedLevel = "lossless" 
                 )
 
-                val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
+                val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, downloadItem, targetDir) { _ -> }
 
                 if (downloadedFile != null && downloadedFile.exists()) {
-                    kotlinx.coroutines.delay(1500)
+                    kotlinx.coroutines.delay(1000)
                     val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
                     if (localSong != Song.emptySong) {
                         repository.toggleFavorite(localSong) 
                     }
                     
                     withContext(Dispatchers.Main) { 
-                        val qualityText = when {
-                            finalDownloadItem.format.equals("flac", ignoreCase = true) -> "无损 FLAC"
-                            targetItem != null -> "320k 高级 MP3"
-                            else -> "128k 标准音质"
-                        }
-                        Toast.makeText(context, "✅ 已保存 [$qualityText]", Toast.LENGTH_SHORT).show() 
+                        Toast.makeText(context, "✅ 红心收藏并极速下载成功！", Toast.LENGTH_SHORT).show() 
                     }
                 } else {
-                    withContext(Dispatchers.Main) { Toast.makeText(context, "同步成功，下载失败", Toast.LENGTH_SHORT).show() }
+                    withContext(Dispatchers.Main) { Toast.makeText(context, "❤️ 仅同步红心，下载受限", Toast.LENGTH_SHORT).show() }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -434,20 +400,20 @@ class PlayerViewModel(
         position: Int = 0,
         startPlaying: Boolean = true,
         shuffleMode: OpenShuffleMode = OpenShuffleMode.Remember
-    ) = viewModelScope.launch {
+    ) {
         mediaController?.let { controller ->
             var shuffleModeEnabled = controller.shuffleModeEnabled
             if (!preferences.getBoolean(REMEMBER_SHUFFLE_MODE, true)) {
                 shuffleModeEnabled = false
             }
-            val mediaItems = withContext(IO) { queue.toMediaItems(appContext) }
-            val shuffleMode = when (shuffleMode) {
+            val mediaItems = queue.toMediaItems()
+            val finalShuffleMode = when (shuffleMode) {
                 OpenShuffleMode.On -> true
                 OpenShuffleMode.Off -> false
                 OpenShuffleMode.Remember -> shuffleModeEnabled
             }
             if (mediaItems.isNotEmpty()) {
-                controller.shuffleModeEnabled = shuffleMode
+                controller.shuffleModeEnabled = finalShuffleMode
                 controller.setMediaItems(mediaItems, position, C.TIME_UNSET)
                 controller.playWhenReady = startPlaying
                 controller.prepare()
@@ -455,9 +421,9 @@ class PlayerViewModel(
         }
     }
 
-    fun openAndShuffleQueue(queue: List<Song>) = viewModelScope.launch {
+    fun openAndShuffleQueue(queue: List<Song>) {
         mediaController?.let { controller ->
-            val mediaItems = withContext(IO) { queue.toMediaItems(appContext) }
+            val mediaItems = queue.toMediaItems()
             if (mediaItems.isNotEmpty()) {
                 controller.shuffleModeEnabled = true
                 controller.setMediaItems(mediaItems, true)
@@ -473,7 +439,7 @@ class PlayerViewModel(
         sortMode: SongSortMode
     ) = liveData {
         val mediaItems = withContext(IO) {
-            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems(appContext)
+            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems()
         }
         if (mediaItems.isNotEmpty()) {
             mediaController?.let { controller ->
@@ -501,7 +467,7 @@ class PlayerViewModel(
         if (shuffleOperationState.value.isIdle) {
             _shuffleOperationState.value = ShuffleOperationState(mode, ShuffleOperationState.Status.InProgress)
             val mediaItems = withContext(IO) {
-                shuffleManager.applySmartShuffle(songs, mode).toMediaItems(appContext)
+                shuffleManager.applySmartShuffle(songs, mode).toMediaItems()
             }
             if (mediaItems.isNotEmpty()) {
                 mediaController?.let { controller ->
@@ -565,21 +531,18 @@ class PlayerViewModel(
         }
     }
 
-    // 🌟 修改点：给所有的“下一首”等非挂起函数补上协程支持，避免编译期 Suspend 报错
     fun queueNext(song: Song) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
-                viewModelScope.launch {
-                    var nextIndex = position.getIndexForPosition(position.next)
-                    if (nextIndex == C.INDEX_UNSET) {
-                        nextIndex = controller.mediaItemCount
-                    }
-                    val item = song.toResolvedMediaItem(appContext)
-                    if (item != null) {
-                        controller.addMediaItem(nextIndex, item)
-                    }
+                var nextIndex = position.getIndexForPosition(position.next)
+                if (nextIndex == C.INDEX_UNSET) {
+                    nextIndex = controller.mediaItemCount
+                }
+                val item = song.toMediaItem()
+                if (item != MediaItem.EMPTY) {
+                    controller.addMediaItem(nextIndex, item)
                 }
             }
         }
@@ -590,14 +553,12 @@ class PlayerViewModel(
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                viewModelScope.launch {
-                    var nextIndex = position.getIndexForPosition(position.next)
-                    if (nextIndex == C.INDEX_UNSET) {
-                        nextIndex = controller.mediaItemCount
-                    }
-                    val items = withContext(IO) { songs.toMediaItems(appContext) }
-                    controller.addMediaItems(nextIndex, items)
+                var nextIndex = position.getIndexForPosition(position.next)
+                if (nextIndex == C.INDEX_UNSET) {
+                    nextIndex = controller.mediaItemCount
                 }
+                val items = songs.toMediaItems()
+                controller.addMediaItems(nextIndex, items)
             }
         }
     }
@@ -607,15 +568,13 @@ class PlayerViewModel(
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
-                viewModelScope.launch {
-                    val toIndex = position.getIndexForPosition(toPosition)
-                    val item = song.toResolvedMediaItem(appContext)
-                    if (item != null) {
-                        if (toPosition >= 0 && toIndex >= 0) {
-                            controller.addMediaItem(toIndex, item)
-                        } else {
-                            controller.addMediaItem(item)
-                        }
+                val toIndex = position.getIndexForPosition(toPosition)
+                val item = song.toMediaItem()
+                if (item != MediaItem.EMPTY) {
+                    if (toPosition >= 0 && toIndex >= 0) {
+                        controller.addMediaItem(toIndex, item)
+                    } else {
+                        controller.addMediaItem(item)
                     }
                 }
             }
@@ -627,10 +586,8 @@ class PlayerViewModel(
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                viewModelScope.launch {
-                    val items = withContext(IO) { songs.toMediaItems(appContext) }
-                    controller.addMediaItems(items)
-                }
+                val items = songs.toMediaItems()
+                controller.addMediaItems(items)
             }
         }
     }

@@ -234,6 +234,11 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     }
                     return@launch
                 }
+				
+				val idsList = dailyJsonList.map { it.optLong("id", 0L) }.filter { it != 0L }
+                val realUrlsMap = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(idsList)
+				//val idsStr = dailyJsonList.map { it.optLong("id", 0L) }.filter { it != 0L }.joinToString(",")
+                //val realUrlsMap = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(appContext, idsStr)
 
                 // 3. 重建干干净净的今日专属歌单
                 playlistId = repository.createPlaylist(PlaylistEntity(playlistName = plName))
@@ -250,7 +255,8 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     } else "未知歌手"
 
                     val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
-                    val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+                    //val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+					val playUrl = realUrlsMap[songId] ?: "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
                     // 🌟 终极错位修复：完全使用命名参数，将 size 强制重置为 0L！
                     songEntities.add(
