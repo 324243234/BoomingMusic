@@ -255,12 +255,12 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
     override fun onMediaContentChanged() { libraryViewModel.forceReload(ReloadType.Suggestions) }
     override fun onFavoriteContentChanged() { libraryViewModel.forceReload(ReloadType.Suggestions) }
 
-    @Suppress("UNCHECKED_CAST")
+   @Suppress("UNCHECKED_CAST")
     override fun createSuggestionAdapter(suggestion: Suggestion): RecyclerView.Adapter<*> {
         return when (suggestion.type) {
-            ContentType.TopArtists, ContentType.RecentArtists -> ArtistAdapter(mainActivity, suggestion.items as List<Artist>, R.layout.item_artist, this)
-            ContentType.TopAlbums, ContentType.RecentAlbums -> AlbumAdapter(mainActivity, suggestion.items as List<Album>, R.layout.item_album_gradient, this)
-            ContentType.Favorites, ContentType.NotRecentlyPlayed -> SongAdapter(mainActivity, suggestion.items as List<Song>, R.layout.item_image, this)
+            ContentType.TopArtists, ContentType.RecentArtists -> ArtistAdapter(mainActivity, suggestion.items as List<Artist>, R.layout.item_artist, callback = this)
+            ContentType.TopAlbums, ContentType.RecentAlbums -> AlbumAdapter(mainActivity, suggestion.items as List<Album>, R.layout.item_album_gradient, callback = this)
+            ContentType.Favorites, ContentType.NotRecentlyPlayed -> SongAdapter(mainActivity, suggestion.items as List<Song>, R.layout.item_image, callback = this)
             else -> throw IllegalArgumentException("Unexpected suggestion type")
         }
     }
