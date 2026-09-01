@@ -74,43 +74,62 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极核心：拦截假路径，替换为真实网络直链
+// 🌟 终极核心：抛弃服务端 API 解析，改为客户端真实 IP 即时嗅探，彻底根除 403 IP 限制！
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
-    val neteaseIds = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }.map { it.size }
-    
-    // 即时向接口索要最新鲜的 CDN 链接
-    val freshUrls = if (neteaseIds.isNotEmpty()) {
-        com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(context, neteaseIds)
-    } else {
-        emptyMap()
-    }
-
     mapNotNull { song ->
-        // 只要是网易云歌曲，直接拦截，抛弃它原本那个假的本地路径
-        if (song.genreName == "Netease" && song.size > 0L) {
-            var finalUrl = freshUrls[song.size]
-            if (finalUrl.isNullOrEmpty()) {
-                finalUrl = "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
-            }
+        var finalUrl = song.data ?: ""
 
-            // 强行构建 MediaItem，注入真实网络链接和完整的 UI 元数据
-            MediaItem.Builder()
-                .setMediaId(song.id.toString()) // 必须保留原 ID，让 UI 能对上号
-                .setUri(Uri.parse(finalUrl))
-                .setMediaMetadata(
-                    androidx.media3.common.MediaMetadata.Builder()
-                        .setTitle(song.title)
-                        .setArtist(song.artistName)
-                        .setAlbumTitle(song.albumName)
-                        .setAlbumArtist(song.artistName)
-                        .setGenre("Netease")
-                        .build()
-                )
-                .build()
-        } else {
-            // 不是网易云的普通本地歌曲，走正常逻辑
-            song.toMediaItem().takeUnless { it == MediaItem.EMPTY }
+        // 1. 剔除之前伪装的假本地路径特征，强制重新解析
+        if (finalUrl.startsWith("/storage/emulated") || finalUrl.startsWith("/http") || finalUrl.startsWith("netease://")) {
+            finalUrl = ""
         }
+
+        // 2. 手机客户端独立解析逻辑（避免服务器 IP 异地封锁）
+        if (song.genreName == "Netease" && song.size > 0L) {
+            val songId = song.size
+
+            // 第一步：用手机真实 IP 嗅探官方免流通道（同 IP 请求绝不触发 403）
+            try {
+                val outerUrl = java.net.URL("https://music.163.com/song/media/outer/url?id=$songId.mp3")
+                val conn = outerUrl.openConnection() as java.net.HttpURLConnection
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 3000
+                conn.requestMethod = "HEAD"
+                
+                if (conn.responseCode == 302 || conn.responseCode == 301) {
+                    val loc = conn.getHeaderField("Location")
+                    if (!loc.isNullOrEmpty() && !loc.contains("404")) {
+                        // 强制 HTTPS 且替换为受信任的安全 CDN 节点
+                        finalUrl = loc.replace("http://", "https://")
+                            .replace(Regex("m\\d+c?\\.music\\.126\\.net"), "m7c.music.126.net")
+                    }
+                }
+            } catch (e: Exception) { }
+
+            // 第二步：VIP/灰名单歌曲的官方 404 封锁兜底（强制切到开源聚合解析源）
+            if (finalUrl.isEmpty()) {
+                finalUrl = "https://api.injahow.cn/meting/?server=netease&type=url&id=$songId"
+            }
+        } else {
+            if (finalUrl.isEmpty()) finalUrl = song.data ?: ""
+        }
+
+        if (finalUrl.isEmpty()) return@mapNotNull null
+
+        // 3. 强行注入 MediaMetadata 完美保留歌名、歌手，彻底防电台误判！
+        MediaItem.Builder()
+            .setMediaId(song.id.toString())
+            .setUri(Uri.parse(finalUrl))
+            .setMediaMetadata(
+                androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artistName)
+                    .setAlbumTitle(song.albumName)
+                    .setAlbumArtist(song.artistName)
+                    .setGenre(song.genreName)
+                    .build()
+            )
+            .build()
     }
 }
 
