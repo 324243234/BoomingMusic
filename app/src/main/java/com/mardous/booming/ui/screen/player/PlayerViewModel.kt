@@ -74,11 +74,11 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极核心：拦截并剔除本地斜杠 + 遭遇 VIP 封锁时无缝切换全网聚合源
+// 🌟 终极核心：拦截假路径，替换为真实网络直链
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     val neteaseIds = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }.map { it.size }
     
-    // 即时向接口索要最新鲜的、带有合法 Token 的官方 CDN 链接
+    // 即时向接口索要最新鲜的 CDN 链接
     val freshUrls = if (neteaseIds.isNotEmpty()) {
         com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(context, neteaseIds)
     } else {
@@ -86,46 +86,31 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
     }
 
     mapNotNull { song ->
-        val originalItem = song.toMediaItem()
-        if (originalItem == MediaItem.EMPTY) return@mapNotNull null
-
-        var finalUrl = song.data ?: ""
-        
-        // 🗡️ 完美切除历史旧歌单中残留的斜杠 BUG
-        if (finalUrl.startsWith("/http")) {
-            finalUrl = finalUrl.substring(1)
-        } else if (finalUrl.startsWith("/netease://")) {
-            finalUrl = finalUrl.substring(1)
-        }
-
-        // 核心直链替换逻辑
+        // 只要是网易云歌曲，直接拦截，抛弃它原本那个假的本地路径
         if (song.genreName == "Netease" && song.size > 0L) {
-            val freshUrl = freshUrls[song.size]
-            if (!freshUrl.isNullOrEmpty()) {
-                // 1. 官方 API 成功解析出免 VIP 真实直链，直接使用
-                finalUrl = freshUrl
-            } else {
-                // 2. 🌟 洛雪级特权兜底：官方拒绝访问的 VIP 歌曲，直接走全网开源音源聚合接口（Meting API），无视网易云封锁返回可播直链！
-                finalUrl = "https://api.injahow.cn/meting/?server=netease&type=url&id=${song.size}"
+            var finalUrl = freshUrls[song.size]
+            if (finalUrl.isNullOrEmpty()) {
+                finalUrl = "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
             }
+
+            // 强行构建 MediaItem，注入真实网络链接和完整的 UI 元数据
+            MediaItem.Builder()
+                .setMediaId(song.id.toString()) // 必须保留原 ID，让 UI 能对上号
+                .setUri(Uri.parse(finalUrl))
+                .setMediaMetadata(
+                    androidx.media3.common.MediaMetadata.Builder()
+                        .setTitle(song.title)
+                        .setArtist(song.artistName)
+                        .setAlbumTitle(song.albumName)
+                        .setAlbumArtist(song.artistName)
+                        .setGenre("Netease")
+                        .build()
+                )
+                .build()
+        } else {
+            // 不是网易云的普通本地歌曲，走正常逻辑
+            song.toMediaItem().takeUnless { it == MediaItem.EMPTY }
         }
-
-        if (finalUrl.isEmpty()) return@mapNotNull null
-
-        // 强行注入 MediaMetadata 完美保留歌名、歌手，彻底防电台误判！
-        MediaItem.Builder()
-            .setMediaId(song.id.toString())
-            .setUri(Uri.parse(finalUrl))
-            .setMediaMetadata(
-                androidx.media3.common.MediaMetadata.Builder()
-                    .setTitle(song.title)
-                    .setArtist(song.artistName)
-                    .setAlbumTitle(song.albumName)
-                    .setAlbumArtist(song.artistName)
-                    .setGenre(song.genreName)
-                    .build()
-            )
-            .build()
     }
 }
 

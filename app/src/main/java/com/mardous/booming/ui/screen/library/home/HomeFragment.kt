@@ -211,7 +211,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     
                     // 🌟 不再缓存动态 CDN，只保存静态 ID 代理链接，留给播放器即时解析
                     //val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
-					val playUrl = "netease://$songId"
+					val playUrl = "/storage/emulated/0/Music/NeteaseRecommend/$songId.flac"
 
                     songEntities.add(
                         SongEntity(
