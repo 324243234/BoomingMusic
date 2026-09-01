@@ -401,6 +401,16 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 menu.removeItem(R.id.action_delete_playlist)
             }
 			
+			// 🌟 为网易云日推注入顶级下载按钮
+            if (it.playlistEntity.playlistName == "网易云今日推荐") {
+                if (menu.findItem(8002) == null) {
+                    menu.add(0, 8002, 0, "⬇️ 全网高级下载").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                }
+                menu.findItem(R.id.action_sort_order)?.isVisible = false
+                menu.findItem(R.id.action_export_playlist)?.isVisible = false
+                menu.findItem(R.id.action_delete_playlist)?.isVisible = false
+            }
+			
 			// 👇 新增：识别到是电台分类，动态注入“添加自定义源”菜单
             if (it.playlistEntity.playlistName.startsWith("[Radio]")) {
                 if (menu.findItem(8001) == null) {
@@ -425,6 +435,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+	
+	     // 🌟 响应下载菜单，唤起底部弹窗
+        if (menuItem.itemId == 8002) {
+            com.mardous.booming.ui.dialogs.DownloadSheetFragment().show(childFragmentManager, "DL")
+            return true
+        }
 	
 	     if (menuItem.itemId == 8001) {
             val nameInput = android.widget.EditText(requireContext()).apply { 

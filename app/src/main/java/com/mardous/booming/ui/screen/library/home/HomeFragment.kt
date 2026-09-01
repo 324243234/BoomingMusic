@@ -252,24 +252,25 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
                     val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
+                    // 🌟 终极错位修复：完全使用命名参数，将 size 强制重置为 0L！
                     songEntities.add(
                         SongEntity(
                             id = (System.currentTimeMillis() * 1000) + idOffset++,
-                            data = playUrl,
                             title = item.optString("name", "未知歌曲"),
+                            artistName = artistName,
+                            albumName = albumName,
+                            duration = item.optLong("dt", 0L),
+                            data = playUrl,
+                            playlistCreatorId = playlistId!!,
                             trackNumber = 0,
                             year = 0,
-                            size = songId, 
-                            duration = item.optLong("dt", 0L),
+                            size = 0L, // 🌟 修复：禁止塞入巨大的 songId！
                             dateAdded = System.currentTimeMillis(),
                             dateModified = System.currentTimeMillis(),
                             albumId = -1L,
-                            albumName = albumName,
                             artistId = -1L,
-                            artistName = artistName,
                             albumArtist = artistName,
-                            genreName = "Netease",
-                            playlistCreatorId = playlistId!! // 挂载到刚建好的空歌单中
+                            genreName = "Netease"
                         )
                     )
                 }
