@@ -119,12 +119,20 @@ object UniversalDownloadEngine {
                 val lqBytes = (songObj.optJSONObject("mMusic") ?: songObj.optJSONObject("m") ?: songObj.optJSONObject("lMusic") ?: songObj.optJSONObject("l"))?.optLong("size", 0L) ?: 0L
 
                 var estSizeStr = "点击下载"
-                if (targetLevel == "lossless" && sqBytes > 0) {
-                    estSizeStr = String.format("~%.1f MB", sqBytes / 1048576.0f)
-                } else if (hqBytes > 0) {
-                    estSizeStr = String.format("~%.1f MB", hqBytes / 1048576.0f)
-                } else if (lqBytes > 0) {
-                    estSizeStr = String.format("~%.1f MB", lqBytes / 1048576.0f)
+                if (targetLevel == "lossless") {
+                    if (sqBytes > 0) {
+                        estSizeStr = String.format("~%.1f MB", sqBytes / 1048576.0f)
+                    } else if (duration > 0) {
+                        // 🌟 核心修复：当 API 隐藏真实 FLAC 大小时，根据歌曲毫秒数预估体积
+                        // FLAC 的平均码率约 1000kbps (约 125 KB/s)。
+                        estSizeStr = String.format("~%.1f MB (预估)", (duration / 1000) * 125 / 1024.0f)
+                    }
+                } else {
+                    if (hqBytes > 0) {
+                        estSizeStr = String.format("~%.1f MB", hqBytes / 1048576.0f)
+                    } else if (lqBytes > 0) {
+                        estSizeStr = String.format("~%.1f MB", lqBytes / 1048576.0f)
+                    }
                 }
 
                 val finalSizeStr = if (idsToFetch.size == 1) singleSongSizeStr else estSizeStr
