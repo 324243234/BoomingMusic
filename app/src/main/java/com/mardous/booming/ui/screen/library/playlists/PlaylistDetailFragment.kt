@@ -404,7 +404,7 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
 			// 🌟 为网易云日推注入顶级下载按钮
             if (it.playlistEntity.playlistName == "网易云今日推荐") {
                 if (menu.findItem(8002) == null) {
-                    menu.add(0, 8002, 0, "⬇️ 全网高级下载").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                    menu.add(0, 8002, 0, "⬇️ 下载").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 }
                 menu.findItem(R.id.action_sort_order)?.isVisible = false
                 menu.findItem(R.id.action_export_playlist)?.isVisible = false
@@ -630,6 +630,43 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
     ): Boolean {
+	
+	// 🌟 识别专属菜单，利用隐藏在 size 里的真实 ID 极速下载
+        if (menuItem.itemId == R.id.action_download_netease) {
+            if (playlist.playlistEntity.playlistName != "网易云今日推荐") {
+                Toast.makeText(requireContext(), "此选项仅限网易云日推使用", Toast.LENGTH_SHORT).show()
+                return true
+            }
+            val realId = song.size
+            if (realId <= 0L) return true
+            
+            val appContext = requireContext().applicationContext
+            Toast.makeText(appContext, "正在极速下载: ${song.title}...", Toast.LENGTH_LONG).show()
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
+                    if (!targetDir.exists()) targetDir.mkdirs()
+                    
+                    val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
+                        id = realId, title = song.title, artist = song.artistName, album = song.albumName,
+                        picUrl = "", durationMs = song.duration, year = "", format = "flac",
+                        fileSizeStr = "ID极速直连", requestedLevel = "lossless"
+                    )
+                    val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(appContext, downloadItem, targetDir) { _ -> }
+                    
+                    withContext(Dispatchers.Main) {
+                        if (downloadedFile != null && downloadedFile.exists()) {
+                            Toast.makeText(appContext, "✅ 下载成功！已存入本地曲库", Toast.LENGTH_SHORT).show()
+                            libraryViewModel.forceReload(ReloadType.Songs)
+                        } else {
+                            Toast.makeText(appContext, "❌ 下载失败", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            return true
+        }
+	
 	
 	if (song.duration == 0L || song.data.startsWith("http")) { 
         if (menuItem.itemId == R.id.action_fetch_lrc || menuItem.itemId == R.id.action_fetch_cover || menuItem.itemId == R.id.action_tag_editor) {

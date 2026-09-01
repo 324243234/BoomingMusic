@@ -72,8 +72,18 @@ import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-private fun List<Song>.toMediaItems() = mapNotNull { songs ->
-    songs.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
+// 🌟 播放前的最后一刻拦截：识别日推歌曲，即时解析真实有效地址喂给 ExoPlayer
+private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
+    mapNotNull { song ->
+        var targetSong = song
+        if (song.genreName == "Netease" && song.size > 0L) {
+            val realUrl = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealSongUrl(context, song.size)
+            if (!realUrl.isNullOrEmpty()) {
+                targetSong = song.copy(data = realUrl)
+            }
+        }
+        targetSong.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
+    }
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -428,7 +438,7 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             if (!preferences.getBoolean(REMEMBER_SHUFFLE_MODE, true)) {
                 shuffleModeEnabled = false
             }
-            val mediaItems = withContext(IO) { queue.toMediaItems() }
+            val mediaItems = withContext(IO) { queue.toMediaItems(appContext) }
             val shuffleMode = when (shuffleMode) {
                 OpenShuffleMode.On -> true
                 OpenShuffleMode.Off -> false
@@ -445,7 +455,7 @@ private fun handleRadioFavorite(context: Context, song: Song) {
 
     fun openAndShuffleQueue(queue: List<Song>) = viewModelScope.launch {
         mediaController?.let { controller ->
-            val mediaItems = withContext(IO) { queue.toMediaItems() }
+            val mediaItems = withContext(IO) { queue.toMediaItems(appContext) }
             if (mediaItems.isNotEmpty()) {
                 controller.shuffleModeEnabled = true
                 controller.setMediaItems(mediaItems, true)

@@ -264,7 +264,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                             playlistCreatorId = playlistId!!,
                             trackNumber = 0,
                             year = 0,
-                            size = 0L, // 🌟 修复：禁止塞入巨大的 songId！
+                            size = songId, // 🌟 修复：  songId！
                             dateAdded = System.currentTimeMillis(),
                             dateModified = System.currentTimeMillis(),
                             albumId = -1L,

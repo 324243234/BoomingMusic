@@ -84,4 +84,27 @@ object NeteaseDailyApi {
         }
         return@withContext false
     }
+	
+	// 🌟 获取带签名的真实 CDN 播放地址，并强制转为 HTTPS 防拦截
+    suspend fun fetchRealSongUrl(context: Context, songId: Long): String? = withContext(Dispatchers.IO) {
+        val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
+        val cookie = ApiConfigManager.getCookie(context)
+        try {
+            val sep = if (baseUrl.contains("?")) "&" else "?"
+            val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
+            val url = URL("$baseUrl/song/url$sep" + "id=$songId&cookie=$encodedCookie")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            val jsonRes = conn.inputStream.bufferedReader().use { it.readText() }
+            val dataArr = org.json.JSONObject(jsonRes).optJSONArray("data")
+            if (dataArr != null && dataArr.length() > 0) {
+                val realUrl = dataArr.getJSONObject(0).optString("url", "")
+                if (realUrl.isNotEmpty() && realUrl != "null") {
+                    return@withContext realUrl.replace("http://", "https://")
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        return@withContext null
+    }
 }
