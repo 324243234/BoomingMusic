@@ -91,18 +91,43 @@ object UniversalDownloadEngine {
                 val songObj = songArray.getJSONObject(i)
                 val id = songObj.optLong("id")
                 val title = songObj.optString("name")
-                val artist = (0 until (songObj.optJSONArray("ar")?.length() ?: 0)).joinToString(" / ") { 
-                    songObj.optJSONArray("ar")?.getJSONObject(it)?.optString("name") ?: "" 
+                
+                // 🌟 双向兼容：同时支持 Web API 的 'artists' 和 私有 API 的 'ar'
+                val arArray = songObj.optJSONArray("ar") ?: songObj.optJSONArray("artists")
+                val artist = (0 until (arArray?.length() ?: 0)).joinToString(" / ") { 
+                    arArray?.getJSONObject(it)?.optString("name") ?: "" 
                 }
-                val album = songObj.optJSONObject("al")?.optString("name") ?: ""
-                val picUrl = songObj.optJSONObject("al")?.optString("picUrl") ?: ""
-                val duration = songObj.optLong("dt", 0L)
-                val publishTimeMs = songObj.optLong("publishTime", 0L)
+                
+                // 🌟 双向兼容：同时支持 Web API 的 'album' 和 私有 API 的 'al'
+                val alObj = songObj.optJSONObject("al") ?: songObj.optJSONObject("album")
+                val album = alObj?.optString("name") ?: ""
+                val picUrl = alObj?.optString("picUrl") ?: ""
+                
+                // 🌟 双向兼容：同时支持 Web API 的 'duration' 和 私有 API 的 'dt'
+                val duration = songObj.optLong("dt").takeIf { it > 0 } ?: songObj.optLong("duration", 0L)
+                
+                val publishTimeMs = songObj.optLong("publishTime").takeIf { it > 0 } ?: alObj?.optLong("publishTime", 0L) ?: 0L
                 val yearStr = if (publishTimeMs > 1000000000L) {
                     java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).format(java.util.Date(publishTimeMs))
                 } else ""
+                
                 val format = if (targetLevel == "lossless") "FLAC" else "MP3"
-                val finalSizeStr = if (idsToFetch.size == 1) singleSongSizeStr else "点击破盾下载"
+                
+                // 🌟 新增：提取官方预估的文件大小（支持无损sq、高解析hr、高音质hMusic）
+                val sqBytes = (songObj.optJSONObject("sq") ?: songObj.optJSONObject("hr"))?.optLong("size", 0L) ?: 0L
+                val hqBytes = (songObj.optJSONObject("hMusic") ?: songObj.optJSONObject("h"))?.optLong("size", 0L) ?: 0L
+                val lqBytes = (songObj.optJSONObject("mMusic") ?: songObj.optJSONObject("m") ?: songObj.optJSONObject("lMusic") ?: songObj.optJSONObject("l"))?.optLong("size", 0L) ?: 0L
+
+                var estSizeStr = "点击下载"
+                if (targetLevel == "lossless" && sqBytes > 0) {
+                    estSizeStr = String.format("~%.1f MB", sqBytes / 1048576.0f)
+                } else if (hqBytes > 0) {
+                    estSizeStr = String.format("~%.1f MB", hqBytes / 1048576.0f)
+                } else if (lqBytes > 0) {
+                    estSizeStr = String.format("~%.1f MB", lqBytes / 1048576.0f)
+                }
+
+                val finalSizeStr = if (idsToFetch.size == 1) singleSongSizeStr else estSizeStr
 
                 resultList.add(NetSongItem(id, title, artist, album, duration, picUrl, finalSizeStr, format, yearStr, targetLevel))
             }

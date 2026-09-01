@@ -811,9 +811,15 @@ class PlaybackService :
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-            buildPlayQueue(player) { songs, position ->
-                queueStateHolder.submitQueue(songs, position)
-                persistentStorage.saveState(true)
+            // 🌟【切断高频磁盘 I/O 阻塞】
+            // 蓝牙歌词的 replaceMediaItem 也会触发此回调。
+            // 必须严格判定：只有当播放列表真正发生增减（长度变化）时，才去重建队列并写入磁盘。
+            val currentQueueSize = queueStateHolder.queueSize
+            if (timeline.windowCount != currentQueueSize) {
+                buildPlayQueue(player) { songs, position ->
+                    queueStateHolder.submitQueue(songs, position)
+                    persistentStorage.saveState(true)
+                }
             }
         }
     }
@@ -917,12 +923,18 @@ class PlaybackService :
             } else false
 
             withContext(Main) {
-                // 🌟 核心修复 2：绝对强制的时序！内存状态算出后，直接发给手机下拉通知栏和车机卡片！
+                // 更新下拉通知栏和车机卡片的收藏/模式按钮状态
                 refreshMediaButtonCustomLayout()
+                
+                // 🌟【物理级分流执行】
                 if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
+                    // 仅当用户明确开启时，才执行蓝牙歌词加载
                     bluetoothLyricManager?.loadLyricsForSong(newSong)
+                } else {
+                    // 默认状态下：全力保证 CarWith 功能！
+                    // 此时 BluetoothLyricManager 为 null，且没有任何挂载的监听器。
+                    updateCarWithMetadata()
                 }
-                updateCarWithMetadata()
             }
 
             val previousSong = songPlayCountHelper.song
@@ -1073,6 +1085,7 @@ class PlaybackService :
             "enable_bluetooth_lyrics" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled && bluetoothLyricManager == null) {
+                    // 1. 开启时：才在内存中实例化对象并接管 Player
                     bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
                     val currentIndex = player.currentMediaItemIndex
                     if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
@@ -1080,15 +1093,17 @@ class PlaybackService :
                         serviceScope.launch(IO) {
                             val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
                             if (song != Song.emptySong) {
-                                withContext(Main) {
-                                    bluetoothLyricManager?.loadLyricsForSong(song)
-                                }
+                                withContext(Main) { bluetoothLyricManager?.loadLyricsForSong(song) }
                             }
                         }
                     }
                 } else if (!enabled) {
+                    // 2. 🌟 关闭时：彻底毁灭对象！
+                    // release() 内部会调用 player.removeListener 拔除底层监听，并停止 250ms 的协程死循环。
                     bluetoothLyricManager?.release()
-                    bluetoothLyricManager = null
+                    bluetoothLyricManager = null // 内存置空，等待 GC 回收，从此再无一句蓝牙代码运行
+                    
+                    // 3. 完美交接：重新激活 CarWith 推送，瞬间恢复车机端的所有数据展示
                     updateCarWithMetadata()
                 }
             }
@@ -1200,7 +1215,7 @@ class PlaybackService :
                                         )
 
                                         if (downloadedFile != null && downloadedFile.exists()) {
-                                            com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(targetSong, needLrc = true, needCover = true)
+                                            com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(targetSong, needLrc = true, needCover = true, context = appContext)
                                             
                                             withContext(Main) {
                                                 showToast("已同步网易云并完成 ${currentQuality.uppercase()} 下载")
@@ -1537,6 +1552,13 @@ class PlaybackService :
 
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
+		
+		// 🌟【绝对互斥壁垒：CarWith 优先原则】
+        // 只要蓝牙歌词是开启状态，绝对禁止组装和发送 CarWith 的巨型 Metadata！
+        // 避免两种逻辑并行导致的 Binder 溢出和 USB 断连。
+        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
+            return
+        }
 
         val isShuffleEnabled = player.shuffleModeEnabled
         val currentRepeatMode = player.repeatMode

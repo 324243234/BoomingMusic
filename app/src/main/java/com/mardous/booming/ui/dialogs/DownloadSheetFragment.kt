@@ -22,7 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 
-class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFragment() {
+class DownloadSheetFragment : BottomSheetDialogFragment() {
     private lateinit var etInput: EditText
     private lateinit var btnSearch: Button
     private lateinit var progressBar: ProgressBar
@@ -111,6 +111,14 @@ class DownloadSheetFragment(private val targetDir: File) : BottomSheetDialogFrag
         isCancelable = false 
         Toast.makeText(context, "正在提取 [${song.format}] 直链...", Toast.LENGTH_SHORT).show()
         
+		// 🌟 新增：在这里直接生成目标路径，再也不需要外部通过参数传进来
+        val targetDir = File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+            "newdown"
+        )
+        if (!targetDir.exists()) targetDir.mkdirs()
+		
+		
         lifecycleScope.launch {
             val file = UniversalDownloadEngine.downloadSong(requireContext(), song, targetDir) { }
             
