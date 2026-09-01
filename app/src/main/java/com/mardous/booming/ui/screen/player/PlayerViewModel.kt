@@ -74,11 +74,11 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极核心：在喂给播放器的最后一秒进行即时解析（JIT），并精准切除恶性斜杠！
+// 🌟 终极核心：拦截 netease:// 协议，即时替换为真实直链，完美保留原生元数据与 UI 渲染
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     val neteaseIds = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }.map { it.size }
     
-    // 即时向接口索要新鲜、热乎的 CDN 链接（绝不过期）
+    // 即时向接口索要最新鲜的、带有合法 Token 的 CDN 链接
     val freshUrls = if (neteaseIds.isNotEmpty()) {
         com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(context, neteaseIds)
     } else {
@@ -86,26 +86,33 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
     }
 
     mapNotNull { song ->
+        // 调用原生的 toMediaItem()，此时 UI 会因为 netease:// 完美生成包含标题、歌手的元数据
         val originalItem = song.toMediaItem()
         if (originalItem == MediaItem.EMPTY) return@mapNotNull null
 
         var finalUrl = song.data ?: ""
         
-        // 🗡️ 切除致命的斜杠 BUG：如果开头是 "/http"，立刻删掉斜杠
+        // 兼容切除旧版错误留下的斜杠 BUG
         if (finalUrl.startsWith("/http")) {
             finalUrl = finalUrl.substring(1)
         }
 
-        // 把获取到的新鲜链接替换上去
+        // 🌟 拦截我们的木马协议 netease://，换回真实的流媒体播放地址给播放器
         if (song.genreName == "Netease" && song.size > 0L) {
             val freshUrl = freshUrls[song.size]
             if (!freshUrl.isNullOrEmpty()) {
                 finalUrl = freshUrl
+            } else if (finalUrl.startsWith("netease://")) {
+                // 如果 API 没查到，使用 302 兜底外链
+                finalUrl = "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
             }
         }
 
+        // 路径替换为真实链接，但绝对保留 originalItem 的完美元数据！
         if (finalUrl != song.data) {
-            originalItem.buildUpon().setUri(Uri.parse(finalUrl)).build()
+            originalItem.buildUpon()
+                .setUri(Uri.parse(finalUrl))
+                .build()
         } else {
             originalItem
         }
