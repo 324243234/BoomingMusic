@@ -6,6 +6,7 @@ package com.mardous.booming.ui.screen.player
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.util.Log
@@ -73,9 +74,30 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 最干净的列表转换，直接读取数据库中已经解析好的真实 HTTPS 链接
+// 🌟 终极修复：抹除被本地数据库强行加上的斜杠 "/"，强制还原为标准的网络 URI！
+private fun Song.toFixedMediaItem(): MediaItem {
+    val originalItem = this.toMediaItem()
+    if (originalItem == MediaItem.EMPTY) return originalItem
+
+    val rawData = this.data ?: ""
+    // 如果路径不幸变成了 "/http..."，切掉第一个字符 "/"
+    val fixedUrl = when {
+        rawData.startsWith("/http") -> rawData.substring(1)
+        rawData.startsWith("http") -> rawData
+        else -> null
+    }
+
+    return if (fixedUrl != null) {
+        // 重新挂载正确的网络 URI，这样能完美保留原有绑定的歌名、歌手和封面信息！
+        originalItem.buildUpon().setUri(Uri.parse(fixedUrl)).build()
+    } else {
+        originalItem
+    }
+}
+
+// 批量转换时调用修复过的方法
 private fun List<Song>.toMediaItems() = mapNotNull { song ->
-    song.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
+    song.toFixedMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -251,7 +273,6 @@ class PlayerViewModel(
         }
     }
 
-    // 🌟 已更新：红心收藏时彻底废弃搜索，直接使用歌曲的真实网易云 ID 极速下载！
     private fun handleNeteaseFavorite(context: Context, song: Song) {
         Toast.makeText(context, "❤️ 正在同步并极速下载...", Toast.LENGTH_SHORT).show()
 
@@ -273,7 +294,7 @@ class PlayerViewModel(
                     picUrl = "", 
                     durationMs = song.duration,
                     year = "",
-                    format = "flac", // 优先请求高音质
+                    format = "flac", 
                     fileSizeStr = "红心极速直连",
                     requestedLevel = "lossless" 
                 )
@@ -540,7 +561,7 @@ class PlayerViewModel(
                 if (nextIndex == C.INDEX_UNSET) {
                     nextIndex = controller.mediaItemCount
                 }
-                val item = song.toMediaItem()
+                val item = song.toFixedMediaItem()
                 if (item != MediaItem.EMPTY) {
                     controller.addMediaItem(nextIndex, item)
                 }
@@ -569,7 +590,7 @@ class PlayerViewModel(
                 openQueue(listOf(song), startPlaying = false)
             } else {
                 val toIndex = position.getIndexForPosition(toPosition)
-                val item = song.toMediaItem()
+                val item = song.toFixedMediaItem()
                 if (item != MediaItem.EMPTY) {
                     if (toPosition >= 0 && toIndex >= 0) {
                         controller.addMediaItem(toIndex, item)
