@@ -87,7 +87,7 @@ object NeteaseDailyApi {
         return@withContext false
     }
 
-    // 🌟 核心：批量解析直接可播放的 HTTPS 直链（解决 ExoPlayer 跨协议重定向失败与卡顿）
+    // 🌟 核心：批量解析直接可播放的 HTTPS 直链（彻底解决 m702 等无证书节点的卡顿）
     suspend fun fetchRealUrls(context: Context, songIds: List<Long>): Map<Long, String> = withContext(Dispatchers.IO) {
         val urlMap = mutableMapOf<Long, String>()
         if (songIds.isEmpty()) return@withContext urlMap
@@ -95,10 +95,10 @@ object NeteaseDailyApi {
         val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
         val cookie = ApiConfigManager.getCookie(context)
 
-        // 通道 1：优先通过 Node API 的 /song/url 批量解析官方 CDN 直链
+        // 通道 1：优先通过新版 /song/url/v1 批量解析官方高音质 CDN 直链
         try {
             val idsStr = songIds.joinToString(",")
-            val url = buildUrlWithCookie("$baseUrl/song/url?id=$idsStr", cookie)
+            val url = buildUrlWithCookie("$baseUrl/song/url/v1?id=$idsStr&level=exhigh", cookie)
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 15000
@@ -114,7 +114,9 @@ object NeteaseDailyApi {
                         val id = obj.optLong("id", 0L)
                         val realUrl = obj.optString("url", "")
                         if (id != 0L && realUrl.isNotEmpty() && realUrl != "null") {
+                            // 强转 HTTPS，并把无证书的旧节点(m702等)替换为合法的 m7c 节点
                             urlMap[id] = realUrl.replace("http://", "https://")
+                                .replace(Regex("m\\d+c?\\.music\\.126\\.net"), "m7c.music.126.net")
                         }
                     }
                 }
@@ -124,7 +126,7 @@ object NeteaseDailyApi {
             e.printStackTrace()
         }
 
-        // 通道 2：对未命中直链的歌曲，使用带 Headers 的 GET 请求并发拦截 302 Location
+        // 通道 2：对未命中直链的歌曲，使用外链 302 重定向兜底
         val missingIds = songIds.filter { !urlMap.containsKey(it) || urlMap[it].isNullOrEmpty() }
         if (missingIds.isNotEmpty()) {
             val deferreds = missingIds.map { id ->
@@ -141,7 +143,9 @@ object NeteaseDailyApi {
                         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                         val location = conn.getHeaderField("Location")
                         if (!location.isNullOrEmpty() && !location.contains("music.163.com/404")) {
+                            // 同样强转 HTTPS 并替换为安全 CDN 节点
                             finalUrl = location.replace("http://", "https://")
+                                .replace(Regex("m\\d+c?\\.music\\.126\\.net"), "m7c.music.126.net")
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
