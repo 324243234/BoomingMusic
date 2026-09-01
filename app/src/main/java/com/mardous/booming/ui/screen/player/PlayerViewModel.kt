@@ -74,30 +74,42 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极修复：抹除被本地数据库强行加上的斜杠 "/"，强制还原为标准的网络 URI！
-private fun Song.toFixedMediaItem(): MediaItem {
-    val originalItem = this.toMediaItem()
-    if (originalItem == MediaItem.EMPTY) return originalItem
-
-    val rawData = this.data ?: ""
-    // 如果路径不幸变成了 "/http..."，切掉第一个字符 "/"
-    val fixedUrl = when {
-        rawData.startsWith("/http") -> rawData.substring(1)
-        rawData.startsWith("http") -> rawData
-        else -> null
-    }
-
-    return if (fixedUrl != null) {
-        // 重新挂载正确的网络 URI，这样能完美保留原有绑定的歌名、歌手和封面信息！
-        originalItem.buildUpon().setUri(Uri.parse(fixedUrl)).build()
+// 🌟 终极核心：在喂给播放器的最后一秒进行即时解析（JIT），并精准切除恶性斜杠！
+private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
+    val neteaseIds = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }.map { it.size }
+    
+    // 即时向接口索要新鲜、热乎的 CDN 链接（绝不过期）
+    val freshUrls = if (neteaseIds.isNotEmpty()) {
+        com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(context, neteaseIds)
     } else {
-        originalItem
+        emptyMap()
     }
-}
 
-// 批量转换时调用修复过的方法
-private fun List<Song>.toMediaItems() = mapNotNull { song ->
-    song.toFixedMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
+    mapNotNull { song ->
+        val originalItem = song.toMediaItem()
+        if (originalItem == MediaItem.EMPTY) return@mapNotNull null
+
+        var finalUrl = song.data ?: ""
+        
+        // 🗡️ 切除致命的斜杠 BUG：如果开头是 "/http"，立刻删掉斜杠
+        if (finalUrl.startsWith("/http")) {
+            finalUrl = finalUrl.substring(1)
+        }
+
+        // 把获取到的新鲜链接替换上去
+        if (song.genreName == "Netease" && song.size > 0L) {
+            val freshUrl = freshUrls[song.size]
+            if (!freshUrl.isNullOrEmpty()) {
+                finalUrl = freshUrl
+            }
+        }
+
+        if (finalUrl != song.data) {
+            originalItem.buildUpon().setUri(Uri.parse(finalUrl)).build()
+        } else {
+            originalItem
+        }
+    }
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -421,13 +433,13 @@ class PlayerViewModel(
         position: Int = 0,
         startPlaying: Boolean = true,
         shuffleMode: OpenShuffleMode = OpenShuffleMode.Remember
-    ) {
+    ) = viewModelScope.launch {
         mediaController?.let { controller ->
             var shuffleModeEnabled = controller.shuffleModeEnabled
             if (!preferences.getBoolean(REMEMBER_SHUFFLE_MODE, true)) {
                 shuffleModeEnabled = false
             }
-            val mediaItems = queue.toMediaItems()
+            val mediaItems = queue.toMediaItems(appContext)
             val finalShuffleMode = when (shuffleMode) {
                 OpenShuffleMode.On -> true
                 OpenShuffleMode.Off -> false
@@ -442,9 +454,9 @@ class PlayerViewModel(
         }
     }
 
-    fun openAndShuffleQueue(queue: List<Song>) {
+    fun openAndShuffleQueue(queue: List<Song>) = viewModelScope.launch {
         mediaController?.let { controller ->
-            val mediaItems = queue.toMediaItems()
+            val mediaItems = queue.toMediaItems(appContext)
             if (mediaItems.isNotEmpty()) {
                 controller.shuffleModeEnabled = true
                 controller.setMediaItems(mediaItems, true)
@@ -460,7 +472,7 @@ class PlayerViewModel(
         sortMode: SongSortMode
     ) = liveData {
         val mediaItems = withContext(IO) {
-            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems()
+            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems(appContext)
         }
         if (mediaItems.isNotEmpty()) {
             mediaController?.let { controller ->
@@ -488,7 +500,7 @@ class PlayerViewModel(
         if (shuffleOperationState.value.isIdle) {
             _shuffleOperationState.value = ShuffleOperationState(mode, ShuffleOperationState.Status.InProgress)
             val mediaItems = withContext(IO) {
-                shuffleManager.applySmartShuffle(songs, mode).toMediaItems()
+                shuffleManager.applySmartShuffle(songs, mode).toMediaItems(appContext)
             }
             if (mediaItems.isNotEmpty()) {
                 mediaController?.let { controller ->
@@ -552,7 +564,7 @@ class PlayerViewModel(
         }
     }
 
-    fun queueNext(song: Song) {
+    fun queueNext(song: Song) = viewModelScope.launch {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
@@ -561,15 +573,15 @@ class PlayerViewModel(
                 if (nextIndex == C.INDEX_UNSET) {
                     nextIndex = controller.mediaItemCount
                 }
-                val item = song.toFixedMediaItem()
-                if (item != MediaItem.EMPTY) {
+                val item = listOf(song).toMediaItems(appContext).firstOrNull()
+                if (item != null) {
                     controller.addMediaItem(nextIndex, item)
                 }
             }
         }
     }
 
-    fun queueNext(songs: List<Song>) {
+    fun queueNext(songs: List<Song>) = viewModelScope.launch {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
@@ -578,20 +590,20 @@ class PlayerViewModel(
                 if (nextIndex == C.INDEX_UNSET) {
                     nextIndex = controller.mediaItemCount
                 }
-                val items = songs.toMediaItems()
+                val items = songs.toMediaItems(appContext)
                 controller.addMediaItems(nextIndex, items)
             }
         }
     }
 
-    fun enqueue(song: Song, toPosition: Int = -1) {
+    fun enqueue(song: Song, toPosition: Int = -1) = viewModelScope.launch {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
                 val toIndex = position.getIndexForPosition(toPosition)
-                val item = song.toFixedMediaItem()
-                if (item != MediaItem.EMPTY) {
+                val item = listOf(song).toMediaItems(appContext).firstOrNull()
+                if (item != null) {
                     if (toPosition >= 0 && toIndex >= 0) {
                         controller.addMediaItem(toIndex, item)
                     } else {
@@ -602,12 +614,12 @@ class PlayerViewModel(
         }
     }
 
-    fun enqueue(songs: List<Song>) {
+    fun enqueue(songs: List<Song>) = viewModelScope.launch {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                val items = songs.toMediaItems()
+                val items = songs.toMediaItems(appContext)
                 controller.addMediaItems(items)
             }
         }

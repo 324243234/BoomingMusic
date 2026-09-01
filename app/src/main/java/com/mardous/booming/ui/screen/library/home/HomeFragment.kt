@@ -1,18 +1,5 @@
 /*
  * Copyright (c) 2024 Christians Martínez Alvarado
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.ui.screen.library.home
@@ -75,16 +62,8 @@ import com.mardous.booming.ui.component.menu.onSongMenu
 import com.mardous.booming.ui.component.menu.onSongsMenu
 import com.mardous.booming.ui.screen.library.ReloadType
 
-/**
- * @author Christians M. A. (mardous)
- */
 class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
-    View.OnClickListener,
-    ISongCallback,
-    IAlbumCallback,
-    IArtistCallback,
-    IHomeCallback,
-    IScrollHelper {
+    View.OnClickListener, ISongCallback, IAlbumCallback, IArtistCallback, IHomeCallback, IScrollHelper {
 
     private var _binding: HomeBinding? = null
     private val binding get() = _binding!!
@@ -135,14 +114,11 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                 libraryViewModel.forceReload(ReloadType.Suggestions)
             }
         }
-
         applyWindowInsetsFromView(view)
     }
 
     private val adapterDataObserver = object : RecyclerView.AdapterDataObserver() {
-        override fun onChanged() {
-            checkIsEmpty()
-        }
+        override fun onChanged() { checkIsEmpty() }
     }
 
     private fun setupTitle() {
@@ -174,20 +150,10 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
     override fun onClick(view: View) {
         when (view) {
-            binding.myTopTracks -> {
-                findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.TopTracks))
-            }
-            binding.lastAdded -> {
-                findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.RecentSongs))
-            }
-            binding.history -> {
-                findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.History))
-            }
-            binding.shuffleButton -> {
-                libraryViewModel.allSongs().observe(viewLifecycleOwner) {
-                    playerViewModel.openAndShuffleQueue(it)
-                }
-            }
+            binding.myTopTracks -> findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.TopTracks))
+            binding.lastAdded -> findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.RecentSongs))
+            binding.history -> findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.History))
+            binding.shuffleButton -> libraryViewModel.allSongs().observe(viewLifecycleOwner) { playerViewModel.openAndShuffleQueue(it) }
         }
     }
 
@@ -205,10 +171,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
                 if (playlistId != null && lastDate == todayStr) {
                     withContext(Dispatchers.Main) {
-                        findNavController().navigate(
-                            R.id.nav_playlist_detail, 
-                            com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
-                        )
+                        findNavController().navigate(R.id.nav_playlist_detail, com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!))
                     }
                     return@launch
                 }
@@ -230,10 +193,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 🌟 干净调用网络层批量解析，杜绝 Fragment 内的协程编译错误
-                val songIds = dailyJsonList.map { it.optLong("id", 0L) }.filter { it != 0L }
-                val realUrlsMap = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(appContext, songIds)
-
                 playlistId = repository.createPlaylist(PlaylistEntity(playlistName = plName))
                 val songEntities = mutableListOf<SongEntity>()
                 var idOffset = 0L
@@ -250,8 +209,8 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     val albumName = item.optJSONObject("al")?.optString("name") ?: item.optJSONObject("album")?.optString("name") ?: "未知专辑"
                     val durationMs = item.optLong("dt", item.optLong("duration", 200000L)) 
                     
-                    // 存储直接可播放的 HTTPS 直链
-                    val playUrl = realUrlsMap[songId] ?: "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+                    // 🌟 不再缓存动态 CDN，只保存静态 ID 代理链接，留给播放器即时解析
+                    val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
                     songEntities.add(
                         SongEntity(
@@ -259,18 +218,12 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                             title = item.optString("name", "未知歌曲"),
                             artistName = artistName,
                             albumName = albumName,
-                            duration = durationMs,
+                            duration = durationMs, 
                             data = playUrl,
                             playlistCreatorId = playlistId!!,
-                            trackNumber = 0,
-                            year = 0,
-                            size = songId, 
-                            dateAdded = System.currentTimeMillis(),
-                            dateModified = System.currentTimeMillis(),
-                            albumId = -1L,
-                            artistId = -1L,
-                            albumArtist = artistName,
-                            genreName = "Netease"
+                            trackNumber = 0, year = 0, size = songId, 
+                            dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                            albumId = -1L, artistId = -1L, albumArtist = artistName, genreName = "Netease"
                         )
                     )
                 }
@@ -279,139 +232,54 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                 prefs.edit().putString("last_daily_date", todayStr).apply()
 
                 withContext(Dispatchers.Main) {
-                    findNavController().navigate(
-                        R.id.nav_playlist_detail, 
-                        com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
-                    )
+                    findNavController().navigate(R.id.nav_playlist_detail, com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!))
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    val errorMsg = e.message ?: "网络超时或拒绝访问"
-                    android.widget.Toast.makeText(appContext, "加载失败: $errorMsg", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(appContext, "加载失败: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        checkForMargins()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        binding.recyclerView.stopScroll()
-    }
-
+    override fun onResume() { super.onResume(); checkForMargins() }
+    override fun onPause() { super.onPause(); binding.recyclerView.stopScroll() }
     override fun onDestroyView() {
         super.onDestroyView()
         homeAdapter?.unregisterAdapterDataObserver(adapterDataObserver)
         binding.recyclerView.adapter = null
         binding.recyclerView.layoutManager = null
-        homeAdapter = null
-        _binding = null
+        homeAdapter = null; _binding = null
     }
 
-    override fun onMediaContentChanged() {
-        libraryViewModel.forceReload(ReloadType.Suggestions)
-    }
-
-    override fun onFavoriteContentChanged() {
-        libraryViewModel.forceReload(ReloadType.Suggestions)
-    }
+    override fun onMediaContentChanged() { libraryViewModel.forceReload(ReloadType.Suggestions) }
+    override fun onFavoriteContentChanged() { libraryViewModel.forceReload(ReloadType.Suggestions) }
 
     @Suppress("UNCHECKED_CAST")
     override fun createSuggestionAdapter(suggestion: Suggestion): RecyclerView.Adapter<*> {
         return when (suggestion.type) {
-            ContentType.TopArtists,
-            ContentType.RecentArtists -> ArtistAdapter(
-                activity = mainActivity,
-                dataSet = (suggestion.items as List<Artist>),
-                itemLayoutRes = R.layout.item_artist,
-                callback = this
-            )
-
-            ContentType.TopAlbums,
-            ContentType.RecentAlbums -> AlbumAdapter(
-                activity = mainActivity,
-                dataSet = (suggestion.items as List<Album>),
-                itemLayoutRes = R.layout.item_album_gradient,
-                callback = this
-            )
-
-            ContentType.Favorites,
-            ContentType.NotRecentlyPlayed -> SongAdapter(
-                activity = mainActivity,
-                dataSet = (suggestion.items as List<Song>),
-                itemLayoutRes = R.layout.item_image,
-                callback = this
-            )
-
-            else -> throw IllegalArgumentException("Unexpected suggestion type: ${suggestion.type}")
+            ContentType.TopArtists, ContentType.RecentArtists -> ArtistAdapter(mainActivity, suggestion.items as List<Artist>, R.layout.item_artist, this)
+            ContentType.TopAlbums, ContentType.RecentAlbums -> AlbumAdapter(mainActivity, suggestion.items as List<Album>, R.layout.item_album_gradient, this)
+            ContentType.Favorites, ContentType.NotRecentlyPlayed -> SongAdapter(mainActivity, suggestion.items as List<Song>, R.layout.item_image, this)
+            else -> throw IllegalArgumentException("Unexpected suggestion type")
         }
     }
 
     override fun suggestionClick(suggestion: Suggestion) {
         when (suggestion.type) {
-            ContentType.Favorites -> {
-                libraryViewModel.favoritePlaylist().observe(viewLifecycleOwner) {
-                    findNavController().navigate(R.id.nav_playlist_detail, playlistDetailArgs(it.playListId))
-                }
-            }
-
-            else -> {
-                findNavController().navigate(R.id.nav_detail_list, detailArgs(suggestion.type))
-            }
+            ContentType.Favorites -> libraryViewModel.favoritePlaylist().observe(viewLifecycleOwner) { findNavController().navigate(R.id.nav_playlist_detail, playlistDetailArgs(it.playListId)) }
+            else -> findNavController().navigate(R.id.nav_detail_list, detailArgs(suggestion.type))
         }
     }
 
-    override fun songMenuItemClick(
-        song: Song,
-        menuItem: MenuItem,
-        sharedElements: Array<Pair<View, String>>?
-    ): Boolean = song.onSongMenu(this, menuItem)
-
-    override fun songsMenuItemClick(songs: List<Song>, menuItem: MenuItem) {
-        songs.onSongsMenu(this, menuItem)
-    }
-
-    override fun albumClick(album: Album, sharedElements: Array<Pair<View, String>>?) {
-        findNavController().navigate(
-            R.id.nav_album_detail,
-            albumDetailArgs(album.id),
-            null,
-            sharedElements.asFragmentExtras()
-        )
-    }
-
-    override fun albumMenuItemClick(
-        album: Album,
-        menuItem: MenuItem,
-        sharedElements: Array<Pair<View, String>>?
-    ): Boolean = album.onAlbumMenu(this, menuItem)
-
-    override fun albumsMenuItemClick(albums: List<Album>, menuItem: MenuItem) {
-        albums.onAlbumsMenu(this, menuItem)
-    }
-
-    override fun artistClick(artist: Artist, sharedElements: Array<Pair<View, String>>?) {
-        findNavController().navigate(
-            R.id.nav_artist_detail,
-            artistDetailArgs(artist),
-            null,
-            sharedElements.asFragmentExtras()
-        )
-    }
-
-    override fun artistMenuItemClick(
-        artist: Artist,
-        menuItem: MenuItem,
-        sharedElements: Array<Pair<View, String>>?
-    ): Boolean = artist.onArtistMenu(this, menuItem)
-
-    override fun artistsMenuItemClick(artists: List<Artist>, menuItem: MenuItem) {
-        artists.onArtistsMenu(this, menuItem)
-    }
+    override fun songMenuItemClick(song: Song, menuItem: MenuItem, sharedElements: Array<Pair<View, String>>?): Boolean = song.onSongMenu(this, menuItem)
+    override fun songsMenuItemClick(songs: List<Song>, menuItem: MenuItem) { songs.onSongsMenu(this, menuItem) }
+    override fun albumClick(album: Album, sharedElements: Array<Pair<View, String>>?) { findNavController().navigate(R.id.nav_album_detail, albumDetailArgs(album.id), null, sharedElements.asFragmentExtras()) }
+    override fun albumMenuItemClick(album: Album, menuItem: MenuItem, sharedElements: Array<Pair<View, String>>?): Boolean = album.onAlbumMenu(this, menuItem)
+    override fun albumsMenuItemClick(albums: List<Album>, menuItem: MenuItem) { albums.onAlbumsMenu(this, menuItem) }
+    override fun artistClick(artist: Artist, sharedElements: Array<Pair<View, String>>?) { findNavController().navigate(R.id.nav_artist_detail, artistDetailArgs(artist), null, sharedElements.asFragmentExtras()) }
+    override fun artistMenuItemClick(artist: Artist, menuItem: MenuItem, sharedElements: Array<Pair<View, String>>?): Boolean = artist.onArtistMenu(this, menuItem)
+    override fun artistsMenuItemClick(artists: List<Artist>, menuItem: MenuItem) { artists.onArtistsMenu(this, menuItem) }
 
     override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
         menuInflater.inflate(R.menu.menu_library, menu)
@@ -424,15 +292,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-        if (menuItem.itemId == R.id.action_settings) {
-            findNavController().navigate(R.id.nav_settings)
-            return true
-        }
+        if (menuItem.itemId == R.id.action_settings) { findNavController().navigate(R.id.nav_settings); return true }
         return false
     }
 
-    override fun scrollToTop() {
-        binding.container.scrollTo(0, 0)
-        binding.appBarLayout.setExpanded(true)
-    }
+    override fun scrollToTop() { binding.container.scrollTo(0, 0); binding.appBarLayout.setExpanded(true) }
 }
