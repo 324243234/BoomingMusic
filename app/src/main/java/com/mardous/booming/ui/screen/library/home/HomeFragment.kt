@@ -235,28 +235,28 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 🌟 核心修复 1：利用协程并发，瞬间破解 outer/url 的 302 重定向，强转 HTTPS！
-                val deferreds = dailyJsonList.map { item ->
-                    kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
-                        val sid = item.optLong("id", 0L)
-                        var finalUrl = "https://music.163.com/song/media/outer/url?id=$sid.mp3"
-                        if (sid != 0L) {
-                            try {
-                                val conn = java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection
-                                conn.instanceFollowRedirects = false // 拦截 302 自动跳转
-                                conn.connectTimeout = 3000
-                                conn.requestMethod = "HEAD"
-                                val loc = conn.getHeaderField("Location")
-                                if (!loc.isNullOrEmpty()) {
-                                    finalUrl = loc.replace("http://", "https://") // 强转 HTTPS 避开安卓封杀
-                                }
-                            } catch (e: Exception) {}
+                // 🌟 核心修复 1：加入 coroutineScope 完美解决 async 语法编译报错
+                val realUrlsMap = kotlinx.coroutines.coroutineScope {
+                    dailyJsonList.map { item ->
+                        kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+                            val sid = item.optLong("id", 0L)
+                            var finalUrl = "https://music.163.com/song/media/outer/url?id=$sid.mp3"
+                            if (sid != 0L) {
+                                try {
+                                    val conn = java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection
+                                    conn.instanceFollowRedirects = false // 拦截 302 自动跳转
+                                    conn.connectTimeout = 3000
+                                    conn.requestMethod = "HEAD"
+                                    val loc = conn.getHeaderField("Location")
+                                    if (!loc.isNullOrEmpty()) {
+                                        finalUrl = loc.replace("http://", "https://") // 强转 HTTPS 避开安卓封杀
+                                    }
+                                } catch (e: Exception) {}
+                            }
+                            sid to finalUrl
                         }
-                        sid to finalUrl
-                    }
+                    }.map { it.await() }.toMap()
                 }
-                // 等待所有链接解析完成（30首歌并发仅需不到0.5秒）
-                val realUrlsMap = deferreds.map { it.await() }.toMap()
 
                 playlistId = repository.createPlaylist(PlaylistEntity(playlistName = plName))
                 val songEntities = mutableListOf<SongEntity>()
