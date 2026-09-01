@@ -630,39 +630,12 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
     ): Boolean {
-	
-	// 🌟 识别专属菜单，利用隐藏在 size 里的真实 ID 极速下载
+	// 👇 插入此处：网易云单曲极速下载
         if (menuItem.itemId == R.id.action_download_netease) {
             if (playlist.playlistEntity.playlistName != "网易云今日推荐") {
-                Toast.makeText(requireContext(), "此选项仅限网易云日推使用", Toast.LENGTH_SHORT).show()
-                return true
-            }
-            val realId = song.size
-            if (realId <= 0L) return true
-            
-            val appContext = requireContext().applicationContext
-            Toast.makeText(appContext, "正在极速下载: ${song.title}...", Toast.LENGTH_LONG).show()
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
-                    if (!targetDir.exists()) targetDir.mkdirs()
-                    
-                    val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                        id = realId, title = song.title, artist = song.artistName, album = song.albumName,
-                        picUrl = "", durationMs = song.duration, year = "", format = "flac",
-                        fileSizeStr = "ID极速直连", requestedLevel = "lossless"
-                    )
-                    val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(appContext, downloadItem, targetDir) { _ -> }
-                    
-                    withContext(Dispatchers.Main) {
-                        if (downloadedFile != null && downloadedFile.exists()) {
-                            Toast.makeText(appContext, "✅ 下载成功！已存入本地曲库", Toast.LENGTH_SHORT).show()
-                            libraryViewModel.forceReload(ReloadType.Songs)
-                        } else {
-                            Toast.makeText(appContext, "❌ 下载失败", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } catch (e: Exception) { e.printStackTrace() }
+                Toast.makeText(requireContext(), "该通道仅限网易云日推使用", Toast.LENGTH_SHORT).show()
+            } else {
+                downloadNeteaseSongById(song)
             }
             return true
         }
@@ -1003,6 +976,39 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
     )
 }
+
+       private fun downloadNeteaseSongById(song: Song) {
+        val realId = song.size // 直接调取隐藏的真实 ID
+        if (realId <= 0L) return
+        val appContext = requireContext().applicationContext
+        Toast.makeText(appContext, "正在调用底层引擎极速下载: ${song.title}...", Toast.LENGTH_LONG).show()
+
+        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
+                if (!targetDir.exists()) targetDir.mkdirs()
+
+                // 直击下载引擎，绕过所有的全网搜索
+                val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
+                    id = realId, title = song.title, artist = song.artistName, album = song.albumName,
+                    picUrl = "", durationMs = song.duration, year = "", format = "flac",
+                    fileSizeStr = "ID极速直连", requestedLevel = "lossless"
+                )
+                val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(appContext, downloadItem, targetDir) { _ -> }
+
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    if (downloadedFile != null && downloadedFile.exists()) {
+                        Toast.makeText(appContext, "✅ 下载成功！已存入本地曲库", Toast.LENGTH_SHORT).show()
+                        libraryViewModel.forceReload(com.mardous.booming.ui.screen.library.ReloadType.Songs)
+                    } else {
+                        Toast.makeText(appContext, "❌ 下载失败：服务器拒绝或版权受限", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(appContext, "网络异常: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
 
     companion object {
         const val TAG = "PlaylistDetail"
