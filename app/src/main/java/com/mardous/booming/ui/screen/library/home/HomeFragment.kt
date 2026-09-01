@@ -152,7 +152,8 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         binding.lastAdded.setOnClickListener(this)
         binding.history.setOnClickListener(this)
         binding.shuffleButton.setOnClickListener(this)
-		view?.findViewById<View>(R.id.dailyRecommendCard)?.setOnClickListener(this)
+		// 🌟 核心修复：强制从 binding.root 视图树中精确查找，防止 getView() 返回 null 导致监听器挂载失败
+        binding.root.findViewById<View>(R.id.dailyRecommendCard)?.setOnClickListener(this)
     }
 
     private fun checkIsEmpty() {
@@ -164,7 +165,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
     }
 
     override fun onClick(view: View) {
-        // 🌟 修复类型不匹配：将按键 ID 的判断提取到 when 外面
         if (view.id == R.id.dailyRecommendCard) {
             val appContext = requireContext().applicationContext
             val toast = android.widget.Toast.makeText(appContext, "正在获取今日专属推荐...", android.widget.Toast.LENGTH_SHORT)
@@ -173,7 +173,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
             viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     val dailyJsonList = com.mardous.booming.data.network.NeteaseDailyApi.fetchDailyRecommend(appContext)
-					val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
+                    val dailySongs = mutableListOf<com.mardous.booming.data.model.Song>()
                     var idOffset = 0L
 
                     for (item in dailyJsonList) {
@@ -186,9 +186,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                         } else "未知歌手"
 
                         val albumName = item.optJSONObject("al")?.optString("name") ?: "未知专辑"
+                        // 网易云音乐外链地址
                         val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
-                        // 🌟 修复构造函数匹配：补齐必填的默认参数
                         dailySongs.add(
                             com.mardous.booming.data.model.Song(
                                 id = (System.currentTimeMillis() * 1000) + idOffset++,
@@ -196,7 +196,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                                 title = item.optString("name", "未知歌曲"),
                                 trackNumber = 0,
                                 year = 0,
-                                size = songId, // 用 size 存网易云真实 ID
+                                size = songId, 
                                 duration = item.optLong("dt", 0L),
                                 dateAdded = System.currentTimeMillis(),
                                 rawDateModified = System.currentTimeMillis(),
@@ -215,17 +215,19 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                         if (dailySongs.isNotEmpty()) {
                             playerViewModel.openQueue(dailySongs, position = 0, startPlaying = true)
                         } else {
-                            android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(appContext, "今日推荐为空，请检查网络或Cookie", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (e: Exception) {
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         toast.cancel()
-                        android.widget.Toast.makeText(appContext, "加载失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        // 🌟 修复：防止 e.message 为空导致没任何提示，提供保底文字
+                        val errorMsg = e.message ?: "网络请求被拦截或超时"
+                        android.widget.Toast.makeText(appContext, "加载失败: $errorMsg", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
-            return // 命中每日推荐后直接返回
+            return 
         }
 
         // 原有的 when 继续处理其他按钮

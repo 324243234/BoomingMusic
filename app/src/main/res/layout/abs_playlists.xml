@@ -68,6 +68,7 @@
         app:cardElevation="0dp"
         android:clickable="true"
         android:focusable="true"
+		android:foreground="?android:attr/selectableItemBackground"
         app:layout_constraintTop_toBottomOf="@+id/history"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">

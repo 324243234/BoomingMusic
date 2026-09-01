@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 🌟 修复：将外层的高度改为 match_parent，并设置最小高度防止在平板上塌陷 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
+    android:minHeight="400dp"
     android:orientation="vertical"
     android:padding="16dp"
     android:background="?attr/colorSurface">
@@ -14,7 +16,6 @@
         android:textSize="18sp"
         android:textColor="?android:attr/textColorPrimary"/>
 
-    <!-- 🌟 新增：音质选择器 -->
     <RadioGroup
         android:id="@+id/rgQuality"
         android:layout_width="match_parent"
@@ -68,9 +69,11 @@
         android:layout_margin="16dp"
         android:visibility="gone"/>
 
+    <!-- 🌟 修复：使用 layout_weight="1" 自动撑满剩余空间，去掉死板的 250dp -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"
         android:layout_width="match_parent"
-        android:layout_height="250dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:layout_marginTop="8dp"/>
 </LinearLayout>

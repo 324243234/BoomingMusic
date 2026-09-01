@@ -32,6 +32,32 @@ class DownloadSheetFragment : BottomSheetDialogFragment() {
     
     // 🌟 内存防漏核心：持有当前正在进行的搜索任务
     private var searchJob: Job? = null 
+	
+	// 🌟 新增：重写 onStart()，强制展开解决平板大屏显示异常
+    override fun onStart() {
+        super.onStart()
+        val dialog = dialog as? BottomSheetDialog
+        val bottomSheet = dialog?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) as? FrameLayout
+        if (bottomSheet != null) {
+            val behavior = BottomSheetBehavior.from(bottomSheet)
+            
+            // 1. 强制完全展开状态，避免在平板上被折叠成一条缝
+            behavior.state = BottomSheetBehavior.STATE_EXPANDED
+            
+            // 2. 在平板上放开原本的 peekHeight 限制
+            behavior.skipCollapsed = true
+            
+            // 3. 在大屏/平板横屏下，限定 BottomSheet 最大宽度防止过宽拉伸，居中显示
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val isTablet = screenWidth > 600 * displayMetrics.density
+            if (isTablet) {
+                val layoutParams = bottomSheet.layoutParams
+                layoutParams.width = (500 * displayMetrics.density).toInt() // 限制在约 500dp 宽
+                bottomSheet.layoutParams = layoutParams
+            }
+        }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_download_sheet, container, false)
