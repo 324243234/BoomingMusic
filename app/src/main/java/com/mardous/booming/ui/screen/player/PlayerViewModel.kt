@@ -1,5 +1,8 @@
-package com.mardous.booming.ui.screen.player
+/*
+ * Copyright (c) 2024 Christians Martínez Alvarado
+ */
 
+package com.mardous.booming.ui.screen.player
 
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -67,23 +70,28 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.guava.await
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 播放前的最后一刻拦截：识别日推歌曲，即时解析真实有效地址喂给 ExoPlayer
+// 🌟 1. 列表转换：加入 Context 和协程，拦截并解析网易云流媒体真实 URL
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     mapNotNull { song ->
-        var targetSong = song
-        if (song.genreName == "Netease" && song.size > 0L) {
-            val realUrl = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealSongUrl(context, song.size)
-            if (!realUrl.isNullOrEmpty()) {
-                targetSong = song.copy(data = realUrl)
-            }
-        }
-        targetSong.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
+        song.toResolvedMediaItem(context)
     }
+}
+
+// 🌟 2. 单曲转换：通过 ExoPlayer Builder 直接覆盖 Uri，彻底避开 Song.copy 的参数报错！
+private suspend fun Song.toResolvedMediaItem(context: Context): MediaItem? = withContext(Dispatchers.IO) {
+    val originalItem = this@toResolvedMediaItem.toMediaItem()
+    if (originalItem == MediaItem.EMPTY) return@withContext null
+    
+    if (this@toResolvedMediaItem.genreName == "Netease" && this@toResolvedMediaItem.size > 0L) {
+        val realUrl = com.mardous.booming.data.network.NeteaseDailyApi.fetchRealSongUrl(context, this@toResolvedMediaItem.size)
+        if (!realUrl.isNullOrEmpty()) {
+            return@withContext originalItem.buildUpon().setUri(realUrl).build()
+        }
+    }
+    return@withContext originalItem
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -239,21 +247,19 @@ class PlayerViewModel(
         _playbackSpeed.value = playbackParameters.speed
     }
 
-    // 🌟 3. 还原为无参方法，那 4 个 Fragment 彻底不用改了！
     fun toggleFavorite() {
         val song = currentSong
         if (song == Song.emptySong) return
 
         when (song.getAudioSourceType()) {
             AudioSourceType.LOCAL -> {
-                // 本地歌曲走正常指令写入数据库
                 mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
             }
             AudioSourceType.RADIO -> {
-                handleRadioFavorite(appContext, song) // 直接使用注入的 appContext
+                handleRadioFavorite(appContext, song)
             }
             AudioSourceType.NETEASE -> {
-                handleNeteaseFavorite(appContext, song) // 直接使用注入的 appContext
+                handleNeteaseFavorite(appContext, song)
             }
             AudioSourceType.UNKNOWN -> {
                 Toast.makeText(appContext, "未知音频源", Toast.LENGTH_SHORT).show()
@@ -261,103 +267,97 @@ class PlayerViewModel(
         }
     }
 
+    private fun handleNeteaseFavorite(context: Context, song: Song) {
+        val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
+        Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
 
-// 🌟 2. 增加网易云专属处理器（结合全局 Toolbar 设置，智能匹配音质）
-private fun handleNeteaseFavorite(context: Context, song: Song) {
-    val targetQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
-    Toast.makeText(context, "❤️ 正在同步并匹配高音质下载...", Toast.LENGTH_SHORT).show()
-
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val realNeteaseId = song.size 
-            if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(context, realNeteaseId)
-			
-            val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
-            if (!targetDir.exists()) targetDir.mkdirs()
-
-            val query = "${song.artistName} ${song.title}"
-            var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
-
-            if (targetQuality == "flac") {
-    // 🌟 在括号最前面加上 context,
-    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "lossless")
-    targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
-} 
-
-if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
-    // 🌟 在括号最前面加上 context,
-    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "exhigh")
-    targetItem = results.firstOrNull()
-}
-
-            // 🌟 修复：去掉 .toString() 直接传 Long，将 year 设为数字 0
-            val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                id = realNeteaseId, 
-                title = song.title,
-                artist = song.artistName,
-                album = song.albumName,
-                picUrl = "", 
-                durationMs = song.duration,
-                year = "",
-                format = "mp3",
-                fileSizeStr = "标准音质兜底",
-                requestedLevel = targetQuality 
-            )
-
-            val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
-
-            if (downloadedFile != null && downloadedFile.exists()) {
-                kotlinx.coroutines.delay(1500)
-                val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
-                if (localSong != Song.emptySong) {
-                    repository.toggleFavorite(localSong) 
-                }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val realNeteaseId = song.size 
+                if (realNeteaseId > 0) com.mardous.booming.data.network.NeteaseDailyApi.likeSong(context, realNeteaseId)
                 
-                withContext(Dispatchers.Main) { 
-                    val qualityText = when {
-                        finalDownloadItem.format.equals("flac", ignoreCase = true) -> "无损 FLAC"
-                        targetItem != null -> "320k 高级 MP3"
-                        else -> "128k 标准音质"
-                    }
-                    Toast.makeText(context, "✅ 已保存 [$qualityText]", Toast.LENGTH_SHORT).show() 
+                val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
+                if (!targetDir.exists()) targetDir.mkdirs()
+
+                val query = "${song.artistName} ${song.title}"
+                var targetItem: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem? = null
+
+                if (targetQuality == "flac") {
+                    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "lossless")
+                    targetItem = results.firstOrNull { it.format.equals("flac", ignoreCase = true) }
+                } 
+
+                if (targetItem == null && (targetQuality == "flac" || targetQuality == "320k")) {
+                    val results = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.searchOrParse(context, query, "exhigh")
+                    targetItem = results.firstOrNull()
                 }
-            } else {
-                withContext(Dispatchers.Main) { Toast.makeText(context, "同步成功，下载失败", Toast.LENGTH_SHORT).show() }
+
+                val finalDownloadItem = targetItem ?: com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
+                    id = realNeteaseId, 
+                    title = song.title,
+                    artist = song.artistName,
+                    album = song.albumName,
+                    picUrl = "", 
+                    durationMs = song.duration,
+                    year = "",
+                    format = "mp3",
+                    fileSizeStr = "标准音质兜底",
+                    requestedLevel = targetQuality 
+                )
+
+                val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, finalDownloadItem, targetDir) { _ -> }
+
+                if (downloadedFile != null && downloadedFile.exists()) {
+                    kotlinx.coroutines.delay(1500)
+                    val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
+                    if (localSong != Song.emptySong) {
+                        repository.toggleFavorite(localSong) 
+                    }
+                    
+                    withContext(Dispatchers.Main) { 
+                        val qualityText = when {
+                            finalDownloadItem.format.equals("flac", ignoreCase = true) -> "无损 FLAC"
+                            targetItem != null -> "320k 高级 MP3"
+                            else -> "128k 标准音质"
+                        }
+                        Toast.makeText(context, "✅ 已保存 [$qualityText]", Toast.LENGTH_SHORT).show() 
+                    }
+                } else {
+                    withContext(Dispatchers.Main) { Toast.makeText(context, "同步成功，下载失败", Toast.LENGTH_SHORT).show() }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
-}
 
-// 🌟 3. 增加电台专属处理器（物理防串扰）
-private fun handleRadioFavorite(context: Context, song: Song) {
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val radioFavName = "[Radio]我的收藏"
-            var playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
-            if (playlistId == null) {
-                playlistId = repository.createPlaylist(PlaylistEntity(playlistName = radioFavName))
-            }
-            
-            val existingSongs = repository.playlistSongs(playlistId)
-            if (existingSongs.any { it.data == song.data }) {
-                withContext(Dispatchers.Main) { Toast.makeText(context, "已取消电台收藏", Toast.LENGTH_SHORT).show() }
-            } else {
-                val radioEntity = com.mardous.booming.data.local.room.SongEntity(
-                    id = (System.currentTimeMillis() * 1000), 
-                    title = song.title, artistName = song.artistName, albumName = song.albumName,
-                    duration = 0L, data = song.data, playlistCreatorId = playlistId,
-                    trackNumber = 0, year = 0, size = 0L,
-                    dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
-                    albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
-                )
-                repository.insertSongsInPlaylist(listOf(radioEntity))
-                withContext(Dispatchers.Main) { Toast.makeText(context, "❤️ 已收藏至电台列表", Toast.LENGTH_SHORT).show() }
-            }
-        } catch (e: Exception) { e.printStackTrace() }
+    private fun handleRadioFavorite(context: Context, song: Song) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val radioFavName = "[Radio]我的收藏"
+                var playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
+                if (playlistId == null) {
+                    playlistId = repository.createPlaylist(PlaylistEntity(playlistName = radioFavName))
+                }
+                
+                val existingSongs = repository.playlistSongs(playlistId)
+                if (existingSongs.any { it.data == song.data }) {
+                    withContext(Dispatchers.Main) { Toast.makeText(context, "已取消电台收藏", Toast.LENGTH_SHORT).show() }
+                } else {
+                    val radioEntity = com.mardous.booming.data.local.room.SongEntity(
+                        id = (System.currentTimeMillis() * 1000), 
+                        title = song.title, artistName = song.artistName, albumName = song.albumName,
+                        duration = 0L, data = song.data, playlistCreatorId = playlistId,
+                        trackNumber = 0, year = 0, size = 0L,
+                        dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
+                        albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
+                    )
+                    repository.insertSongsInPlaylist(listOf(radioEntity))
+                    withContext(Dispatchers.Main) { Toast.makeText(context, "❤️ 已收藏至电台列表", Toast.LENGTH_SHORT).show() }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
     }
-}
 
     fun cycleRepeatMode() {
         mediaController?.sendCustomCommand(SessionCommand(Playback.CYCLE_REPEAT, Bundle.EMPTY), Bundle.EMPTY)
@@ -471,7 +471,7 @@ private fun handleRadioFavorite(context: Context, song: Song) {
         sortMode: SongSortMode
     ) = liveData {
         val mediaItems = withContext(IO) {
-            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems()
+            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems(appContext)
         }
         if (mediaItems.isNotEmpty()) {
             mediaController?.let { controller ->
@@ -499,7 +499,7 @@ private fun handleRadioFavorite(context: Context, song: Song) {
         if (shuffleOperationState.value.isIdle) {
             _shuffleOperationState.value = ShuffleOperationState(mode, ShuffleOperationState.Status.InProgress)
             val mediaItems = withContext(IO) {
-                shuffleManager.applySmartShuffle(songs, mode).toMediaItems()
+                shuffleManager.applySmartShuffle(songs, mode).toMediaItems(appContext)
             }
             if (mediaItems.isNotEmpty()) {
                 mediaController?.let { controller ->
@@ -563,16 +563,22 @@ private fun handleRadioFavorite(context: Context, song: Song) {
         }
     }
 
+    // 🌟 修改点：给所有的“下一首”等非挂起函数补上协程支持，避免编译期 Suspend 报错
     fun queueNext(song: Song) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
-                var nextIndex = position.getIndexForPosition(position.next)
-                if (nextIndex == C.INDEX_UNSET) {
-                    nextIndex = controller.mediaItemCount
+                viewModelScope.launch {
+                    var nextIndex = position.getIndexForPosition(position.next)
+                    if (nextIndex == C.INDEX_UNSET) {
+                        nextIndex = controller.mediaItemCount
+                    }
+                    val item = song.toResolvedMediaItem(appContext)
+                    if (item != null) {
+                        controller.addMediaItem(nextIndex, item)
+                    }
                 }
-                controller.addMediaItem(nextIndex, song.toMediaItem())
             }
         }
     }
@@ -582,11 +588,14 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                var nextIndex = position.getIndexForPosition(position.next)
-                if (nextIndex == C.INDEX_UNSET) {
-                    nextIndex = controller.mediaItemCount
+                viewModelScope.launch {
+                    var nextIndex = position.getIndexForPosition(position.next)
+                    if (nextIndex == C.INDEX_UNSET) {
+                        nextIndex = controller.mediaItemCount
+                    }
+                    val items = withContext(IO) { songs.toMediaItems(appContext) }
+                    controller.addMediaItems(nextIndex, items)
                 }
-                controller.addMediaItems(nextIndex, songs.toMediaItems())
             }
         }
     }
@@ -596,11 +605,16 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
-                val toIndex = position.getIndexForPosition(toPosition)
-                if (toPosition >= 0 && toIndex >= 0) {
-                    controller.addMediaItem(toIndex, song.toMediaItem())
-                } else {
-                    controller.addMediaItem(song.toMediaItem())
+                viewModelScope.launch {
+                    val toIndex = position.getIndexForPosition(toPosition)
+                    val item = song.toResolvedMediaItem(appContext)
+                    if (item != null) {
+                        if (toPosition >= 0 && toIndex >= 0) {
+                            controller.addMediaItem(toIndex, item)
+                        } else {
+                            controller.addMediaItem(item)
+                        }
+                    }
                 }
             }
         }
@@ -611,7 +625,10 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                controller.addMediaItems(songs.toMediaItems())
+                viewModelScope.launch {
+                    val items = withContext(IO) { songs.toMediaItems(appContext) }
+                    controller.addMediaItems(items)
+                }
             }
         }
     }
@@ -717,12 +734,10 @@ private fun handleRadioFavorite(context: Context, song: Song) {
             Log.e(TAG, "Failed to load color scheme", result.exceptionOrNull())
         }
     }
-	// 🌟 2. 利用 Koin 全局无感注入 ApplicationContext，彻底解放 UI 层
+
     private val appContext: Context by inject()
 
     companion object {
         private const val TAG = "PlayerViewModel"
     }
-	
-	
 }
