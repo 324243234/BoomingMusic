@@ -1,5 +1,8 @@
 package com.mardous.booming.ui.dialogs
 
+import android.widget.FrameLayout
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
