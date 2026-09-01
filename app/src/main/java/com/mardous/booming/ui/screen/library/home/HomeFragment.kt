@@ -87,7 +87,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
 
     private var _binding: HomeBinding? = null
     private val binding get() = _binding!!
-	// 🌟 新增：注入 Repository 以便将网络日推转化为本地可视歌单
+    // 🌟 注入 Repository 以便将网络日推转化为本地可视歌单
     private val repository: Repository by inject()
 
     private var homeAdapter: HomeAdapter? = null
@@ -159,7 +159,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         binding.lastAdded.setOnClickListener(this)
         binding.history.setOnClickListener(this)
         binding.shuffleButton.setOnClickListener(this)
-		// 🌟 核心修复：强制从 binding.root 视图树中精确查找，防止 getView() 返回 null 导致监听器挂载失败
+        // 🌟 核心修复：强制从 binding.root 视图树中精确查找
         binding.root.findViewById<View>(R.id.dailyRecommendCard)?.setOnClickListener {
             handleDailyRecommendClick()
         }
@@ -174,7 +174,6 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
     }
 
     override fun onClick(view: View) {
-        // 🌟 删除了旧的每日推荐逻辑，只保留原有的分类按钮跳转
         when (view) {
             binding.myTopTracks -> {
                 findNavController().navigate(R.id.nav_detail_list, detailArgs(ContentType.TopTracks))
@@ -192,23 +191,23 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
             }
         }
     }
-	
-	// 🌟 将网络请求转化为带“自动清盘”功能的本地临时歌单
+
+    // 🌟 将网络请求转化为带“自动清盘”功能的本地临时歌单 (完美洁癖版)
     private fun handleDailyRecommendClick() {
         val appContext = requireContext().applicationContext
         val prefs = appContext.getSharedPreferences("netease_api_prefs", android.content.Context.MODE_PRIVATE)
-        // 获取今日日期标识
         val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         val lastDate = prefs.getString("last_daily_date", "")
         val plName = "网易云今日推荐"
 
         viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                // 1. 查找本地是否存在该专属歌单
-                var playlistId = repository.checkPlaylistExists(plName).firstOrNull()?.playListId
+                // 1. 明确声明类型，防止 Kotlin 泛型推导崩溃
+                val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
+                var playlistId: Long? = existingPlaylists.firstOrNull()?.playListId
 
                 if (playlistId != null && lastDate == todayStr) {
-                    // 今日已拉取过，直接秒开本地歌单！
+                    // 今日已拉取过，直接秒开本地歌单
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         findNavController().navigate(
                             R.id.nav_playlist_detail, 
@@ -218,9 +217,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 2. 🌟 阅后即焚：如果是第二天（跨天了），且旧歌单存在，直接清空昨日数据
-                if (playlistId != null && lastDate != todayStr) {
-                    runCatching { repository.deletePlaylist(playlistId!!) }
+                // 2. 🌟 阅后即焚：调用底层合法的 deletePlaylists 接口，执行真正的物理清除！不留任何历史垃圾！
+                if (existingPlaylists.isNotEmpty() && lastDate != todayStr) {
+                    runCatching { repository.deletePlaylists(existingPlaylists) }
                     playlistId = null
                 }
 
@@ -236,9 +235,9 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     return@launch
                 }
 
-                // 3. 重建今日专属歌单
-                playlistId = repository.createPlaylist(com.mardous.booming.data.local.room.PlaylistEntity(playlistName = plName))
-                val songEntities = mutableListOf<com.mardous.booming.data.local.room.SongEntity>()
+                // 3. 重建干干净净的今日专属歌单
+                playlistId = repository.createPlaylist(PlaylistEntity(playlistName = plName))
+                val songEntities = mutableListOf<SongEntity>()
                 var idOffset = 0L
 
                 for (item in dailyJsonList) {
@@ -254,7 +253,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                     val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
 
                     songEntities.add(
-                        com.mardous.booming.data.local.room.SongEntity(
+                        SongEntity(
                             id = (System.currentTimeMillis() * 1000) + idOffset++,
                             data = playUrl,
                             title = item.optString("name", "未知歌曲"),
@@ -270,7 +269,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                             artistName = artistName,
                             albumArtist = artistName,
                             genreName = "Netease",
-                            playlistCreatorId = playlistId // 🌟 挂载到今日新建的歌单中
+                            playlistCreatorId = playlistId!! // 挂载到刚建好的空歌单中
                         )
                     )
                 }
@@ -279,7 +278,7 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
                 repository.insertSongsInPlaylist(songEntities)
                 prefs.edit().putString("last_daily_date", todayStr).apply()
 
-                // 4. 丝滑跳转到刚刚生成的歌单详情页
+                // 4. 丝滑跳转到歌单详情页
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
                     findNavController().navigate(
                         R.id.nav_playlist_detail, 
