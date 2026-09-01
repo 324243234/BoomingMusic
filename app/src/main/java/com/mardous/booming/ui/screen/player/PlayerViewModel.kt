@@ -74,11 +74,11 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极核心：拦截 netease:// 协议，即时替换为真实直链，完美保留原生元数据与 UI 渲染
+// 🌟 终极核心：拦截并剔除本地斜杠 + 遭遇 VIP 封锁时无缝切换全网聚合源
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     val neteaseIds = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }.map { it.size }
     
-    // 即时向接口索要最新鲜的、带有合法 Token 的 CDN 链接
+    // 即时向接口索要最新鲜的、带有合法 Token 的官方 CDN 链接
     val freshUrls = if (neteaseIds.isNotEmpty()) {
         com.mardous.booming.data.network.NeteaseDailyApi.fetchRealUrls(context, neteaseIds)
     } else {
@@ -86,36 +86,46 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
     }
 
     mapNotNull { song ->
-        // 调用原生的 toMediaItem()，此时 UI 会因为 netease:// 完美生成包含标题、歌手的元数据
         val originalItem = song.toMediaItem()
         if (originalItem == MediaItem.EMPTY) return@mapNotNull null
 
         var finalUrl = song.data ?: ""
         
-        // 兼容切除旧版错误留下的斜杠 BUG
+        // 🗡️ 完美切除历史旧歌单中残留的斜杠 BUG
         if (finalUrl.startsWith("/http")) {
+            finalUrl = finalUrl.substring(1)
+        } else if (finalUrl.startsWith("/netease://")) {
             finalUrl = finalUrl.substring(1)
         }
 
-        // 🌟 拦截我们的木马协议 netease://，换回真实的流媒体播放地址给播放器
+        // 核心直链替换逻辑
         if (song.genreName == "Netease" && song.size > 0L) {
             val freshUrl = freshUrls[song.size]
             if (!freshUrl.isNullOrEmpty()) {
+                // 1. 官方 API 成功解析出免 VIP 真实直链，直接使用
                 finalUrl = freshUrl
-            } else if (finalUrl.startsWith("netease://")) {
-                // 如果 API 没查到，使用 302 兜底外链
-                finalUrl = "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
+            } else {
+                // 2. 🌟 洛雪级特权兜底：官方拒绝访问的 VIP 歌曲，直接走全网开源音源聚合接口（Meting API），无视网易云封锁返回可播直链！
+                finalUrl = "https://api.injahow.cn/meting/?server=netease&type=url&id=${song.size}"
             }
         }
 
-        // 路径替换为真实链接，但绝对保留 originalItem 的完美元数据！
-        if (finalUrl != song.data) {
-            originalItem.buildUpon()
-                .setUri(Uri.parse(finalUrl))
-                .build()
-        } else {
-            originalItem
-        }
+        if (finalUrl.isEmpty()) return@mapNotNull null
+
+        // 强行注入 MediaMetadata 完美保留歌名、歌手，彻底防电台误判！
+        MediaItem.Builder()
+            .setMediaId(song.id.toString())
+            .setUri(Uri.parse(finalUrl))
+            .setMediaMetadata(
+                androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artistName)
+                    .setAlbumTitle(song.albumName)
+                    .setAlbumArtist(song.artistName)
+                    .setGenre(song.genreName)
+                    .build()
+            )
+            .build()
     }
 }
 
