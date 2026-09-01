@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Christians Martínez Alvarado
+ * Copyright (c) 2025 Christians Mart铆nez Alvarado
  */
 
 package com.mardous.booming.ui.screen.library.folders
@@ -74,7 +74,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
     private lateinit var songAdapter: SongAdapter
     
-    // 🌟 用于记录当前播放歌曲是否在列表中，辅助滑动显隐判断
+    // 馃専 鐢ㄤ簬璁板綍褰撳墠鎾斁姝屾洸鏄惁鍦ㄥ垪琛ㄤ腑锛岃緟鍔╂粦鍔ㄦ樉闅愬垽鏂?
     private var isCurrentSongInList = false
 
     private val folder: Folder
@@ -88,7 +88,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
         view.applyHorizontalWindowInsets()
 
-        // 🌟 动态适配 Mini 播放器高度与 FAB 位置
+        // 馃専 鍔ㄦ€侀€傞厤 Mini 鎾斁鍣ㄩ珮搴︿笌 FAB 浣嶇疆
         libraryViewModel.getMiniPlayerMargin().observe(viewLifecycleOwner) {
             val bottomOffset = it.getWithSpace()
             binding.recyclerView.updatePadding(bottom = bottomOffset)
@@ -111,7 +111,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             songs(it.songs)
         }
 
-        // 🌟 修复点：直接使用已导包的 lifecycleScope.launch，完美实时侦听当前正在播放的歌曲
+        // 馃専 淇鐐癸細鐩存帴浣跨敤宸插鍖呯殑 lifecycleScope.launch锛屽畬缇庡疄鏃朵睛鍚綋鍓嶆鍦ㄦ挱鏀剧殑姝屾洸
         viewLifecycleOwner.lifecycleScope.launch {
             playerViewModel.currentSongFlow.collect { currentSong ->
                 checkCurrentSongInFolder(currentSong)
@@ -158,7 +158,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "解析媒体库 Uri 失败", e)
+            Log.e(TAG, "瑙ｆ瀽濯掍綋搴?Uri 澶辫触", e)
         }
         return null
     }
@@ -205,7 +205,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                 MediaScannerConnection.scanFile(requireContext(), arrayOf(songFile.absolutePath), null, null)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "写入崩溃", e)
+            Log.e(TAG, "鍐欏叆宕╂簝", e)
         } finally {
             if (tempFile.exists()) tempFile.delete() 
         }
@@ -233,15 +233,15 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             layoutManager = LinearLayoutManager(requireContext())
             adapter = songAdapter
             
-            // 🌟 滚动监听：向下滑动隐藏，向上滑动显示
+            // 馃専 婊氬姩鐩戝惉锛氬悜涓嬫粦鍔ㄩ殣钘忥紝鍚戜笂婊戝姩鏄剧ず
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                     super.onScrolled(recyclerView, dx, dy)
                     val fab = view?.findViewById<FloatingActionButton>(R.id.fabLocateSong) ?: return
                     if (dy > 0 && fab.isShown) {
-                        fab.hide() // 系统原生的收缩消失动画
+                        fab.hide() // 绯荤粺鍘熺敓鐨勬敹缂╂秷澶卞姩鐢?
                     } else if (dy < 0 && isCurrentSongInList && !fab.isShown) {
-                        fab.show() // 系统原生的弹现动画
+                        fab.show() // 绯荤粺鍘熺敓鐨勫脊鐜板姩鐢?
                     }
                 }
             })
@@ -258,7 +258,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             buildInfoString(songs.songCountStr(requireContext()), songs.songsDurationStr())
         songAdapter.dataSet = songs
         
-        // 🌟 载入数据后立刻校验定位按钮的状态
+        // 馃専 杞藉叆鏁版嵁鍚庣珛鍒绘牎楠屽畾浣嶆寜閽殑鐘舵€?
         checkCurrentSongInFolder(playerViewModel.currentSongFlow.value)
     }
 
@@ -269,7 +269,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
     ): Boolean {
         return when (menuItem.itemId) {
             R.id.action_fetch_ttml -> {
-                val toast = Toast.makeText(requireContext(), "正在获取: ${song.title} 的TTML...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "姝ｅ湪鑾峰彇: ${song.title} 鐨凾TML...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val ttmlContent = com.mardous.booming.data.local.lyrics.ttml.TtmlFetcher.fetchTtmlForSong(song)
@@ -281,14 +281,14 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                                 val parentDir = songFile.parentFile
                                 if (parentDir != null && parentDir.exists()) {
                                     File(parentDir, "${songFile.nameWithoutExtension}.ttml").writeText(ttmlContent)
-                                    Toast.makeText(requireContext(), "TTML 获取成功！", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(requireContext(), "TTML 鑾峰彇鎴愬姛锛?, Toast.LENGTH_SHORT).show()
                                     lyricsRepository.clearMemoryCache()
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(requireContext(), "保存失败：请检查读写权限", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "淇濆瓨澶辫触锛氳妫€鏌ヨ鍐欐潈闄?, Toast.LENGTH_SHORT).show()
                             }
                         } else {
-                            Toast.makeText(requireContext(), "未找到该歌曲的逐字歌词", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "鏈壘鍒拌姝屾洸鐨勯€愬瓧姝岃瘝", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -296,7 +296,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
 
             R.id.action_fetch_lrc -> {
-                val toast = Toast.makeText(requireContext(), "正在获取 LRC: ${song.title}...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "姝ｅ湪鑾峰彇 LRC: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = true, needCover = false)
@@ -316,17 +316,17 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             lyricsRepository.clearMemoryCache()
-                            withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 获取成功！", Toast.LENGTH_SHORT).show() }
+                            withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "LRC 鑾峰彇鎴愬姛锛?, Toast.LENGTH_SHORT).show() }
                         }
                     } else { 
-                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应歌词", Toast.LENGTH_SHORT).show() } 
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "鏈壘鍒板搴旀瓕璇?, Toast.LENGTH_SHORT).show() } 
                     }
                 }
                 true
             }
 
             R.id.action_fetch_cover -> {
-                val toast = Toast.makeText(requireContext(), "正在获取封面: ${song.title}...", Toast.LENGTH_LONG)
+                val toast = Toast.makeText(requireContext(), "姝ｅ湪鑾峰彇灏侀潰: ${song.title}...", Toast.LENGTH_LONG)
                 toast.show()
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     val result = com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(song, needLrc = false, needCover = true)
@@ -342,7 +342,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         if (success) {
                             try { repository.updatePlaylistsContainingIds(listOf(song.id)) } catch (e: Exception) {}
                             
-                            // 💥 终极防竞争等待：确保底层 IO 操作 100% 结束且所有旧图读取任务超时
+                            // 馃挜 缁堟瀬闃茬珵浜夌瓑寰咃細纭繚搴曞眰 IO 鎿嶄綔 100% 缁撴潫涓旀墍鏈夋棫鍥捐鍙栦换鍔¤秴鏃?
                             delay(500)
                             
                             try {
@@ -355,13 +355,13 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                             libraryViewModel.forceReload(ReloadType.Playlists)
                             
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(requireContext(), "封面获取成功！", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "灏侀潰鑾峰彇鎴愬姛锛?, Toast.LENGTH_SHORT).show()
                                 detailViewModel.loadDetail()
                                 songAdapter.notifyDataSetChanged()
                             }
                         }
                     } else { 
-                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "未找到对应封面", Toast.LENGTH_SHORT).show() } 
+                        withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "鏈壘鍒板搴斿皝闈?, Toast.LENGTH_SHORT).show() } 
                     }
                 }
                 true
@@ -375,7 +375,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
         when (menuItem.itemId) {
             R.id.action_fetch_ttml -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "正在后台为 ${songs.size} 首歌曲获取 TTML...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "姝ｅ湪鍚庡彴涓?${songs.size} 棣栨瓕鏇茶幏鍙?TTML...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -395,7 +395,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             lyricsRepository.clearMemoryCache()
-                            Toast.makeText(requireContext(), "批量获取 TTML 完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "鎵归噺鑾峰彇 TTML 瀹屾垚: 鎴愬姛 $successCount/${songs.size} 棣?, Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -403,7 +403,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
             R.id.action_fetch_lrc -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取 LRC 歌词...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "姝ｅ湪涓?${songs.size} 棣栨瓕鑾峰彇 LRC 姝岃瘝...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -434,7 +434,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         withContext(Dispatchers.Main) {
                             toast.cancel()
                             lyricsRepository.clearMemoryCache()
-                            Toast.makeText(requireContext(), "LRC 批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "LRC 鎵归噺鑾峰彇瀹屾垚: 鎴愬姛 $successCount/${songs.size} 棣?, Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -442,7 +442,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
 
             R.id.action_fetch_cover -> {
                 if (songs.isNotEmpty()) {
-                    val toast = Toast.makeText(requireContext(), "正在为 ${songs.size} 首歌获取高清封面...", Toast.LENGTH_LONG)
+                    val toast = Toast.makeText(requireContext(), "姝ｅ湪涓?${songs.size} 棣栨瓕鑾峰彇楂樻竻灏侀潰...", Toast.LENGTH_LONG)
                     toast.show()
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         var successCount = 0
@@ -478,7 +478,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
                         
                         withContext(Dispatchers.Main) {
                             toast.cancel()
-                            Toast.makeText(requireContext(), "静态封面批量获取完成: 成功 $successCount/${songs.size} 首", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "闈欐€佸皝闈㈡壒閲忚幏鍙栧畬鎴? 鎴愬姛 $successCount/${songs.size} 棣?, Toast.LENGTH_SHORT).show()
                             if (successIds.isNotEmpty()) {
                                 detailViewModel.loadDetail()
                                 songAdapter.notifyDataSetChanged()
@@ -507,7 +507,7 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
             
             item.itemId == R.id.action_download_music -> {
-                // ��Ȼ DownloadSheetFragment �ڲ��Ѿ�ͳһ�ӹ���·��������ֱ���޲ε��ü���
+                // 既然 DownloadSheetFragment 内部已经统一接管了路径，这里直接无参调用即可
            com.mardous.booming.ui.dialogs.DownloadSheetFragment().show(childFragmentManager, "DL")
             true
             }
