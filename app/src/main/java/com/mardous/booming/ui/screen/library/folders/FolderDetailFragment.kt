@@ -507,9 +507,9 @@ class FolderDetailFragment : AbsMainActivityFragment(R.layout.fragment_detail_li
             }
             
             item.itemId == R.id.action_download_music -> {
-                val targetDir = File(arguments.extraFolderPath)
-                com.mardous.booming.ui.dialogs.DownloadSheetFragment(targetDir).show(childFragmentManager, "DL")
-                true
+                // 既然 DownloadSheetFragment 内部已经统一接管了路径，这里直接无参调用即可
+           com.mardous.booming.ui.dialogs.DownloadSheetFragment().show(childFragmentManager, "DL")
+            true
             }
 
             item.itemId == R.id.action_search -> {
