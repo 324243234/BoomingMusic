@@ -249,6 +249,11 @@ class FoldersListFragment : AbsRecyclerViewCustomGridSizeFragment<FileAdapter, G
             return true
         }
         when (item.itemId) {
+		// 🌟 新增：拦截主菜单的下载按钮点击事件
+            R.id.action_download_music -> {
+                com.mardous.booming.ui.dialogs.DownloadSheetFragment().show(childFragmentManager, "DL")
+                return true
+            }
             R.id.action_hierarchy_view -> {
                 val isChecked = !item.isChecked
                 Preferences.hierarchyFolderView = isChecked
