@@ -15,41 +15,55 @@ import java.util.Locale
 object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
 
+    // 🌟 终极防封杀方案：内置全国核心重点电台的固定频道 ID（绕过易被拦截的搜索接口）
+    private val KNOWN_STATIONS = mapOf(
+        "中国之声" to 386, "经济之声" to 388, "音乐之声" to 387, "经典音乐广播" to 389, 
+        "中华之声" to 390, "神州之声" to 391, "华夏之声" to 392, "环球资讯广播" to 1005,
+        "大湾区之声" to 4898, "台海之声" to 5424, "中国交通广播" to 4945, "中国乡村之声" to 4930,
+
+        "北京交通广播" to 1006, "北京音乐广播" to 1004, "北京新闻广播" to 1007,
+        "上海交通广播" to 1051, "动感101" to 1045, "LoveRadio" to 1044, "上海新闻广播" to 1043,
+        "广东羊城交通台" to 1198, "广东音乐之声" to 1196, "珠江经济台" to 1197, "广州交通电台" to 1206,
+        "深圳交通广播" to 1256, "深圳音乐广播" to 1255, "深圳新闻频率" to 1254,
+        
+        "浙江交通之声" to 4892, "浙江音乐调频" to 1133, "杭州交通经济广播" to 1144,
+        "江苏交通广播" to 1099, "江苏音乐台" to 1100, "南京交通广播" to 1113,
+        "四川交通广播" to 1342, "四川音乐广播" to 1344, "成都交通广播" to 1358,
+        "湖南交通广播" to 1213, "楚天交通广播" to 1184, "湖北交通广播" to 1184,
+        "福建交通广播" to 1238, "山东交通广播" to 1083, "河南交通广播" to 1157,
+        "安徽交通广播" to 1121, "河北交通广播" to 1072, "辽宁交通广播" to 1018,
+        "陕西交通广播" to 1374, "重庆交通广播" to 1332, "天津交通广播" to 1012,
+        "黑龙江交通广播" to 1029,"吉林交通广播" to 1023,"江西交通广播" to 1226
+    )
+
     suspend fun fetchEpgForRadio(stationName: String): String = withContext(Dispatchers.IO) {
-        // 🌟 1. 终极名称清洗引擎：剔除 FM/AM、频率、括号、横杠、分辨率、直播等“脏后缀”
+        // 1. 强力清洗电台名称
         val cleanName = stationName
-            .replace(Regex("""(?i)\[Radio\]"""), "") // 剥离本地注入的前缀
-            .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "") // 剥离 FM103.9, AM747 等
-            .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "") // 剥离所有括号及内部内容
-            .replace(Regex("""(?i)(高清|测试|网络|直播).*$"""), "") // 剥离转播源特征词汇
-            .replace(Regex("""\s+"""), "") // 消除残留空格
+            .replace(Regex("""(?i)\[Radio\]"""), "")
+            .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "")
+            .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "")
+            .replace(Regex("""(?i)(高清|测试|网络|直播).*$"""), "")
+            .replace(Regex("""\s+"""), "")
             .trim()
 
         if (cleanName.isEmpty()) return@withContext "📻 当前电台：$stationName\n暂无节目单数据"
 
         try {
+            // 🌟 2. 优先命中本地防封杀白名单 (包含关系匹配，比如 "FM103.9北京交通广播" 也能命中 "北京交通广播")
             var channelId = -1
-            
-            // 🌟 2. 方案 A：使用稳定的 WAPI 聚合接口
-            val searchUrlA = "https://i.qingting.fm/wapi/search?kw=${Uri.encode(cleanName)}&pi=1&pz=5"
-            val searchResA = httpGet(searchUrlA)
-            
-            if (searchResA != null) {
-                val dataObj = JSONObject(searchResA).optJSONObject("data")
-                // WAPI 返回的是 channels 数组
-                val channels = dataObj?.optJSONArray("channels")
-                if (channels != null && channels.length() > 0) {
-                    channelId = channels.getJSONObject(0).optInt("id", -1)
+            for ((key, id) in KNOWN_STATIONS) {
+                if (cleanName.contains(key) || key.contains(cleanName)) {
+                    channelId = id
+                    break
                 }
             }
 
-            // 🌟 3. 方案 B：如果 A 失败，无缝切换 V3 搜索接口兜底
+            // 3. 如果本地白名单没命中，再尝试用搜索接口兜底
             if (channelId == -1) {
-                val searchUrlB = "https://search.qingting.fm/v3/search?k=${Uri.encode(cleanName)}&t=channel"
-                val searchResB = httpGet(searchUrlB)
-                if (searchResB != null) {
-                    val dataObj = JSONObject(searchResB).optJSONObject("data")
-                    // V3 返回的是 data 数组
+                val searchUrl = "https://search.qingting.fm/v3/search?k=${Uri.encode(cleanName)}&t=channel"
+                val searchRes = httpGet(searchUrl)
+                if (searchRes != null) {
+                    val dataObj = JSONObject(searchRes).optJSONObject("data")
                     val channels = dataObj?.optJSONArray("data")
                     if (channels != null && channels.length() > 0) {
                         channelId = channels.getJSONObject(0).optInt("id", -1)
@@ -57,12 +71,11 @@ object RadioEpgFetcher {
                 }
             }
 
-            // 依然查不到，说明是非主流网络台或彻底改名，执行优雅退出
             if (channelId == -1) {
                 return@withContext "📻 正在收听：$cleanName\n\n📡 纯享直播流，未匹配到该台的排期数据"
             }
 
-            // 🌟 4. 根据 Channel ID 获取今日节目单
+            // 🌟 4. 拉取真正的时间排期数据 (这个接口不限制 sign，绝对稳定)
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
             val cal = Calendar.getInstance()
@@ -78,7 +91,6 @@ object RadioEpgFetcher {
             sb.append("📡 ").append(cleanName).append(" 今日节目单\n")
             sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
 
-            // 🌟 5. 格式化排版并高亮当前时段
             for (i in 0 until programsArray.length()) {
                 val prog = programsArray.getJSONObject(i)
                 val title = prog.optString("title", "未知节目")
@@ -99,7 +111,6 @@ object RadioEpgFetcher {
                 if (startTime.length >= 5 && endTime.length >= 5) {
                     val sMin = timeToMinutes(startTime)
                     val eMin = timeToMinutes(endTime)
-                    // 精准比对当天系统时钟，打上“正在直播”标签
                     if (currentMinutes in sMin until eMin) {
                         prefix = "🔴 [正在直播] "
                     } else if (currentMinutes >= eMin) {
@@ -131,16 +142,15 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 6. 严苛的防爬伪装头部
     private fun httpGet(urlString: String): String? {
         var conn: HttpURLConnection? = null
         return try {
             conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
-            conn.setRequestProperty("Referer", "https://www.qingting.fm/") // 绕过防盗链核心
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            // 伪装微信浏览器头部，降低被拦截概率
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 11; MicroMessenger/8.0.15) AppleWebKit/537.36")
+            conn.setRequestProperty("Referer", "https://m.qingting.fm/")
             if (conn.responseCode in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
             } else null
