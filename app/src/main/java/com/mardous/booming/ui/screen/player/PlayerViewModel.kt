@@ -641,17 +641,42 @@ class PlayerViewModel(
             if (!preferences.getBoolean(REMEMBER_SHUFFLE_MODE, true)) {
                 shuffleModeEnabled = false
             }
+            
+            // 🌟 核心修复 1：记住用户实际点击的歌曲 ID，而不是死板的原始索引
+            val targetSongId = queue.getOrNull(position)?.id?.toString()
+            
+            // 这里执行多源嗅探与过滤。过滤后，假录音和网页报错被剔除，列表长度可能变短
             val mediaItems = queue.toMediaItems(appContext)
+            
             val finalShuffleMode = when (shuffleMode) {
                 OpenShuffleMode.On -> true
                 OpenShuffleMode.Off -> false
                 OpenShuffleMode.Remember -> shuffleModeEnabled
             }
+            
             if (mediaItems.isNotEmpty()) {
                 controller.shuffleModeEnabled = finalShuffleMode
-                controller.setMediaItems(mediaItems, position, C.TIME_UNSET)
+                
+                // 🌟 核心修复 2：在过滤后的安全列表中，重新定位这首歌的新索引
+                var safePosition = 0
+                if (targetSongId != null) {
+                    val newIndex = mediaItems.indexOfFirst { it.mediaId == targetSongId }
+                    if (newIndex != -1) {
+                        safePosition = newIndex
+                    }
+                }
+                
+                // 🌟 核心修复 3：绝对安全门限制。彻底根绝 IllegalSeekPositionException 越界崩溃！
+                safePosition = safePosition.coerceIn(0, mediaItems.size - 1)
+                
+                controller.setMediaItems(mediaItems, safePosition, C.TIME_UNSET)
                 controller.playWhenReady = startPlaying
                 controller.prepare()
+            } else {
+                // 🌟 如果极极端情况下整张歌单全军覆没，给提示而不是崩溃
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(appContext, "⚠️ 该列表全部音源均已失效或受限", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
