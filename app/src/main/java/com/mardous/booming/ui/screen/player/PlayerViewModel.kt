@@ -4,6 +4,9 @@
 
 package com.mardous.booming.ui.screen.player
 
+import java.security.MessageDigest
+import java.net.URLEncoder
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import android.content.Context
@@ -76,102 +79,105 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 核心 1：LX Music 级强力嗅探，带绝对超时熔断，杜绝卡顿与 HTML 容器报错
-private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    try {
-        // 绝对熔断限制：整个备用源获取过程如果超过 1.5 秒立刻放弃，保证歌单起播绝对顺畅
-        kotlinx.coroutines.withTimeoutOrNull(1500) {
-            val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
-            val searchUrl = "http://search.kuwo.cn/r.s?client=kt&all=$query&pn=0&rn=1&vipver=1&mobi=1&rformat=json&encoding=utf8"
-            val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 800
-            conn.readTimeout = 800
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36")
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            
-            val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
-
-            if (!rid.isNullOrEmpty()) {
-                val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url"
-                val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
-                playConn.connectTimeout = 800
-                playConn.readTimeout = 800
-                playConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                val res = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
-                
-                // 🌟 终极防火墙：严格鉴定直链合法性。如果返回 403 的 <!DOCTYPE html>，直接抛弃，杜绝 CONTAINER_UNSUPPORTED
-                if ((res.startsWith("http://") || res.startsWith("https://")) && !res.contains("<!DOCTYPE") && !res.contains("<html")) {
-                    return@withTimeoutOrNull res.replace("http://", "https://")
-                }
-            }
-            "" // 解析不合法直接返回空
-        } ?: ""
-    } catch (e: Exception) {
-        ""
-    }
+// 🌟 辅助：MD5 计算工具（适配酷狗与酷我的签名计算）
+private fun md5(input: String): String {
+    val md = MessageDigest.getInstance("MD5")
+    return md.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 }
 
-// 🌟 核心 2：官方直链获取（保持极速）
-private suspend fun fetchNeteaseUrl(context: Context, song: Song): String = withContext(Dispatchers.IO) {
-    var fullAudioUrl = ""
+// 🌟 酷狗源嗅探：移植 LX Music 逻辑（搜索 + TrackerCDN 解析）
+private suspend fun fetchKugouFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
-        val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
-        val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-        val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
-        val separator = if (baseUrl.contains("?")) "&" else "?"
-        val urlStr = "$baseUrl/song/url/v1?id=${song.size}&level=standard$separator" + "cookie=$encodedCookie"
-
-        val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 2000
-        conn.readTimeout = 2000
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Cookie", cookie)
+        val query = URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter&filter=2&iscorrection=1&privilege_filter=0&area_code=1"
+        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 800
+        conn.readTimeout = 800
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        
+        val res = conn.inputStream.bufferedReader().use { it.readText() }
+        val dataObj = org.json.JSONObject(res).optJSONObject("data")
+        val lists = dataObj?.optJSONArray("lists")
+        if (lists != null && lists.length() > 0) {
+            val item = lists.getJSONObject(0)
+            val hash = item.optString("SQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
+                ?: item.optString("HQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
+                ?: item.optString("FileHash")
 
-        if (conn.responseCode == 200) {
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-            val data = org.json.JSONObject(json).optJSONArray("data")
-            if (data != null && data.length() > 0) {
-                val item = data.getJSONObject(0)
-                val rawUrl = item.optString("url", "")
-                val freeTrialInfo = item.optJSONObject("freeTrialInfo")
-                val isTrial = freeTrialInfo != null || (item.optJSONObject("freeTimeTrialPrivilege")?.optInt("remainTime", 0) ?: 0) > 0
-
-                if (rawUrl.isNotEmpty() && rawUrl != "null" && !isTrial) {
-                    fullAudioUrl = rawUrl.replace("http://", "https://")
+            if (hash.isNotEmpty()) {
+                val key = md5(hash.lowercase() + "kgcloudv2")
+                val trackUrl = "http://trackercdn.kugou.com/i/v2/?cmd=26&pid=1&behavior=play&hash=$hash&key=$key&mid=1&appid=1005"
+                val trackConn = java.net.URL(trackUrl).openConnection() as java.net.HttpURLConnection
+                trackConn.connectTimeout = 800
+                trackConn.readTimeout = 800
+                val trackRes = trackConn.inputStream.bufferedReader().use { it.readText() }
+                val urls = org.json.JSONObject(trackRes).optJSONArray("url")
+                if (urls != null && urls.length() > 0) {
+                    val playUrl = urls.getString(0)
+                    if (playUrl.startsWith("http")) return@withContext playUrl.replace("http://", "https://")
                 }
             }
         }
-    } catch (e: Exception) { e.printStackTrace() }
-
-    // 当免费源失效时，使用带时间熔断的备用源嗅探
-    if (fullAudioUrl.isEmpty()) {
-        fullAudioUrl = fetchFallbackFullUrl(song.title, song.artistName)
-    }
-
-    return@withContext if (fullAudioUrl.isNotEmpty()) fullAudioUrl else "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
+    } catch (e: Exception) { }
+    return@withContext ""
 }
 
-// 🌟 核心 3：拦截假本地路径并挂载完整流
+// 🌟 酷我源嗅探：移植移动端客户端协议，带 HTML 防伪过滤
+private suspend fun fetchKuwoFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    try {
+        val query = URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "http://search.kuwo.cn/r.s?client=kt&all=$query&pn=0&rn=1&vipver=1&ft=music&encoding=utf8&rformat=json&mobi=1"
+        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 800
+        conn.readTimeout = 800
+        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
+
+        if (!rid.isNullOrEmpty()) {
+            val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url"
+            val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
+            playConn.connectTimeout = 800
+            playConn.readTimeout = 800
+            val playUrl = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
+            if ((playUrl.startsWith("http://") || playUrl.startsWith("https://")) && !playUrl.contains("<html")) {
+                return@withContext playUrl.replace("http://", "https://")
+            }
+        }
+    } catch (e: Exception) { }
+    return@withContext ""
+}
+
+// 🌟 核心分发：酷狗优先 -> 酷我备用，总响应锁死在 1.5 秒以内
+private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    withTimeoutOrNull(1500) {
+        val kgUrl = fetchKugouFallback(title, artist)
+        if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
+
+        val kwUrl = fetchKuwoFallback(title, artist)
+        if (kwUrl.isNotEmpty()) return@withTimeoutOrNull kwUrl
+
+        ""
+    } ?: ""
+}
+
+// 🌟 核心装配：批量向官方索取链接，对标记为 VIP 截断的曲目并发双源嗅探
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     val neteaseSongs = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }
     val officialUrlMap = mutableMapOf<Long, String>()
     val needFallbackSongs = mutableListOf<Song>()
 
-    // 1. 单次批量请求：一趟 HTTP 搞定全部 30 首歌
     if (neteaseSongs.isNotEmpty()) {
         try {
             val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
             val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-            val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
+            val encodedCookie = URLEncoder.encode(cookie, "UTF-8")
             val idsStr = neteaseSongs.map { it.size }.joinToString(",")
             val separator = if (baseUrl.contains("?")) "&" else "?"
             val urlStr = "$baseUrl/song/url/v1?id=$idsStr&level=standard$separator" + "cookie=$encodedCookie"
 
             val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            conn.requestMethod = "GET"
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
             conn.setRequestProperty("Cookie", cookie)
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
@@ -186,7 +192,6 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
                         val freeTrialInfo = item.optJSONObject("freeTrialInfo")
                         val isTrial = freeTrialInfo != null || (item.optJSONObject("freeTimeTrialPrivilege")?.optInt("remainTime", 0) ?: 0) > 0
 
-                        // 只有完整的非试听流才直接采纳
                         if (id != 0L && rawUrl.isNotEmpty() && rawUrl != "null" && !isTrial) {
                             officialUrlMap[id] = rawUrl.replace("http://", "https://")
                         }
@@ -197,7 +202,6 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
             e.printStackTrace()
         }
 
-        // 收集需要补全完整流的 VIP 试听歌曲
         for (song in neteaseSongs) {
             if (!officialUrlMap.containsKey(song.size)) {
                 needFallbackSongs.add(song)
@@ -205,7 +209,6 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
         }
     }
 
-    // 2. 协程并发并行嗅探：所有 VIP 歌曲同时拉取，耗时只取决于最快的一条
     val fallbackMap = if (needFallbackSongs.isNotEmpty()) {
         kotlinx.coroutines.coroutineScope {
             needFallbackSongs.map { song ->
@@ -219,7 +222,6 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
         emptyMap()
     }
 
-    // 3. 极速装配播放项并注入元数据
     mapNotNull { song ->
         if (song.genreName == "Netease" && song.size > 0L) {
             val finalUrl = officialUrlMap[song.size]
@@ -419,43 +421,69 @@ class PlayerViewModel(
     }
 
     private fun handleNeteaseFavorite(context: Context, song: Song) {
-        Toast.makeText(context, "❤️ 已收藏，正在同步并下载...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "❤️ 已收藏，正在同步并极速下载...", Toast.LENGTH_SHORT).show()
 
-        // 🌟 1. 立即点亮本地界面的红心，绝不等待网络响应，提供瞬时反馈
+        // 1. 本地数据库瞬间标记红心
         viewModelScope.launch(Dispatchers.IO) {
             repository.toggleFavorite(song)
         }
 
-        // 🌟 2. 在后台独立执行网易云同步与物理下载
+        // 2. 强制同步写入网易云账号云端（带时间戳穿透缓存）
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val realNeteaseId = song.size 
                 if (realNeteaseId > 0) {
-                    // 强制手动调用网易云 /like 接口，挂载时间戳绝对击穿缓存
                     val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
                     val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-                    val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
+                    val encodedCookie = URLEncoder.encode(cookie, "UTF-8")
                     val ts = System.currentTimeMillis()
                     val likeUrl = "$baseUrl/like?id=$realNeteaseId&like=true&timestamp=$ts&cookie=$encodedCookie"
                     
                     val conn = java.net.URL(likeUrl).openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 3000
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
                     conn.setRequestProperty("Cookie", cookie)
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                     conn.requestMethod = "GET"
-                    conn.responseCode // 触发请求，真正写入云端歌单
+                    conn.responseCode // 触发网络，确保网易云云端同步成功
                 }
                 
-                // 独立触发下载逻辑，不干扰收藏流程
+                // 3. 物理文件下载（VIP 双通道兜底机制）
                 val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
                 if (!targetDir.exists()) targetDir.mkdirs()
 
                 val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
                     id = song.size, title = song.title, artist = song.artistName,
                     album = song.albumName, picUrl = "", durationMs = song.duration,
-                    year = "", format = "flac", fileSizeStr = "红心直连", requestedLevel = "lossless" 
+                    year = "", format = "mp3", fileSizeStr = "标准直连", requestedLevel = "standard" 
                 )
-                com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, downloadItem, targetDir) { _ -> }
 
+                var downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, downloadItem, targetDir) { _ -> }
+
+                // 若网易云无版权或 VIP 下载失败，直接从酷狗/酷我备用源抓取保存到本地
+                if (downloadedFile == null || !downloadedFile.exists()) {
+                    val fallbackUrl = fetchFallbackFullUrl(song.title, song.artistName)
+                    if (fallbackUrl.isNotEmpty()) {
+                        val file = File(targetDir, "${song.artistName} - ${song.title}.mp3")
+                        val streamConn = java.net.URL(fallbackUrl).openConnection() as java.net.HttpURLConnection
+                        streamConn.connectTimeout = 5000
+                        streamConn.inputStream.use { input ->
+                            file.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        downloadedFile = file
+                    }
+                }
+
+                if (downloadedFile != null && downloadedFile.exists()) {
+                    kotlinx.coroutines.delay(800)
+                    val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
+                    if (localSong != Song.emptySong) {
+                        repository.toggleFavorite(localSong)
+                    }
+                    withContext(Dispatchers.Main) { 
+                        Toast.makeText(context, "✅ 红心已同步，已离线至 newdown！", Toast.LENGTH_SHORT).show() 
+                    }
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
