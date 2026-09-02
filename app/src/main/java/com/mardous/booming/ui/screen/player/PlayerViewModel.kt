@@ -79,79 +79,110 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 终极音频直链有效性校验：直接物理拦截所有带提示音或网页的假地址
+// 🌟 核心 1：真正严苛的真实音频校验（物理拦截酷我假提示音 与 HTML报错）
 private fun isValidAudioStream(url: String): Boolean {
-    if (url.isEmpty() || url.contains("kuwo.cn") && url.contains("convert_url")) return false
+    if (url.isEmpty()) return false
     return try {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        conn.requestMethod = "HEAD"
-        conn.connectTimeout = 1200
-        conn.readTimeout = 1200
+        conn.requestMethod = "GET" // 放弃 HEAD，很多 CDN 会拦截 HEAD 导致误判
+        conn.setRequestProperty("Range", "bytes=0-8192") // 只请求头部一小块数据，防卡死
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        conn.connectTimeout = 2000
+        conn.readTimeout = 2000
         
-        val responseCode = conn.responseCode
+        if (conn.responseCode !in 200..299 && conn.responseCode != 302) return false
+        
         val contentType = conn.contentType?.lowercase() ?: ""
+        if (contentType.contains("text/html") || contentType.contains("json")) return false
         
-        // 必须是正常响应，且绝对不能是网页或 JSON
-        if (responseCode !in 200..399 || contentType.contains("text/html") || contentType.contains("json")) {
-            return false
-        }
+        // 🌟 致命一击：获取文件的真实总大小
+        val contentRange = conn.getHeaderField("Content-Range")
+        val contentLength = conn.getHeaderField("Content-Length")
+        val totalSizeStr = contentRange?.substringAfterLast("/") ?: contentLength
+        val totalSize = totalSizeStr?.toLongOrNull() ?: 0L
         
-        // 如果文件体积太小（比如小于 400KB），必定是假录音或提示音
-        val contentLength = conn.contentLength
-        if (contentLength in 1..400000) {
-            return false
-        }
+        // 如果体积小于 500KB (500000 字节)，绝对是假音频！无情拦截！
+        if (totalSize in 1L..500000L) return false
         
         true
-    } catch (e: Exception) {
-        // 如果 HEAD 请求因网络波动超时，但链接本身长相合法，允许放行尝试
-        url.startsWith("http")
-    }
+    } catch (e: Exception) { false }
 }
 
-// 🌟 辅助：MD5 计算工具
+// 🌟 辅助：MD5 计算工具（适配酷狗与酷我的签名计算）
 private fun md5(input: String): String {
     val md = java.security.MessageDigest.getInstance("MD5")
     return md.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 }
 
-// 🌟 唯一指定高可用备用源：酷狗音乐 TrackerCDN 接口（直链稳健，无假录音）
-private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
+// 🌟 酷狗源：保持稳定
+private suspend fun fetchKugouFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
-        kotlinx.coroutines.withTimeoutOrNull(1800) {
-            val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
-            val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter"
-            val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 1000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            
-            val res = conn.inputStream.bufferedReader().use { it.readText() }
-            val lists = org.json.JSONObject(res).optJSONObject("data")?.optJSONArray("lists")
-            if (lists != null && lists.length() > 0) {
-                val item = lists.getJSONObject(0)
-                val hash = item.optString("SQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
-                    ?: item.optString("HQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
-                    ?: item.optString("FileHash")
+        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter"
+        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 1000
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        
+        val res = conn.inputStream.bufferedReader().use { it.readText() }
+        val lists = org.json.JSONObject(res).optJSONObject("data")?.optJSONArray("lists")
+        if (lists != null && lists.length() > 0) {
+            val item = lists.getJSONObject(0)
+            val hash = item.optString("SQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
+                ?: item.optString("FileHash")
 
-                if (hash.isNotEmpty()) {
-                    val key = md5(hash.lowercase() + "kgcloudv2")
-                    val trackUrl = "http://trackercdn.kugou.com/i/v2/?cmd=26&pid=1&behavior=play&hash=$hash&key=$key&mid=1&appid=1005"
-                    val trackConn = java.net.URL(trackUrl).openConnection() as java.net.HttpURLConnection
-                    trackConn.connectTimeout = 1000
-                    val trackRes = trackConn.inputStream.bufferedReader().use { it.readText() }
-                    val playUrl = org.json.JSONObject(trackRes).optJSONArray("url")?.optString(0) ?: ""
-                    
-                    if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
-                        return@withTimeoutOrNull playUrl.replace("http://", "https://")
-                    }
+            if (hash.isNotEmpty()) {
+                val key = md5(hash.lowercase() + "kgcloudv2")
+                val trackUrl = "http://trackercdn.kugou.com/i/v2/?cmd=26&pid=1&behavior=play&hash=$hash&key=$key&mid=1&appid=1005"
+                val trackConn = java.net.URL(trackUrl).openConnection() as java.net.HttpURLConnection
+                val trackRes = trackConn.inputStream.bufferedReader().use { it.readText() }
+                val playUrl = org.json.JSONObject(trackRes).optJSONArray("url")?.optString(0) ?: ""
+                
+                if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
+                    return@withContext playUrl.replace("http://", "https://")
                 }
             }
-            ""
-        } ?: ""
-    } catch (e: Exception) {
+        }
+    } catch (e: Exception) { }
+    return@withContext ""
+}
+
+// 🌟 酷我源：换上 okhttp 伪装面具，击穿防盗链录音
+private suspend fun fetchKuwoFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    try {
+        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "http://search.kuwo.cn/r.s?client=kt&all=$query&pn=0&rn=1&vipver=1&ft=music&encoding=utf8&rformat=json&mobi=1"
+        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 1500
+        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
+
+        if (!rid.isNullOrEmpty()) {
+            val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url"
+            val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
+            playConn.connectTimeout = 1500
+            // 🌟 极度关键：绝对不能用普通浏览器UA，伪装成官方APP底层组件
+            playConn.setRequestProperty("User-Agent", "okhttp/3.11.0")
+            val playUrl = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
+            
+            if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
+                return@withContext playUrl.replace("http://", "https://")
+            }
+        }
+    } catch (e: Exception) { }
+    return@withContext ""
+}
+
+// 🌟 核心分发：酷狗优先 -> 酷我备用，删除了你多余粘贴的一份，绝不报冲突！
+private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    kotlinx.coroutines.withTimeoutOrNull(1500) {
+        val kgUrl = fetchKugouFallback(title, artist)
+        if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
+
+        val kwUrl = fetchKuwoFallback(title, artist)
+        if (kwUrl.isNotEmpty()) return@withTimeoutOrNull kwUrl
+
         ""
-    }
+    } ?: ""
 }
 
 // 🌟 核心装配：批量向官方索取链接，并发双源嗅探
