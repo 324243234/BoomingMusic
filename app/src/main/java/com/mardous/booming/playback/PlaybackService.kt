@@ -4,6 +4,9 @@
 
 package com.mardous.booming.playback
 
+import androidx.media3.common.Metadata
+import androidx.media3.extractor.metadata.icy.IcyInfo
+import androidx.media3.extractor.metadata.id3.TextInformationFrame
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import com.mardous.booming.data.repository.PlaylistRepository
@@ -1038,22 +1041,45 @@ class PlaybackService :
             prefetchNextReplayGain()
         }
 		
-		// 🌟 监听电台流内的实时 ICY 媒体元数据变更
-        if (events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)) {
-            val currentItem = player.currentMediaItem
-            val isRadio = currentItem?.localConfiguration?.uri?.toString()?.startsWith("http") == true 
-                          && player.duration == C.TIME_UNSET
+		
+    }
+	
+	// 🌟 终极实时流信息拦截器：绕过 ExoPlayer 的覆盖机制，直接从底层字节流抓取信息
+    override fun onMetadata(metadata: Metadata) {
+        val currentItem = player.currentMediaItem
+        val isRadio = currentItem?.localConfiguration?.uri?.toString()?.startsWith("http") == true 
+                      && player.duration == C.TIME_UNSET
+
+        if (!isRadio) return
+
+        var streamTitle: String? = null
+
+        // 遍历底层传来的每一个元数据块
+        for (i in 0 until metadata.length()) {
+            val entry = metadata.get(i)
             
-            if (isRadio) {
-                // ICY 数据通常存在 title 或 displayTitle 中
-                val streamTitle = player.mediaMetadata.title?.toString() ?: player.mediaMetadata.displayTitle?.toString()
-                val stationName = currentItem.mediaMetadata.title?.toString()
-                
-                // 防止电台没有 ICY 时重复播报电台名字本身
-                if (!streamTitle.isNullOrBlank() && streamTitle != stationName && streamTitle != "网络电台") {
-                    uiHandler.post {
-                        showToast("🎵 正在播放: $streamTitle")
-                    }
+            // 📡 1. 抓取传统 Icecast/Shoutcast 的 ICY 标签 (主要针对纯音频网络台、国外台)
+            if (entry is IcyInfo) {
+                streamTitle = entry.title
+            } 
+            // 📺 2. 抓取 HLS (.m3u8) 流中的 ID3 标签 (主要针对国内电台、卫视伴音)
+            else if (entry is TextInformationFrame) {
+                // TIT2 或 TT2 通常是 ID3 规范里存放“当前播放曲目/节目”的字段
+                if (entry.id.uppercase() == "TIT2" || entry.id.uppercase() == "TT2") {
+                    streamTitle = entry.value
+                }
+            }
+        }
+
+        if (!streamTitle.isNullOrBlank()) {
+            val cleanTitle = streamTitle.trim()
+            val stationName = currentItem?.mediaMetadata?.title?.toString() ?: ""
+            
+            // 防御机制：排除空白、排除未知、排除与电台名完全一样的情况
+            if (cleanTitle.isNotEmpty() && cleanTitle != "未知" && cleanTitle != stationName) {
+                // 确保在主线程弹出，防止崩溃
+                uiHandler.post {
+                    showToast("🎵 $cleanTitle")
                 }
             }
         }

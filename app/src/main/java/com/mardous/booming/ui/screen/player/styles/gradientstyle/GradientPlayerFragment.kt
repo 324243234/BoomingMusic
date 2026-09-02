@@ -572,19 +572,7 @@ class GradientPlayerFragment : AbsPlayerFragment(R.layout.fragment_gradient_play
                 }
             }
             
-            launch {
-                playerViewModel.mediaEvent.collect { event ->
-                    if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
-                        val currentSong = playerViewModel.currentSongFlow.value
-                        if (currentSong != null && currentSong.id != 0L) {
-                            launch(Dispatchers.IO) {
-                                val isFav = repository.isSongFavorite(currentSong.id)
-                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
-                            }
-                        }
-                    }
-                }
-            }
+           
         }
     }
 

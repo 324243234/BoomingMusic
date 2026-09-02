@@ -227,19 +227,7 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
                 }
             }
 
-            launch {
-                playerViewModel.mediaEvent.collect { event ->
-                    if (event == com.mardous.booming.core.model.MediaEvent.FavoriteContentChanged) {
-                        val currentSong = playerViewModel.currentSongFlow.value
-                        if (currentSong != null && currentSong.id != 0L) {
-                            launch(Dispatchers.IO) {
-                                val isFav = repository.isSongFavorite(currentSong.id)
-                                withContext(Dispatchers.Main) { updateFavoriteIcon(isFav) }
-                            }
-                        }
-                    }
-                }
-            }
+            
         }
 
         binding.inlineProgressSlider?.setOnTouchListener { v, event ->
@@ -340,6 +328,11 @@ class DefaultPlayerFragment : AbsPlayerFragment(R.layout.fragment_default_player
             tag = isFavorite
             setImageResource(if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_outline_24dp)
         }
+    }
+	
+	override fun onIsFavoriteChanged(isFavorite: Boolean, withAnimation: Boolean) {
+        super.onIsFavoriteChanged(isFavorite, withAnimation)
+        updateFavoriteIcon(isFavorite)
     }
 
     override fun gestureDetected(gestureType: GestureType): Boolean {

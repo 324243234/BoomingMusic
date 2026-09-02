@@ -16,47 +16,44 @@ object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
 
     suspend fun fetchEpgForRadio(stationName: String): String = withContext(Dispatchers.IO) {
-        // 🌟 1. 智能分流嗅探：通过原始名称判断是否为传统广播电台
-        // 电视伴音频道（如 CCTV、湖南卫视）通常不含这些词汇
         val isRadioStation = Regex("""(?i)(广播|之声|电台|调频|fm|am)""").containsMatchIn(stationName)
 
-        // 🌟 2. 终极名称清洗引擎：精确处理 CCTV、卫视以及各种杂乱后缀
         var cleanName = stationName
             .replace(Regex("""(?i)\[Radio\]"""), "")
-            .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "") // 剥离 FM103.9 等
-            .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "") // 剥离括号及内部内容
-            .replace(Regex("""(?i)(高清|测试|网络|直播|伴音|音频|纯音|4k|8k|fhd).*$"""), "") // 剥离伴音、高清等后缀
-            .replace(Regex("""\s+"""), "") // 消除空格
+            .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "")
+            .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "")
+            .replace(Regex("""(?i)(高清|测试|网络|直播|伴音|音频|纯音|4k|8k|fhd).*$"""), "")
+            .replace(Regex("""\s+"""), "")
             .trim()
 
-        // 📺 CCTV 频道极致标准化：将 "CCTV-10科教"、"cctv1综合" 统一清洗为 "CCTV-10" (支持 CCTV-5+)
+        // 📺 CCTV 频道极致标准化
         val cctvMatch = Regex("""(?i)^cctv[-\s]*(\d+\+?).*""").find(cleanName)
         if (cctvMatch != null) {
             cleanName = "CCTV-${cctvMatch.groupValues[1]}"
         }
 
-        // 📺 卫视后缀清洗：防止 "湖南卫视台" 这种非标准写法，统一为 "湖南卫视"
+        // 📺 凤凰卫视极致匹配
+        cleanName = cleanName.replace("凤凰卫视中文台", "凤凰中文")
+        cleanName = cleanName.replace("凤凰卫视资讯台", "凤凰资讯")
+        cleanName = cleanName.replace("凤凰卫视电影台", "凤凰电影")
+
         if (cleanName.endsWith("卫视台")) {
             cleanName = cleanName.replace("卫视台", "卫视")
         }
 
         if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n📡 纯享直播流"
 
-        // 🌟 3. 执行分流：如果是传统广播电台，直接走 ICY 提示逻辑，免去无效的网络请求
         if (isRadioStation) {
             return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的歌曲/节目)"
         }
 
-        // ---------- 下方为 电视/卫视伴音 专属的公益 EPG 抓取逻辑 ----------
         try {
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
 
-            // 社区公益 EPG 接口源 (TVBox / DIYP)
             val urlA = "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr"
             val urlB = "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
 
-            // 优先请求主节点，失败则无缝切换备用节点
             var jsonRes = httpGet(urlA)
             if (jsonRes == null || !isValidEpg(jsonRes)) {
                 jsonRes = httpGet(urlB)
@@ -69,41 +66,38 @@ object RadioEpgFetcher {
             val rootObj = JSONObject(jsonRes)
             val epgData = rootObj.optJSONArray("epg_data")
 
-            // 接口成功返回了，但该频道太冷门未被收录，或者个别漏网的广播电台
             if (epgData == null || epgData.length() == 0) {
                 return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (暂未收录该频道排期)"
             }
 
-            // 过滤兜底脏数据与 API 广告水印
             val validPrograms = mutableListOf<JSONObject>()
             for (i in 0 until epgData.length()) {
                 val prog = epgData.getJSONObject(i)
                 val rawTitle = prog.optString("title", "").trim()
                 val start = prog.optString("start", "")
                 
-                // 🌟 核心去广告：剥离 "免费使用"、"DIYP" 等各种 API 水印
+                // 🌟 核心修复 1：洗掉 HTML 转义字符和烦人的免费水印
                 val title = rawTitle
+                    .replace("&ensp;", " ")
+                    .replace("&nbsp;", " ")
+                    .replace("&amp;", "&")
                     .replace(Regex("""(?i)[-_\s]*免费使用.*"""), "")
                     .replace(Regex("""(?i)diyp.*"""), "")
                     .replace("112114", "")
                     .trim()
                 
-                // 🌟 核心去废料：过滤掉无意义的占位时段
-                if (title.isEmpty() || title.contains("精彩节目") || title.contains("未知节目") 
-                    || title.contains("无节目") || title.contains("休息") || title.contains("转播")) continue
+                // 🌟 核心修复 2：撤销对 "转播" 的误杀，仅拦截真正的无用占位符
+                if (title.isEmpty() || title == "精彩节目" || title == "未知节目" || title == "无节目") continue
                 if (start.isEmpty()) continue
                 
-                // 将干净的名字存回备用
                 prog.put("title_clean", title)
                 validPrograms.add(prog)
             }
 
-            // 如果过滤后发现全天全是无效数据，直接退回纯享流提示
             if (validPrograms.isEmpty()) {
                 return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
             }
 
-            // 格式化排期表，并基于手机系统时间进行直播高亮
             val cal = Calendar.getInstance()
             val currentMinutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
 
@@ -126,7 +120,6 @@ object RadioEpgFetcher {
                         var adjustedEMin = eMin
                         var adjustedCur = currentMinutes
                         
-                        // 修复逻辑死角：处理跨天午夜节目 (如 23:30 - 00:30)
                         if (eMin < sMin) {
                             adjustedEMin += 24 * 60
                             if (currentMinutes <= eMin) {
