@@ -16,7 +16,11 @@ object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
 
     suspend fun fetchEpgForRadio(stationName: String): String = withContext(Dispatchers.IO) {
-        // 🌟 1. 终极名称清洗引擎：精确处理 CCTV、卫视以及各种杂乱后缀
+        // 🌟 1. 智能分流嗅探：通过原始名称判断是否为传统广播电台
+        // 电视伴音频道（如 CCTV、湖南卫视）通常不含这些词汇
+        val isRadioStation = Regex("""(?i)(广播|之声|电台|调频|fm|am)""").containsMatchIn(stationName)
+
+        // 🌟 2. 终极名称清洗引擎：精确处理 CCTV、卫视以及各种杂乱后缀
         var cleanName = stationName
             .replace(Regex("""(?i)\[Radio\]"""), "")
             .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "") // 剥离 FM103.9 等
@@ -38,11 +42,17 @@ object RadioEpgFetcher {
 
         if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n📡 纯享直播流"
 
+        // 🌟 3. 执行分流：如果是传统广播电台，直接走 ICY 提示逻辑，免去无效的网络请求
+        if (isRadioStation) {
+            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的歌曲/节目)"
+        }
+
+        // ---------- 下方为 电视/卫视伴音 专属的公益 EPG 抓取逻辑 ----------
         try {
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
 
-            // 🌟 2. 社区公益 EPG 接口源 (TVBox / DIYP)
+            // 社区公益 EPG 接口源 (TVBox / DIYP)
             val urlA = "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr"
             val urlB = "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
 
@@ -53,18 +63,18 @@ object RadioEpgFetcher {
             }
 
             if (jsonRes == null) {
-                return@withContext "📻 正在收听：$cleanName\n\n📡 直播流连接成功 (公益 EPG 节点暂时拥堵)"
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (公益 EPG 节点暂时拥堵)"
             }
 
             val rootObj = JSONObject(jsonRes)
             val epgData = rootObj.optJSONArray("epg_data")
 
-            // 接口成功返回了，但该电台太冷门未被收录
+            // 接口成功返回了，但该频道太冷门未被收录，或者个别漏网的广播电台
             if (epgData == null || epgData.length() == 0) {
-                return@withContext "📻 正在收听：$cleanName\n\n📡 直播流连接成功 (EPG库暂未收录该频道排期)"
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (暂未收录该频道排期)"
             }
 
-            // 🌟 3. 过滤兜底脏数据（解决未获取到真实节目单时，显示整天多余时段的问题）
+            // 过滤兜底脏数据（解决未获取到真实节目单时，显示整天多余时段的问题）
             val validPrograms = mutableListOf<JSONObject>()
             for (i in 0 until epgData.length()) {
                 val prog = epgData.getJSONObject(i)
@@ -78,12 +88,12 @@ object RadioEpgFetcher {
                 validPrograms.add(prog)
             }
 
-            // 如果过滤后发现全天全是无效数据，直接退回纯享流提示，不渲染多余的表头
+            // 如果过滤后发现全天全是无效数据，直接退回纯享流提示
             if (validPrograms.isEmpty()) {
-                return@withContext "📻 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
             }
 
-            // 🌟 4. 格式化排期表，并基于手机系统时间进行直播高亮
+            // 格式化排期表，并基于手机系统时间进行直播高亮
             val cal = Calendar.getInstance()
             val currentMinutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
 
@@ -130,7 +140,7 @@ object RadioEpgFetcher {
 
         } catch (e: Exception) {
             Log.e(TAG, "获取节目单失败", e)
-            return@withContext "📻 当前正在收听：$cleanName\n📡 直播流连接成功"
+            return@withContext "📺 当前频道：$cleanName\n📡 直播流连接成功"
         }
     }
 
@@ -158,7 +168,6 @@ object RadioEpgFetcher {
             conn = URL(urlString).openConnection() as HttpURLConnection
             conn.connectTimeout = 4000
             conn.readTimeout = 4000
-            // 伪装标准浏览器请求头
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             conn.setRequestProperty("Accept", "application/json")
             if (conn.responseCode in 200..299) {
