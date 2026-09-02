@@ -16,32 +16,55 @@ object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
 
     suspend fun fetchEpgForRadio(stationName: String): String = withContext(Dispatchers.IO) {
-        val cleanName = stationName.replace(Regex("""\[Radio\]|\s+"""), "").trim()
-        if (cleanName.isEmpty()) return@withContext "📻 当前电台：未知\n暂无节目单数据"
+        // 🌟 1. 终极名称清洗引擎：剔除 FM/AM、频率、括号、横杠、分辨率、直播等“脏后缀”
+        val cleanName = stationName
+            .replace(Regex("""(?i)\[Radio\]"""), "") // 剥离本地注入的前缀
+            .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "") // 剥离 FM103.9, AM747 等
+            .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "") // 剥离所有括号及内部内容
+            .replace(Regex("""(?i)(高清|测试|网络|直播).*$"""), "") // 剥离转播源特征词汇
+            .replace(Regex("""\s+"""), "") // 消除残留空格
+            .trim()
+
+        if (cleanName.isEmpty()) return@withContext "📻 当前电台：$stationName\n暂无节目单数据"
 
         try {
-            // 1. 通过搜索接口获取电台的 Channel ID
-            val searchUrl = "https://search.qingting.fm/v3/search?k=${Uri.encode(cleanName)}&t=channel"
-            val searchRes = httpGet(searchUrl)
-            
             var channelId = -1
-            if (searchRes != null) {
-                val dataObj = JSONObject(searchRes).optJSONObject("data")
-                val channels = dataObj?.optJSONArray("data")
+            
+            // 🌟 2. 方案 A：使用稳定的 WAPI 聚合接口
+            val searchUrlA = "https://i.qingting.fm/wapi/search?kw=${Uri.encode(cleanName)}&pi=1&pz=5"
+            val searchResA = httpGet(searchUrlA)
+            
+            if (searchResA != null) {
+                val dataObj = JSONObject(searchResA).optJSONObject("data")
+                // WAPI 返回的是 channels 数组
+                val channels = dataObj?.optJSONArray("channels")
                 if (channels != null && channels.length() > 0) {
-                    // 取相似度最高的第一条数据
                     channelId = channels.getJSONObject(0).optInt("id", -1)
                 }
             }
 
+            // 🌟 3. 方案 B：如果 A 失败，无缝切换 V3 搜索接口兜底
             if (channelId == -1) {
-                return@withContext "📻 当前正在收听：$cleanName\n\n📡 纯享直播流，暂无详细排期数据"
+                val searchUrlB = "https://search.qingting.fm/v3/search?k=${Uri.encode(cleanName)}&t=channel"
+                val searchResB = httpGet(searchUrlB)
+                if (searchResB != null) {
+                    val dataObj = JSONObject(searchResB).optJSONObject("data")
+                    // V3 返回的是 data 数组
+                    val channels = dataObj?.optJSONArray("data")
+                    if (channels != null && channels.length() > 0) {
+                        channelId = channels.getJSONObject(0).optInt("id", -1)
+                    }
+                }
             }
 
-            // 2. 根据 Channel ID 获取今日的节目单
+            // 依然查不到，说明是非主流网络台或彻底改名，执行优雅退出
+            if (channelId == -1) {
+                return@withContext "📻 正在收听：$cleanName\n\n📡 纯享直播流，未匹配到该台的排期数据"
+            }
+
+            // 🌟 4. 根据 Channel ID 获取今日节目单
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
-            // 当天时间（用于标记当前正在播放的节目）
             val cal = Calendar.getInstance()
             val currentMinutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
 
@@ -55,6 +78,7 @@ object RadioEpgFetcher {
             sb.append("📡 ").append(cleanName).append(" 今日节目单\n")
             sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
 
+            // 🌟 5. 格式化排版并高亮当前时段
             for (i in 0 until programsArray.length()) {
                 val prog = programsArray.getJSONObject(i)
                 val title = prog.optString("title", "未知节目")
@@ -71,19 +95,18 @@ object RadioEpgFetcher {
                     if (djs.isNotEmpty()) djNames = " 🎤 " + djs.joinToString("/")
                 }
 
-                // 转换时间用于判断是否为正在直播
                 var prefix = "⏳ "
                 if (startTime.length >= 5 && endTime.length >= 5) {
                     val sMin = timeToMinutes(startTime)
                     val eMin = timeToMinutes(endTime)
+                    // 精准比对当天系统时钟，打上“正在直播”标签
                     if (currentMinutes in sMin until eMin) {
                         prefix = "🔴 [正在直播] "
-                    } else if (currentMinutes > eMin) {
-                        prefix = "✅ " // 已播完
+                    } else if (currentMinutes >= eMin) {
+                        prefix = "✅ " 
                     }
                 }
                 
-                // 格式化输出: [08:00 - 09:00] 节目名称
                 val displayStart = if (startTime.length >= 5) startTime.substring(0, 5) else startTime
                 val displayEnd = if (endTime.length >= 5) endTime.substring(0, 5) else endTime
                 
@@ -108,14 +131,17 @@ object RadioEpgFetcher {
         }
     }
 
+    // 🌟 6. 严苛的防爬伪装头部
     private fun httpGet(urlString: String): String? {
         var conn: HttpURLConnection? = null
         return try {
             conn = URL(urlString).openConnection() as HttpURLConnection
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            if (conn.responseCode == 200) {
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+            conn.setRequestProperty("Referer", "https://www.qingting.fm/") // 绕过防盗链核心
+            if (conn.responseCode in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
             } else null
         } catch (e: Exception) {
