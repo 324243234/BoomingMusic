@@ -257,20 +257,36 @@ class LyricsViewModel(
         lyricsJob = viewModelScope.launch {
             if (song == Song.emptySong) {
                 _lyricsUiState.value = LyricsUiState.Empty(song.id)
-            } else {
-                _lyricsUiState.value = LyricsUiState.Loading(song.id)
+                return@launch
+            }
+            
+            _lyricsUiState.value = LyricsUiState.Loading(song.id)
 
-                val lyricsState = getBestLyricsFromSources(
-                    song = song,
-                    sources = listOf(
-                        LyricsSource.File,
-                        LyricsSource.Embedded,
-                        LyricsSource.Downloaded
-                    )
-                )
+            // 🌟 新增：拦截电台流，为其加载专属的 EPG 节目单
+            val streamUrl = song.data
+            val isRadioStream = song.duration <= 0L && streamUrl.startsWith("http")
+            
+            if (isRadioStream) {
+                // 异步获取电台节目单
+                val epgText = com.mardous.booming.data.local.lyrics.RadioEpgFetcher.fetchEpgForRadio(song.title)
+                // 直接使用 Plain 模式展示排版好的纯文本
                 if (isActive) {
-                    _lyricsUiState.value = lyricsState
+                    _lyricsUiState.value = LyricsUiState.Plain(song.id, epgText)
                 }
+                return@launch
+            }
+
+            // 常规本地歌曲的歌词加载逻辑（保留不变）
+            val lyricsState = getBestLyricsFromSources(
+                song = song,
+                sources = listOf(
+                    LyricsSource.File,
+                    LyricsSource.Embedded,
+                    LyricsSource.Downloaded
+                )
+            )
+            if (isActive) {
+                _lyricsUiState.value = lyricsState
             }
         }
     }

@@ -1035,6 +1035,24 @@ class PlaybackService :
             )) {
             prefetchNextReplayGain()
         }
+		
+		// 🌟 新增：监听电台流内的实时 ICY 媒体元数据变更
+        if (events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)) {
+            val currentItem = player.currentMediaItem
+            val isRadio = currentItem?.localConfiguration?.uri?.toString()?.startsWith("http") == true 
+                          && player.duration == C.TIME_UNSET
+            
+            if (isRadio) {
+                val streamTitle = player.mediaMetadata.title?.toString()
+                if (!streamTitle.isNullOrBlank() && streamTitle != currentItem.mediaMetadata.title?.toString()) {
+                    // 当检测到流内推送了新曲名时，直接通过 Toast 告诉用户当前电台播放的歌名
+                    // 你也可以在这里广播给 UI 让它显示在屏幕上方
+                    uiHandler.post {
+                        showToast("📻 电台正在播放: $streamTitle")
+                    }
+                }
+            }
+        }
     }
 
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
@@ -1468,34 +1486,38 @@ class PlaybackService :
             withContext(IO) {
                 val song = runCatching { repository.songByMediaItem(expectedMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
-                // 🌟 核心修复 3：砍掉 emptySong 阻断，直接沿用最新的 currentIsFavorite！
                 val collectState = if (currentIsFavorite) "1" else "0"
+                val isRadioStream = song.duration <= 0L && song.data.startsWith("http")
 
-                val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
-                val rawLyrics = if (song != Song.emptySong) {
-                    runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = false) }.getOrNull()
-                } else null
-                
-                val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
-
-                val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
-                    val timeMs = line.start
-                    val min = timeMs / 60000
-                    val sec = (timeMs % 60000) / 1000
-                    val ms = (timeMs % 1000) / 10
-                    val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                // 🌟 终极防爆破：车机端歌词数据安全隔离
+                val lrcText = if (isRadioStream) {
+                    "📻 正在收听电台：${song.title}\n📡 节目排期请在手机端查看"
+                } else {
+                    val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
+                    val rawLyrics = if (song != Song.emptySong) {
+                        runCatching { lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = false) }.getOrNull()
+                    } else null
                     
-                    val content = line.content.content 
-                    val translation = line.translation?.content
-                    
-                    if (showTranslation && !translation.isNullOrBlank()) {
-                        "$timeStr$content 「$translation」"
-                    } else {
-                        "$timeStr$content"
-                    }
-                } ?: ""
+                    val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-                val lrcText = if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
+                    val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
+                        val timeMs = line.start
+                        val min = timeMs / 60000
+                        val sec = (timeMs % 60000) / 1000
+                        val ms = (timeMs % 1000) / 10
+                        val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                        val content = line.content.content 
+                        val translation = line.translation?.content
+                        
+                        if (showTranslation && !translation.isNullOrBlank()) {
+                            "$timeStr$content 「$translation」"
+                        } else {
+                            "$timeStr$content"
+                        }
+                    } ?: ""
+
+                    if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
+                }
 
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
@@ -1555,6 +1577,9 @@ class PlaybackService :
                         item.mediaMetadata.buildUpon()
                             .setTitle(rs.title)
                             .setArtist("网络电台")
+                            // 🛡️ 新增这2行：强制清空流媒体可能自带的动态封面，彻底锁死 USB 溢出隐患！
+                            .setArtworkData(null, null) 
+                            .setArtworkUri(null)        
                             .build()
                     )
                     .setLiveConfiguration(
