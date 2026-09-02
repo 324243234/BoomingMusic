@@ -74,17 +74,27 @@ object RadioEpgFetcher {
                 return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (暂未收录该频道排期)"
             }
 
-            // 过滤兜底脏数据（解决未获取到真实节目单时，显示整天多余时段的问题）
+            // 过滤兜底脏数据与 API 广告水印
             val validPrograms = mutableListOf<JSONObject>()
             for (i in 0 until epgData.length()) {
                 val prog = epgData.getJSONObject(i)
-                val title = prog.optString("title", "").trim()
+                val rawTitle = prog.optString("title", "").trim()
                 val start = prog.optString("start", "")
                 
-                // 过滤掉接口默认塞入的无意义占位符，如 "精彩节目"、"未知节目" 或空标题
-                if (title.isEmpty() || title == "精彩节目" || title == "未知节目") continue
+                // 🌟 核心去广告：剥离 "免费使用"、"DIYP" 等各种 API 水印
+                val title = rawTitle
+                    .replace(Regex("""(?i)[-_\s]*免费使用.*"""), "")
+                    .replace(Regex("""(?i)diyp.*"""), "")
+                    .replace("112114", "")
+                    .trim()
+                
+                // 🌟 核心去废料：过滤掉无意义的占位时段
+                if (title.isEmpty() || title.contains("精彩节目") || title.contains("未知节目") 
+                    || title.contains("无节目") || title.contains("休息") || title.contains("转播")) continue
                 if (start.isEmpty()) continue
                 
+                // 将干净的名字存回备用
+                prog.put("title_clean", title)
                 validPrograms.add(prog)
             }
 
@@ -103,7 +113,7 @@ object RadioEpgFetcher {
             sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
 
             for (prog in validPrograms) {
-                val title = prog.optString("title", "未知节目")
+                val title = prog.optString("title_clean", "未知节目")
                 val startTime = prog.optString("start", "")
                 val endTime = prog.optString("end", "")
                 

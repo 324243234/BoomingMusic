@@ -279,6 +279,8 @@ class PlaybackService :
         playerThread.start()
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            // 🌟 必须显式告诉服务器我们需要获取流内 ICY 信息！
+            .setDefaultRequestProperties(mapOf("Icy-MetaData" to "1")) 
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
@@ -1036,19 +1038,21 @@ class PlaybackService :
             prefetchNextReplayGain()
         }
 		
-		// 🌟 新增：监听电台流内的实时 ICY 媒体元数据变更
+		// 🌟 监听电台流内的实时 ICY 媒体元数据变更
         if (events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)) {
             val currentItem = player.currentMediaItem
             val isRadio = currentItem?.localConfiguration?.uri?.toString()?.startsWith("http") == true 
                           && player.duration == C.TIME_UNSET
             
             if (isRadio) {
-                val streamTitle = player.mediaMetadata.title?.toString()
-                if (!streamTitle.isNullOrBlank() && streamTitle != currentItem.mediaMetadata.title?.toString()) {
-                    // 当检测到流内推送了新曲名时，直接通过 Toast 告诉用户当前电台播放的歌名
-                    // 你也可以在这里广播给 UI 让它显示在屏幕上方
+                // ICY 数据通常存在 title 或 displayTitle 中
+                val streamTitle = player.mediaMetadata.title?.toString() ?: player.mediaMetadata.displayTitle?.toString()
+                val stationName = currentItem.mediaMetadata.title?.toString()
+                
+                // 防止电台没有 ICY 时重复播报电台名字本身
+                if (!streamTitle.isNullOrBlank() && streamTitle != stationName && streamTitle != "网络电台") {
                     uiHandler.post {
-                        showToast("📻 电台正在播放: $streamTitle")
+                        showToast("🎵 正在播放: $streamTitle")
                     }
                 }
             }
