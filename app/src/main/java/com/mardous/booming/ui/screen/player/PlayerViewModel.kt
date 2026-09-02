@@ -94,6 +94,12 @@ private fun isValidAudioStream(url: String): Boolean {
     } catch (e: Exception) { false }
 }
 
+// 🌟 辅助：MD5 计算工具（适配酷狗与酷我的签名计算）
+private fun md5(input: String): String {
+    val md = java.security.MessageDigest.getInstance("MD5")
+    return md.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+}
+
 // 🌟 酷狗源：保持稳定
 private suspend fun fetchKugouFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
@@ -126,7 +132,7 @@ private suspend fun fetchKugouFallback(title: String, artist: String): String = 
     return@withContext ""
 }
 
-// 🌟 酷我源：强制伪装安卓底层 UA，击穿“仅限手机客户端”防盗链录音
+// 🌟 酷我源：强制伪装安卓底层 UA，击穿防盗链录音
 private suspend fun fetchKuwoFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
         val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
@@ -152,20 +158,9 @@ private suspend fun fetchKuwoFallback(title: String, artist: String): String = w
     return@withContext ""
 }
 
+// 🌟 核心分发：酷狗优先 -> 酷我备用，删除了你多余粘贴的一份，绝不报冲突！
 private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    kotlinx.coroutines.withTimeoutOrNull(2500) {
-        val kgUrl = fetchKugouFallback(title, artist)
-        if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
-
-        val kwUrl = fetchKuwoFallback(title, artist)
-        if (kwUrl.isNotEmpty()) return@withTimeoutOrNull kwUrl
-        ""
-    } ?: ""
-}
-
-// 🌟 核心分发：酷狗优先 -> 酷我备用，总响应锁死在 1.5 秒以内
-private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    withTimeoutOrNull(1500) {
+    kotlinx.coroutines.withTimeoutOrNull(1500) {
         val kgUrl = fetchKugouFallback(title, artist)
         if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
 
@@ -176,7 +171,7 @@ private suspend fun fetchFallbackFullUrl(title: String, artist: String): String 
     } ?: ""
 }
 
-// 🌟 核心装配：批量向官方索取链接，对标记为 VIP 截断的曲目并发双源嗅探
+// 🌟 核心装配：批量向官方索取链接，并发双源嗅探
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     val neteaseSongs = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }
     val officialUrlMap = mutableMapOf<Long, String>()
@@ -186,7 +181,7 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
         try {
             val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
             val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-            val encodedCookie = URLEncoder.encode(cookie, "UTF-8")
+            val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
             val idsStr = neteaseSongs.map { it.size }.joinToString(",")
             val separator = if (baseUrl.contains("?")) "&" else "?"
             val urlStr = "$baseUrl/song/url/v1?id=$idsStr&level=standard$separator" + "cookie=$encodedCookie"
@@ -235,7 +230,7 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
             }.awaitAll().toMap()
         }
     } else {
-        emptyMap()
+        emptyMap<Long, String>() // 🌟 显式指定类型，彻底解决泛型推断失败报错
     }
 
     mapNotNull { song ->
@@ -246,7 +241,7 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
 
             MediaItem.Builder()
                 .setMediaId(song.id.toString())
-                .setUri(Uri.parse(finalUrl))
+                .setUri(android.net.Uri.parse(finalUrl))
                 .setMediaMetadata(
                     androidx.media3.common.MediaMetadata.Builder()
                         .setTitle(song.title)
