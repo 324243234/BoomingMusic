@@ -41,33 +41,36 @@ object NeteaseDailyApi {
     }
 
     suspend fun fetchDailyRecommend(context: Context): List<JSONObject> = withContext(Dispatchers.IO) {
-        val resultList = mutableListOf<JSONObject>()
-        val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
-        val cookie = ApiConfigManager.getCookie(context)
-        var conn: HttpURLConnection? = null
-        try {
-            val url = buildUrlWithCookie("$baseUrl/recommend/songs", cookie)
-            conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 45000
-            conn.readTimeout = 45000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            
-            if (conn.responseCode == 200) {
-                val jsonRes = conn.inputStream.bufferedReader().use { it.readText() }
-                val dataObj = JSONObject(jsonRes).optJSONObject("data")
-                dataObj?.optJSONArray("dailySongs")?.let { dailySongs ->
-                    for (i in 0 until dailySongs.length()) {
-                        resultList.add(dailySongs.getJSONObject(i))
-                    }
+    val resultList = mutableListOf<JSONObject>()
+    val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)
+    val cookie = ApiConfigManager.getCookie(context)
+    var conn: HttpURLConnection? = null
+    try {
+        // 🌟 强制加入 afresh=true 和 _t 时间戳，击穿 Node 与网易云服务端的跨天缓存
+        val timestamp = System.currentTimeMillis()
+        val url = buildUrlWithCookie("$baseUrl/recommend/songs?afresh=true&_t=$timestamp", cookie)
+        conn = url.openConnection() as HttpURLConnection
+        conn.connectTimeout = 45000
+        conn.readTimeout = 45000
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+        conn.setRequestProperty("Cookie", cookie) // 显式挂载 Cookie 请求头
+        
+        if (conn.responseCode == 200) {
+            val jsonRes = conn.inputStream.bufferedReader().use { it.readText() }
+            val dataObj = JSONObject(jsonRes).optJSONObject("data")
+            dataObj?.optJSONArray("dailySongs")?.let { dailySongs ->
+                for (i in 0 until dailySongs.length()) {
+                    resultList.add(dailySongs.getJSONObject(i))
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            conn?.disconnect()
         }
-        return@withContext resultList
+    } catch (e: Exception) {
+        e.printStackTrace()
+    } finally {
+        conn?.disconnect()
     }
+    return@withContext resultList
+}
 
     suspend fun likeSong(context: Context, songId: Long): Boolean = withContext(Dispatchers.IO) {
         val baseUrl = ApiConfigManager.getNeteaseBaseUrl(context)

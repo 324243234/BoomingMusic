@@ -74,50 +74,88 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 核心 1：通过你自己的 Node API 即时获取直链，绝不篡改 CDN 域名以保证签名完全有效！
-private suspend fun fetchNeteaseUrl(context: Context, songId: Long): String = withContext(Dispatchers.IO) {
+// 🌟 核心 1：开源备用源嗅探（LX Music 同款逻辑：当网易云为 VIP 30 秒试听时，无缝获取完整流）
+private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    try {
+        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "http://search.kuwo.cn/r.s?all=$query&ft=music&itemset=web_2013&client=kt&pn=0&rn=1&rformat=json&encoding=utf8"
+        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 3000
+        conn.readTimeout = 3000
+        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
+
+        if (!rid.isNullOrEmpty()) {
+            val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=$rid&format=mp3&response=url"
+            val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
+            playConn.connectTimeout = 3000
+            playConn.readTimeout = 3000
+            val res = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
+            if (res.startsWith("http")) {
+                return@withContext res.replace("http://", "https://")
+            } else if (res.contains("\"url\"")) {
+                val url = org.json.JSONObject(res).optString("url", "")
+                if (url.startsWith("http")) return@withContext url.replace("http://", "https://")
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return@withContext ""
+}
+
+// 🌟 核心 2：优先获取网易云官方直链，遇到 30 秒试听文件（freeTrialInfo）立即拦截并替换为完整音频流
+private suspend fun fetchNeteaseUrl(context: Context, song: Song): String = withContext(Dispatchers.IO) {
+    var fullAudioUrl = ""
     try {
         val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
         val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
         val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
         val separator = if (baseUrl.contains("?")) "&" else "?"
-        // 请求 standard 级别，确保免流歌曲 100% 下发
-        val urlStr = "$baseUrl/song/url/v1?id=$songId&level=standard$separator" + "cookie=$encodedCookie"
+        val urlStr = "$baseUrl/song/url/v1?id=${song.size}&level=standard$separator" + "cookie=$encodedCookie"
 
         val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 5000
         conn.readTimeout = 5000
         conn.requestMethod = "GET"
+        conn.setRequestProperty("Cookie", cookie)
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
         if (conn.responseCode == 200) {
             val json = conn.inputStream.bufferedReader().use { it.readText() }
             val data = org.json.JSONObject(json).optJSONArray("data")
             if (data != null && data.length() > 0) {
-                val realUrl = data.getJSONObject(0).optString("url", "")
-                if (realUrl.isNotEmpty() && realUrl != "null") {
-                    // 🗡️ 关键：只升级 HTTPS，绝对不去修改 m702 等前缀，保证 CDN 签名完美通过！
-                    return@withContext realUrl.replace("http://", "https://")
+                val item = data.getJSONObject(0)
+                val rawUrl = item.optString("url", "")
+                val freeTrialInfo = item.optJSONObject("freeTrialInfo")
+                val isTrial = freeTrialInfo != null || (item.optJSONObject("freeTimeTrialPrivilege")?.optInt("remainTime", 0) ?: 0) > 0
+
+                // 只有在非试听、且为完整音频流时才采用官方链接
+                if (rawUrl.isNotEmpty() && rawUrl != "null" && !isTrial) {
+                    fullAudioUrl = rawUrl.replace("http://", "https://")
                 }
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
     }
-    // 接口失败时的最底层官方兜底
-    return@withContext "https://music.163.com/song/media/outer/url?id=$songId.mp3"
+
+    // 若官方接口未返回有效直链或识别为 30 秒 VIP 截断，自动切入备用源获取整曲
+    if (fullAudioUrl.isEmpty()) {
+        fullAudioUrl = fetchFallbackFullUrl(song.title, song.artistName)
+    }
+
+    // 最终兜底
+    return@withContext if (fullAudioUrl.isNotEmpty()) fullAudioUrl else "https://music.163.com/song/media/outer/url?id=${song.size}.mp3"
 }
 
-// 🌟 核心 2：拦截假本地路径，即时掉包为真实网络直链
+// 🌟 核心 3：拦截假本地路径并挂载完整流
 private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
     mapNotNull { song ->
         if (song.genreName == "Netease" && song.size > 0L) {
-            // 播放前最后一秒，即时拿到带有效签名的真实直链
-            val finalUrl = fetchNeteaseUrl(context, song.size)
-            
+            val finalUrl = fetchNeteaseUrl(context, song)
             if (finalUrl.isEmpty()) return@mapNotNull null
 
-            // 强行注入元数据，彻底防电台误判
             MediaItem.Builder()
                 .setMediaId(song.id.toString())
                 .setUri(Uri.parse(finalUrl))
@@ -132,7 +170,6 @@ private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> =
                 )
                 .build()
         } else {
-            // 非网易云歌曲走正常逻辑
             song.toMediaItem().takeUnless { it == MediaItem.EMPTY }
         }
     }

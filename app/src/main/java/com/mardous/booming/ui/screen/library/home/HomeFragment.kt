@@ -164,6 +164,29 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         val lastDate = prefs.getString("last_daily_date", "")
         val plName = "网易云今日推荐"
 
+		val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
+var playlistId: Long? = null
+
+// 🌟 跨天（日期不一致）或存在同名旧残留时，直接执行全量物理删除
+if (lastDate != todayStr) {
+    if (existingPlaylists.isNotEmpty()) {
+        runCatching { repository.deletePlaylists(existingPlaylists) }
+    }
+    playlistId = null
+} else {
+    playlistId = existingPlaylists.firstOrNull()?.playListId
+    if (playlistId != null) {
+        // 今日已拉取过，直接秒开
+        withContext(Dispatchers.Main) {
+            findNavController().navigate(
+                R.id.nav_playlist_detail, 
+                com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
+            )
+        }
+        return@launch
+    }
+}
+		
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
