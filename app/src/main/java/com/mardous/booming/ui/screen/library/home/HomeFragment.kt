@@ -157,51 +157,35 @@ class HomeFragment : AbsMainActivityFragment(R.layout.fragment_home),
         }
     }
 
-    private fun handleDailyRecommendClick() {
+   private fun handleDailyRecommendClick() {
         val appContext = requireContext().applicationContext
         val prefs = appContext.getSharedPreferences("netease_api_prefs", android.content.Context.MODE_PRIVATE)
         val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         val lastDate = prefs.getString("last_daily_date", "")
         val plName = "网易云今日推荐"
 
-		val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
-var playlistId: Long? = null
-
-// 🌟 跨天（日期不一致）或存在同名旧残留时，直接执行全量物理删除
-if (lastDate != todayStr) {
-    if (existingPlaylists.isNotEmpty()) {
-        runCatching { repository.deletePlaylists(existingPlaylists) }
-    }
-    playlistId = null
-} else {
-    playlistId = existingPlaylists.firstOrNull()?.playListId
-    if (playlistId != null) {
-        // 今日已拉取过，直接秒开
-        withContext(Dispatchers.Main) {
-            findNavController().navigate(
-                R.id.nav_playlist_detail, 
-                com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
-            )
-        }
-        return@launch
-    }
-}
-		
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val existingPlaylists: List<PlaylistEntity> = repository.checkPlaylistExists(plName)
-                var playlistId: Long? = existingPlaylists.firstOrNull()?.playListId
+                var playlistId: Long? = null
 
-                if (playlistId != null && lastDate == todayStr) {
-                    withContext(Dispatchers.Main) {
-                        findNavController().navigate(R.id.nav_playlist_detail, com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!))
+                // 🌟 跨天（日期不一致）时物理清除旧歌单；同一天则秒开
+                if (lastDate != todayStr) {
+                    if (existingPlaylists.isNotEmpty()) {
+                        runCatching { repository.deletePlaylists(existingPlaylists) }
                     }
-                    return@launch
-                }
-
-                if (existingPlaylists.isNotEmpty() && lastDate != todayStr) {
-                    runCatching { repository.deletePlaylists(existingPlaylists) }
                     playlistId = null
+                } else {
+                    playlistId = existingPlaylists.firstOrNull()?.playListId
+                    if (playlistId != null) {
+                        withContext(Dispatchers.Main) {
+                            findNavController().navigate(
+                                R.id.nav_playlist_detail, 
+                                com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId)
+                            )
+                        }
+                        return@launch
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -231,10 +215,7 @@ if (lastDate != todayStr) {
 
                     val albumName = item.optJSONObject("al")?.optString("name") ?: item.optJSONObject("album")?.optString("name") ?: "未知专辑"
                     val durationMs = item.optLong("dt", item.optLong("duration", 200000L)) 
-                    
-                    // 🌟 不再缓存动态 CDN，只保存静态 ID 代理链接，留给播放器即时解析
-                    //val playUrl = "https://music.163.com/song/media/outer/url?id=$songId.mp3"
-					val playUrl = "/storage/emulated/0/Music/NeteaseRecommend/$songId.flac"
+                    val playUrl = "/storage/emulated/0/Music/NeteaseRecommend/$songId.flac"
 
                     songEntities.add(
                         SongEntity(
@@ -256,7 +237,10 @@ if (lastDate != todayStr) {
                 prefs.edit().putString("last_daily_date", todayStr).apply()
 
                 withContext(Dispatchers.Main) {
-                    findNavController().navigate(R.id.nav_playlist_detail, com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!))
+                    findNavController().navigate(
+                        R.id.nav_playlist_detail, 
+                        com.mardous.booming.extensions.navigation.playlistDetailArgs(playlistId!!)
+                    )
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
