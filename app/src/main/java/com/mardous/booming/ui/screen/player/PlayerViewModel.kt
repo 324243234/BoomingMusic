@@ -79,42 +79,46 @@ import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 辅助：MD5 计算工具（适配酷狗与酷我的签名计算）
-private fun md5(input: String): String {
-    val md = MessageDigest.getInstance("MD5")
-    return md.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+// 🌟 核心 1：严格校验直链是否为真实音频，彻底根除 CONTAINER_UNSUPPORTED 网页报错
+private fun isValidAudioStream(url: String): Boolean {
+    if (url.isEmpty()) return false
+    return try {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "HEAD"
+        conn.connectTimeout = 1500
+        conn.readTimeout = 1500
+        conn.setRequestProperty("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 12)")
+        val contentType = conn.contentType ?: ""
+        // 必须是 2xx 或 3xx 状态码，且绝对不能包含 html 或 json
+        conn.responseCode in 200..399 && !contentType.contains("text/html") && !contentType.contains("json")
+    } catch (e: Exception) { false }
 }
 
-// 🌟 酷狗源嗅探：移植 LX Music 逻辑（搜索 + TrackerCDN 解析）
+// 🌟 酷狗源：保持稳定
 private suspend fun fetchKugouFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
-        val query = URLEncoder.encode("$title $artist", "UTF-8")
-        val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter&filter=2&iscorrection=1&privilege_filter=0&area_code=1"
+        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
+        val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter"
         val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 800
-        conn.readTimeout = 800
+        conn.connectTimeout = 1000
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         
         val res = conn.inputStream.bufferedReader().use { it.readText() }
-        val dataObj = org.json.JSONObject(res).optJSONObject("data")
-        val lists = dataObj?.optJSONArray("lists")
+        val lists = org.json.JSONObject(res).optJSONObject("data")?.optJSONArray("lists")
         if (lists != null && lists.length() > 0) {
             val item = lists.getJSONObject(0)
             val hash = item.optString("SQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
-                ?: item.optString("HQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
                 ?: item.optString("FileHash")
 
             if (hash.isNotEmpty()) {
                 val key = md5(hash.lowercase() + "kgcloudv2")
                 val trackUrl = "http://trackercdn.kugou.com/i/v2/?cmd=26&pid=1&behavior=play&hash=$hash&key=$key&mid=1&appid=1005"
                 val trackConn = java.net.URL(trackUrl).openConnection() as java.net.HttpURLConnection
-                trackConn.connectTimeout = 800
-                trackConn.readTimeout = 800
                 val trackRes = trackConn.inputStream.bufferedReader().use { it.readText() }
-                val urls = org.json.JSONObject(trackRes).optJSONArray("url")
-                if (urls != null && urls.length() > 0) {
-                    val playUrl = urls.getString(0)
-                    if (playUrl.startsWith("http")) return@withContext playUrl.replace("http://", "https://")
+                val playUrl = org.json.JSONObject(trackRes).optJSONArray("url")?.optString(0) ?: ""
+                
+                if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
+                    return@withContext playUrl.replace("http://", "https://")
                 }
             }
         }
@@ -122,29 +126,41 @@ private suspend fun fetchKugouFallback(title: String, artist: String): String = 
     return@withContext ""
 }
 
-// 🌟 酷我源嗅探：移植移动端客户端协议，带 HTML 防伪过滤
+// 🌟 酷我源：强制伪装安卓底层 UA，击穿“仅限手机客户端”防盗链录音
 private suspend fun fetchKuwoFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
     try {
-        val query = URLEncoder.encode("$title $artist", "UTF-8")
+        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
         val searchUrl = "http://search.kuwo.cn/r.s?client=kt&all=$query&pn=0&rn=1&vipver=1&ft=music&encoding=utf8&rformat=json&mobi=1"
         val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 800
-        conn.readTimeout = 800
+        conn.connectTimeout = 1000
         val text = conn.inputStream.bufferedReader().use { it.readText() }
         val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
 
         if (!rid.isNullOrEmpty()) {
             val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url"
             val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
-            playConn.connectTimeout = 800
-            playConn.readTimeout = 800
+            playConn.connectTimeout = 1000
+            // 极度关键：绝对不能用 Mozilla 浏览器 UA，必须用 Dalvik 安卓底层标识
+            playConn.setRequestProperty("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 12; MI 9)")
             val playUrl = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
-            if ((playUrl.startsWith("http://") || playUrl.startsWith("https://")) && !playUrl.contains("<html")) {
+            
+            if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
                 return@withContext playUrl.replace("http://", "https://")
             }
         }
     } catch (e: Exception) { }
     return@withContext ""
+}
+
+private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
+    kotlinx.coroutines.withTimeoutOrNull(2500) {
+        val kgUrl = fetchKugouFallback(title, artist)
+        if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
+
+        val kwUrl = fetchKuwoFallback(title, artist)
+        if (kwUrl.isNotEmpty()) return@withTimeoutOrNull kwUrl
+        ""
+    } ?: ""
 }
 
 // 🌟 核心分发：酷狗优先 -> 酷我备用，总响应锁死在 1.5 秒以内
@@ -423,50 +439,50 @@ class PlayerViewModel(
     private fun handleNeteaseFavorite(context: Context, song: Song) {
         Toast.makeText(context, "❤️ 已收藏，正在同步并极速下载...", Toast.LENGTH_SHORT).show()
 
-        // 1. 本地数据库瞬间标记红心
+        // 1. 本地瞬间亮起红心
         viewModelScope.launch(Dispatchers.IO) {
             repository.toggleFavorite(song)
         }
 
-        // 2. 强制同步写入网易云账号云端（带时间戳穿透缓存）
+        // 2. 严格同步至网易云与保底下载
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val realNeteaseId = song.size 
                 if (realNeteaseId > 0) {
                     val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
                     val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-                    val encodedCookie = URLEncoder.encode(cookie, "UTF-8")
                     val ts = System.currentTimeMillis()
-                    val likeUrl = "$baseUrl/like?id=$realNeteaseId&like=true&timestamp=$ts&cookie=$encodedCookie"
+                    val likeUrl = "$baseUrl/like?id=$realNeteaseId&like=true&timestamp=$ts"
                     
                     val conn = java.net.URL(likeUrl).openConnection() as java.net.HttpURLConnection
                     conn.connectTimeout = 5000
-                    conn.readTimeout = 5000
-                    conn.setRequestProperty("Cookie", cookie)
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                     conn.requestMethod = "GET"
-                    conn.responseCode // 触发网络，确保网易云云端同步成功
+                    // 🌟 必须放在 Header 里，且必须读取输入流，否则网易云服务器会直接丢弃该请求
+                    conn.setRequestProperty("Cookie", cookie) 
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    conn.inputStream.bufferedReader().use { it.readText() } 
                 }
                 
-                // 3. 物理文件下载（VIP 双通道兜底机制）
+                // 3. 物理下载双保险机制
                 val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
                 if (!targetDir.exists()) targetDir.mkdirs()
 
+                // 先尝试官方本地引擎下载
                 val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
                     id = song.size, title = song.title, artist = song.artistName,
                     album = song.albumName, picUrl = "", durationMs = song.duration,
                     year = "", format = "mp3", fileSizeStr = "标准直连", requestedLevel = "standard" 
                 )
-
                 var downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, downloadItem, targetDir) { _ -> }
 
-                // 若网易云无版权或 VIP 下载失败，直接从酷狗/酷我备用源抓取保存到本地
+                // 🌟 VIP 兜底：如果官方引擎下载失败（返回空或文件不存在），直接嗅探备用源并强行写入文件
                 if (downloadedFile == null || !downloadedFile.exists()) {
                     val fallbackUrl = fetchFallbackFullUrl(song.title, song.artistName)
                     if (fallbackUrl.isNotEmpty()) {
                         val file = File(targetDir, "${song.artistName} - ${song.title}.mp3")
                         val streamConn = java.net.URL(fallbackUrl).openConnection() as java.net.HttpURLConnection
                         streamConn.connectTimeout = 5000
+                        streamConn.setRequestProperty("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 12)")
                         streamConn.inputStream.use { input ->
                             file.outputStream().use { output -> input.copyTo(output) }
                         }
@@ -475,13 +491,13 @@ class PlayerViewModel(
                 }
 
                 if (downloadedFile != null && downloadedFile.exists()) {
-                    kotlinx.coroutines.delay(800)
+                    kotlinx.coroutines.delay(1000)
                     val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
                     if (localSong != Song.emptySong) {
-                        repository.toggleFavorite(localSong)
+                        repository.toggleFavorite(localSong) 
                     }
                     withContext(Dispatchers.Main) { 
-                        Toast.makeText(context, "✅ 红心已同步，已离线至 newdown！", Toast.LENGTH_SHORT).show() 
+                        Toast.makeText(context, "✅ 红心已同步网易云，歌曲已下载至 newdown！", Toast.LENGTH_SHORT).show() 
                     }
                 }
             } catch (e: Exception) {
