@@ -16,7 +16,7 @@
         android:icon="@drawable/ic_album_24dp" 
         app:showAsAction="always"/>
 	
-	<!-- 🌟 新增：切换 LRC/TTML 格式的快捷按钮 -->
+	<!-- 🌟 新增 ：切换 LRC/TTML 格式的快捷按钮 -->
     <item
     android:id="@+id/action_toggle_lyrics_format"
     android:title="切换歌词格式"
@@ -90,12 +90,6 @@
 		android:title="@string/action_details"
 		android:icon="@drawable/ic_info_24dp"
 		app:showAsAction="never"/>
-		
-	<item
-        android:id="@+id/action_toggle_download_quality"
-        android:title="下载音质"
-        app:showAsAction="never" />
-	
 	<!-- 🌟 新增：独立获取 TTML 文件的按钮 (永远收纳在三点菜单中) -->
     <item
         android:id="@+id/action_fetch_ttml"

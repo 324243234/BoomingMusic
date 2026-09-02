@@ -342,9 +342,7 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             menu.findItem(R.id.action_equalizer)?.apply { setIcon(R.drawable.ic_equalizer_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
             menu.findItem(R.id.action_sound_settings)?.apply { setIcon(R.drawable.ic_volume_up_24dp); setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS) }
 			menu.findItem(R.id.action_playing_queue)?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-            
-			
-			menu.findItem(R.id.action_favorite)?.apply {
+            menu.findItem(R.id.action_favorite)?.apply {
                 setIcon(R.drawable.ic_favorite_outline_24dp)
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
             }
@@ -356,27 +354,15 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener { toggleVideoCover(); true }
             }
-			
-			// 🌟 新增：音质切换按钮 
-            val toggleQualityItem = menu.findItem(R.id.action_toggle_download_quality) ?: menu.add(Menu.NONE, R.id.action_toggle_download_quality, 52, "下载音质")
-            toggleQualityItem.apply {
-                title = "↓"
-                setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-                setOnMenuItemClickListener { 
-                    toggleDownloadQuality() 
-                    updateQualityIcon(this)
-                    true 
-                }
-			}	
 
-            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "下载TTML")
+            val fetchTtmlItem = menu.findItem(R.id.action_fetch_ttml) ?: menu.add(Menu.NONE, R.id.action_fetch_ttml, 51, "↓T")
             fetchTtmlItem.apply {
-                title = "↓TT"
+                title = "↓T"
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener { fetchTtml(); true }
             }
 
-            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 49, "切换歌词格式")
+            val toggleFormatItem = menu.findItem(R.id.action_toggle_lyrics_format) ?: menu.add(Menu.NONE, R.id.action_toggle_lyrics_format, 52, "切换歌词格式")
             toggleFormatItem.apply {
                 setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
                 setOnMenuItemClickListener { toggleLyricsFormat(); true }
@@ -392,37 +378,12 @@ class PlainPlayerFragment : AbsPlayerFragment(R.layout.fragment_plain_player) {
             deleteDeviceItem.setOnMenuItemClickListener { playerViewModel.currentSongFlow.value?.let { deleteAssociatedFiles(it, false) }; false }
 
             updateFormatIcon(toggleFormatItem)
-			updateQualityIcon(toggleQualityItem)
         } else {
             menu.setShowAsAction(R.id.action_playing_queue, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_favorite, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_sleep_timer, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
             menu.setShowAsAction(R.id.action_show_lyrics, mode = MenuItem.SHOW_AS_ACTION_ALWAYS)
         }
-    }
-	
-	// 🌟 1. 切换下载音质偏好的方法
-    private fun toggleDownloadQuality() {
-        val currentQuality = sharedPreferences.getString("netease_download_quality", "flac") ?: "flac"
-        // 由于只在 flac 和 320k 之间切换，所以直接取反
-        val newQuality = if (currentQuality == "flac") "320k" else "flac"
-        
-        sharedPreferences.edit(commit = true) { putString("netease_download_quality", newQuality) }
-        
-        val hintText = if (newQuality == "flac") {
-            "已切换收藏下载画质：无损 FLAC 优先\n(未搜到时自动降级 320k/128k)"
-        } else {
-            "已切换收藏下载画质：320k 高清 MP3\n(极速省流，未搜到时降级 128k)"
-        }
-        context?.let { Toast.makeText(it, hintText, Toast.LENGTH_LONG).show() }
-    }
-
-    // 🌟 2. 刷新音质按钮外观 (为了让你直观看到当前是啥，我们通过改变文字颜色/粗细，或图标来提示)
-    private fun updateQualityIcon(item: MenuItem?) {
-        val currentQuality = sharedPreferences.getString("netease_download_quality", "flac") ?: "flac"
-        // 你可以用一个文本标题配合图标，或者直接改变文本来区分
-        item?.title = if (currentQuality == "flac") "↓F" else "↓M"
-        // 注意：如果你自己画了个 "ico下" 的图片，可以用 item?.setIcon(R.drawable.ic_download_quality)
     }
 
     private fun updateFormatIcon(item: MenuItem?) {

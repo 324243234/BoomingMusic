@@ -401,16 +401,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
                 menu.removeItem(R.id.action_delete_playlist)
             }
 			
-			// 🌟 为网易云日推注入顶级下载按钮
-            if (it.playlistEntity.playlistName == "网易云今日推荐") {
-                if (menu.findItem(8002) == null) {
-                    menu.add(0, 8002, 0, "⬇️ 下载").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                }
-                menu.findItem(R.id.action_sort_order)?.isVisible = false
-                menu.findItem(R.id.action_export_playlist)?.isVisible = false
-                menu.findItem(R.id.action_delete_playlist)?.isVisible = false
-            }
-			
 			// 👇 新增：识别到是电台分类，动态注入“添加自定义源”菜单
             if (it.playlistEntity.playlistName.startsWith("[Radio]")) {
                 if (menu.findItem(8001) == null) {
@@ -435,12 +425,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-	
-	     // 🌟 响应下载菜单，唤起底部弹窗
-        if (menuItem.itemId == 8002) {
-            com.mardous.booming.ui.dialogs.DownloadSheetFragment().show(childFragmentManager, "DL")
-            return true
-        }
 	
 	     if (menuItem.itemId == 8001) {
             val nameInput = android.widget.EditText(requireContext()).apply { 
@@ -630,16 +614,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         menuItem: MenuItem,
         sharedElements: Array<Pair<View, String>>?
     ): Boolean {
-	// 👇 插入此处：网易云单曲极速下载
-        if (menuItem.itemId == R.id.action_download_netease) {
-            if (playlist.playlistEntity.playlistName != "网易云今日推荐") {
-                Toast.makeText(requireContext(), "该通道仅限网易云日推使用", Toast.LENGTH_SHORT).show()
-            } else {
-                downloadNeteaseSongById(song)
-            }
-            return true
-        }
-	
 	
 	if (song.duration == 0L || song.data.startsWith("http")) { 
         if (menuItem.itemId == R.id.action_fetch_lrc || menuItem.itemId == R.id.action_fetch_cover || menuItem.itemId == R.id.action_tag_editor) {
@@ -976,39 +950,6 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
         albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
     )
 }
-
-       private fun downloadNeteaseSongById(song: Song) {
-        val realId = song.size // 直接调取隐藏的真实 ID
-        if (realId <= 0L) return
-        val appContext = requireContext().applicationContext
-        Toast.makeText(appContext, "正在调用底层引擎极速下载: ${song.title}...", Toast.LENGTH_LONG).show()
-
-        viewLifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
-                if (!targetDir.exists()) targetDir.mkdirs()
-
-                // 直击下载引擎，绕过所有的全网搜索
-                val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                    id = realId, title = song.title, artist = song.artistName, album = song.albumName,
-                    picUrl = "", durationMs = song.duration, year = "", format = "flac",
-                    fileSizeStr = "ID极速直连", requestedLevel = "lossless"
-                )
-                val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(appContext, downloadItem, targetDir) { _ -> }
-
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (downloadedFile != null && downloadedFile.exists()) {
-                        Toast.makeText(appContext, "✅ 下载成功！已存入本地曲库", Toast.LENGTH_SHORT).show()
-                        libraryViewModel.forceReload(com.mardous.booming.ui.screen.library.ReloadType.Songs)
-                    } else {
-                        Toast.makeText(appContext, "❌ 下载失败：服务器拒绝或版权受限", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(appContext, "网络异常: ${e.message}", Toast.LENGTH_SHORT).show() }
-            }
-        }
-    }
 
     companion object {
         const val TAG = "PlaylistDetail"

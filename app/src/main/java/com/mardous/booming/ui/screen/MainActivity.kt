@@ -1,17 +1,10 @@
 package com.mardous.booming.ui.screen
 
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import android.app.SearchManager
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.os.Bundle
-import android.provider.MediaStore
 import androidx.annotation.OptIn
 import androidx.core.content.getSystemService
-import androidx.core.content.pm.ShortcutManagerCompat
-import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -25,7 +18,6 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.mardous.booming.R
 import com.mardous.booming.core.model.CategoryInfo
 import com.mardous.booming.core.model.MediaEvent
-import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.data.model.ContentType
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.extensions.currentFragment
@@ -36,10 +28,9 @@ import com.mardous.booming.extensions.utilities.toEnum
 import com.mardous.booming.extensions.whichFragment
 import com.mardous.booming.playback.Playback
 import com.mardous.booming.playback.library.MediaIDs
-import com.mardous.booming.playback.library.SearchQueryProvider
+import com.mardous.booming.core.model.shuffle.OpenShuffleMode
 import com.mardous.booming.ui.IScrollHelper
 import com.mardous.booming.ui.component.base.AbsSlidingMusicPanelActivity
-import com.mardous.booming.ui.screen.library.search.SearchFragment
 import com.mardous.booming.ui.screen.update.UpdateDialog
 import com.mardous.booming.ui.screen.update.UpdateSearchResult
 import com.mardous.booming.ui.screen.update.UpdateViewModel
@@ -84,18 +75,12 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
                     0
                 )
             }
-        }
+        } 
 
         val shortcutManager = getSystemService<ShortcutManager>()
         shortcutManager?.removeDynamicShortcuts(OLD_SHORTCUT_IDS)
 
         prepareUpdateViewModel()
-		
-		// 👇================ 🌟 新增：Render 静默唤醒预热 ================👇
-        // 提前 30 秒无感唤醒后台 API，确保你点开播放界面时，动态封面能 3 秒内极速出图！
-        lifecycleScope.launch(Dispatchers.IO) {
-            com.mardous.booming.data.network.NeteaseDailyApi.wakeUpAndRefresh(applicationContext)
-        }
     }
 
     override fun onConnected(controller: MediaController) {
@@ -234,7 +219,6 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         handlePlaybackIntent(intent, false)
     }
 
-    @Suppress("DEPRECATION")
     private fun handlePlaybackIntent(intent: Intent, canRestorePlayback: Boolean) {
         when (intent.action) {
             // 🌟 作者新增：外部通过 Intent 直接跳转至特定的分类/列表内容页
@@ -260,63 +244,20 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
 
             APP_SHORTCUT_LAST_ADDED -> {
                 playerViewModel.playMediaId(MediaIDs.LAST_ADDED)
-                ShortcutManagerCompat.reportShortcutUsed(this, "last_added")
                 setIntent(Intent())
             }
             APP_SHORTCUT_TOP_TRACKS -> {
                 playerViewModel.playMediaId(MediaIDs.TOP_TRACKS)
-                ShortcutManagerCompat.reportShortcutUsed(this, "top_tracks")
                 setIntent(Intent())
             }
             APP_SHORTCUT_SHUFFLE -> {
                 playerViewModel.playMediaId(MediaIDs.SONGS, true)
-                ShortcutManagerCompat.reportShortcutUsed(this, "shuffle_all")
                 setIntent(Intent())
             }
             APP_SHORTCUT_FAVORITES -> {
                 playerViewModel.playMediaId(MediaIDs.FAVORITES, true)
-                ShortcutManagerCompat.reportShortcutUsed(this, "favorites")
                 setIntent(Intent())
             }
-
-            Intent.ACTION_SEARCH -> {
-                val query = intent.getStringExtra(SearchManager.QUERY)
-                whichFragment<NavHostFragment>(R.id.fragment_container).navController
-                    .navigate(
-                        R.id.nav_search,
-                        Bundle().apply { putString(SearchFragment.QUERY, query) }
-                    )
-                setIntent(Intent())
-            }
-
-            MediaStore.INTENT_ACTION_MEDIA_SEARCH,
-            MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH -> {
-                SearchQueryProvider.handleSearchIntent(intent) { mainQuery, subQueries ->
-                    if (mainQuery == null) {
-                        showToast(R.string.invalid_search_params)
-                    } else {
-                        if (intent.action == MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) {
-                            playerViewModel.playMediaItem(
-                                MediaItem.Builder()
-                                    .setRequestMetadata(
-                                        MediaItem.RequestMetadata.Builder()
-                                            .setSearchQuery(mainQuery)
-                                            .setExtras(subQueries)
-                                            .build()
-                                    )
-                                    .build()
-                            )
-                        } else {
-                            whichFragment<NavHostFragment>(R.id.fragment_container).navController
-                                .navigate(
-                                    R.id.nav_search,
-                                    Bundle().apply { putString(SearchFragment.QUERY, mainQuery) }
-                                )
-                        }
-                    }
-                }
-            }
-
             else -> {
                 libraryViewModel.handleIntent(intent).observe(this) { result ->
                     if (result.handled) {
@@ -372,11 +313,6 @@ class MainActivity : AbsSlidingMusicPanelActivity(), MediaController.Listener {
         }
     }
 
-	override fun onDestroy() {
-        super.onDestroy()
-        // 🌟 退出时执行强制清理，打扫网易云在线播放与下载产生的缓存碎片
-        com.mardous.booming.util.NeteaseCacheSweeper.cleanUp(applicationContext)
-    }
     companion object {
         // 🌟 作者新增：页面内容跳转所使用的系统静态标识
         const val ACTION_SHOW_CONTENT = "com.mardous.booming.action.SHOW_CONTENT"

@@ -28,11 +28,6 @@
                 android:title="@string/genre"/>
         </menu>
     </item>
-	
-	<item
-        android:id="@+id/action_download_netease"
-        android:title="下载"
-        app:showAsAction="never"/>
     <item
         android:id="@+id/action_tag_editor"
         android:title="@string/action_tag_editor"

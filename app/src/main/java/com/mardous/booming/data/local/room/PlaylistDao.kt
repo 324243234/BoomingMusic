@@ -1,5 +1,18 @@
 /*
  * Copyright (c) 2024 Christians Martínez Alvarado
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package com.mardous.booming.data.local.room
@@ -20,8 +33,7 @@ interface PlaylistDao {
     @Query("SELECT * FROM PlaylistEntity WHERE playlist_name = :name")
     fun playlist(name: String): List<PlaylistEntity>
 
-    // 🌟 核心隐身魔法 1：过滤掉日推临时歌单
-    @Query("SELECT * FROM PlaylistEntity WHERE playlist_name != '网易云今日推荐'")
+    @Query("SELECT * FROM PlaylistEntity")
     suspend fun playlists(): List<PlaylistEntity>
 
     @Insert
@@ -33,9 +45,8 @@ interface PlaylistDao {
     @Query("UPDATE PlaylistEntity SET playlist_name = :name WHERE playlist_id = :playlistId")
     suspend fun renamePlaylist(playlistId: Long, name: String)
 
-    // 🌟 核心隐身魔法 2：过滤掉日推临时歌单
     @Transaction
-    @Query("SELECT * FROM PlaylistEntity WHERE playlist_name != '网易云今日推荐'")
+    @Query("SELECT * FROM PlaylistEntity")
     suspend fun playlistsWithSongs(): List<PlaylistWithSongs>
 
     @Transaction
@@ -47,7 +58,7 @@ interface PlaylistDao {
     fun playlistWithSongs(playlistId: Long): PlaylistWithSongs?
 
     @Transaction
-    @Query("SELECT * FROM PlaylistEntity WHERE playlist_name LIKE :playlistName AND playlist_name != '网易云今日推荐'")
+    @Query("SELECT * FROM PlaylistEntity WHERE playlist_name LIKE :playlistName")
     fun searchPlaylists(playlistName: String): List<PlaylistWithSongs>
 
     @Transaction

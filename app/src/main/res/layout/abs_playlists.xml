@@ -55,45 +55,5 @@
         app:layout_constraintTop_toBottomOf="@+id/last_added"
         app:layout_constraintStart_toStartOf="@+id/last_added"
         app:layout_constraintEnd_toEndOf="@+id/last_added"/>
-		
-		
-	<!-- 🌟 网易云每日推荐专属卡片 -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/dailyRecommendCard"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        app:cardBackgroundColor="?attr/colorPrimaryContainer"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="0dp"
-        android:clickable="true"
-        android:focusable="true"
-		android:foreground="?android:attr/selectableItemBackground"
-        app:layout_constraintTop_toBottomOf="@+id/history"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:padding="16dp">
-
-            <ImageView
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:src="@drawable/ic_trending_up_24dp"
-                app:tint="?attr/colorPrimary" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="每日推荐"
-                android:textColor="?attr/colorPrimary"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

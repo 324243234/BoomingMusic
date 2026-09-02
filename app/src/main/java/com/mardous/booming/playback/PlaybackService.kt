@@ -884,10 +884,7 @@ class PlaybackService :
             val newSong = runCatching { repository.songByMediaItem(mediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
 
             val streamUrl = mediaItem?.localConfiguration?.uri?.toString() ?: newSong.data
-            
-            // 🌟 终极修复 2：严格叠加 duration <= 0L 判定，防止把带时长的网易云 HTTP 流识别成电台！
             val isRadioStream = newSong.duration <= 0L && streamUrl.startsWith("http")
-            val isOnlineStream = !isRadioStream && streamUrl.startsWith("http") && !newSong.resolvedFromFile
 
             currentIsFavorite = if (isRadioStream && streamUrl.isNotEmpty()) {
                 runCatching {
@@ -903,20 +900,6 @@ class PlaybackService :
                         }
                     }
                     isFav
-                }.getOrDefault(false)
-            } else if (isOnlineStream) {
-                // 🌟 智能全局探针：查遍全手机，只要这首歌已经下载过（不管你移到哪个文件夹），红心自动点亮！
-                runCatching {
-                    var exists = false
-                    val cursor = applicationContext.contentResolver.query(
-                        android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                        arrayOf(android.provider.MediaStore.Audio.Media._ID),
-                        "${android.provider.MediaStore.Audio.Media.TITLE} = ? AND ${android.provider.MediaStore.Audio.Media.ARTIST} = ?",
-                        arrayOf(newSong.title, newSong.artistName),
-                        null
-                    )
-                    cursor?.use { if (it.count > 0) exists = true }
-                    exists
                 }.getOrDefault(false)
             } else if (newSong != Song.emptySong) {
                 runCatching { repository.isSongFavorite(newSong.id) }.getOrDefault(false)
@@ -1140,100 +1123,13 @@ class PlaybackService :
         withContext(IO) {
             val song = queueStateHolder.currentSong.first()
             if (song != Song.emptySong) {
-                // 🌟 1. 精准区分三方流类型
                 val isRadioStream = song.duration <= 0L && song.data.startsWith("http")
-                val isOnlineStream = !isRadioStream && song.data.startsWith("http") && !song.resolvedFromFile
 
-                when {
-                    // 🟢 场景 A：网络电台流 -> 走电台专属收藏夹
-                    isRadioStream -> {
-                        currentIsFavorite = playlistRepository.toggleRadioFavorite(song)
-                    }
-                    
-                    // 🟢 场景 B：网易云在线流 / 未下载的网络推荐歌曲 -> 纯云端同步 + 智能查重下载（绝对不污染本地收藏库）
-                    isOnlineStream -> {
-                        // 🌟 核心修改 1：坚决不调用 repository.toggleFavorite(song)！保护你的本地 VIP 收藏列表！
-                        // 只在内存里翻转状态，让 CarWith 和手机通知栏的红心亮起作为点击成功的交互反馈
-                        currentIsFavorite = !currentIsFavorite
-
-                        val appContext = applicationContext
-                        val targetFavState = currentIsFavorite
-                        val targetSong = song
-
-                        // 将耗时的网易云 API 和下载任务扔进独立后台协程
-                        serviceScope.launch(IO) {
-                            try {
-                                if (targetFavState) {
-                                    // 1. 云端同步点赞
-                                    com.mardous.booming.data.network.NeteaseDailyApi.likeSong(appContext, targetSong.id)
-
-                                    // 2. 🌟 核心修改 2：物理级智能全局查重，彻底无视 newdown 文件夹！
-                                    var alreadyExistsLocally = false
-                                    val cursor = appContext.contentResolver.query(
-                                        android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                                        arrayOf(android.provider.MediaStore.Audio.Media._ID),
-                                        "${android.provider.MediaStore.Audio.Media.TITLE} = ? AND ${android.provider.MediaStore.Audio.Media.ARTIST} = ?",
-                                        arrayOf(targetSong.title, targetSong.artistName),
-                                        null
-                                    )
-                                    cursor?.use { if (it.count > 0) alreadyExistsLocally = true }
-
-                                    if (alreadyExistsLocally) {
-                                        // 哪怕你把歌移到了 Music/ACG 目录下，也能瞬间拦截，绝对不重复下载！
-                                        withContext(Main) {
-                                            showToast("已同步网易云喜欢 (手机内已有此歌，跳过下载)")
-                                        }
-                                    } else {
-                                        // 本地确实没有，开始执行下载
-                                        val currentQuality = preferences.getString("netease_download_quality", "flac") ?: "flac"
-                                        val targetLevel = if (currentQuality == "flac") "lossless" else "exhigh"
-
-                                        val netSong = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                                            id = targetSong.id,
-                                            title = targetSong.title,
-                                            artist = targetSong.artistName,
-                                            album = targetSong.albumName,
-                                            durationMs = targetSong.duration,
-                                            picUrl = "", 
-                                            fileSizeStr = "",
-                                            format = currentQuality,
-                                            year = targetSong.year.toString(),
-                                            requestedLevel = targetLevel
-                                        )
-
-                                        val targetDir = java.io.File(
-                                            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
-                                            "newdown"
-                                        )
-                                        if (!targetDir.exists()) targetDir.mkdirs()
-
-                                        val downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(
-                                            context = appContext,
-                                            song = netSong,
-                                            targetDirectory = targetDir,
-                                            onProgress = {} 
-                                        )
-
-                                        if (downloadedFile != null && downloadedFile.exists()) {
-                                            com.mardous.booming.data.local.lyrics.ttml.MetadataFetcher.fetchMetadata(targetSong, needLrc = true, needCover = true, context = appContext)
-                                            
-                                            withContext(Main) {
-                                                showToast("已同步网易云并完成 ${currentQuality.uppercase()} 下载")
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                        }
-                    }
-                    
-                    // 🟢 场景 C：普通本地音乐 -> 走标准本地收藏
-                    else -> {
-                        repository.toggleFavorite(song)
-                        currentIsFavorite = repository.isSongFavorite(song.id)
-                    }
+                if (isRadioStream) {
+                    currentIsFavorite = playlistRepository.toggleRadioFavorite(song)
+                } else {
+                    repository.toggleFavorite(song)
+                    currentIsFavorite = repository.isSongFavorite(song.id)
                 }
             }
         }

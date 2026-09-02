@@ -1,21 +1,9 @@
-/*
- * Copyright (c) 2024 Christians Martínez Alvarado
- */
-
 package com.mardous.booming.ui.screen.player
 
-import java.security.MessageDigest
-import java.net.URLEncoder
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import android.content.Context
 import android.content.SharedPreferences
-import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.util.Log
-import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.liveData
 import androidx.lifecycle.viewModelScope
@@ -28,12 +16,10 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
-import com.mardous.booming.core.model.AudioSourceType
 import com.mardous.booming.core.model.MediaEvent
 import com.mardous.booming.core.model.PaletteColor
 import com.mardous.booming.core.model.action.QueueClearingBehavior
 import com.mardous.booming.core.model.action.SongClickBehavior
-import com.mardous.booming.core.model.getAudioSourceType
 import com.mardous.booming.core.model.player.MetadataField
 import com.mardous.booming.core.model.player.PlayerColorScheme
 import com.mardous.booming.core.model.player.PlayerColorSchemeMode
@@ -73,210 +59,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
-import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration.Companion.milliseconds
 
-// 🌟 核心 1：真正严苛的真实音频校验（物理拦截酷我假提示音 与 HTML报错）
-private fun isValidAudioStream(url: String): Boolean {
-    if (url.isEmpty()) return false
-    return try {
-        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        conn.requestMethod = "GET" // 放弃 HEAD，很多 CDN 会拦截 HEAD 导致误判
-        conn.setRequestProperty("Range", "bytes=0-8192") // 只请求头部一小块数据，防卡死
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        conn.connectTimeout = 2000
-        conn.readTimeout = 2000
-        
-        if (conn.responseCode !in 200..299 && conn.responseCode != 302) return false
-        
-        val contentType = conn.contentType?.lowercase() ?: ""
-        if (contentType.contains("text/html") || contentType.contains("json")) return false
-        
-        // 🌟 致命一击：获取文件的真实总大小
-        val contentRange = conn.getHeaderField("Content-Range")
-        val contentLength = conn.getHeaderField("Content-Length")
-        val totalSizeStr = contentRange?.substringAfterLast("/") ?: contentLength
-        val totalSize = totalSizeStr?.toLongOrNull() ?: 0L
-        
-        // 如果体积小于 500KB (500000 字节)，绝对是假音频！无情拦截！
-        if (totalSize in 1L..500000L) return false
-        
-        true
-    } catch (e: Exception) { false }
-}
-
-// 🌟 辅助：MD5 计算工具（适配酷狗与酷我的签名计算）
-private fun md5(input: String): String {
-    val md = java.security.MessageDigest.getInstance("MD5")
-    return md.digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-}
-
-// 🌟 酷狗源：保持稳定
-private suspend fun fetchKugouFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    try {
-        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
-        val searchUrl = "https://songsearch.kugou.com/song_search_v2?keyword=$query&page=1&pagesize=1&platform=WebFilter"
-        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 1000
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        
-        val res = conn.inputStream.bufferedReader().use { it.readText() }
-        val lists = org.json.JSONObject(res).optJSONObject("data")?.optJSONArray("lists")
-        if (lists != null && lists.length() > 0) {
-            val item = lists.getJSONObject(0)
-            val hash = item.optString("SQFileHash").takeIf { it.isNotEmpty() && it != "00000000000000000000000000000000" }
-                ?: item.optString("FileHash")
-
-            if (hash.isNotEmpty()) {
-                val key = md5(hash.lowercase() + "kgcloudv2")
-                val trackUrl = "http://trackercdn.kugou.com/i/v2/?cmd=26&pid=1&behavior=play&hash=$hash&key=$key&mid=1&appid=1005"
-                val trackConn = java.net.URL(trackUrl).openConnection() as java.net.HttpURLConnection
-                val trackRes = trackConn.inputStream.bufferedReader().use { it.readText() }
-                val playUrl = org.json.JSONObject(trackRes).optJSONArray("url")?.optString(0) ?: ""
-                
-                if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
-                    return@withContext playUrl.replace("http://", "https://")
-                }
-            }
-        }
-    } catch (e: Exception) { }
-    return@withContext ""
-}
-
-// 🌟 酷我源：换上 okhttp 伪装面具，击穿防盗链录音
-private suspend fun fetchKuwoFallback(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    try {
-        val query = java.net.URLEncoder.encode("$title $artist", "UTF-8")
-        val searchUrl = "http://search.kuwo.cn/r.s?client=kt&all=$query&pn=0&rn=1&vipver=1&ft=music&encoding=utf8&rformat=json&mobi=1"
-        val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-        conn.connectTimeout = 1500
-        val text = conn.inputStream.bufferedReader().use { it.readText() }
-        val rid = Regex("MUSIC_(\\d+)").find(text)?.groupValues?.get(1)
-
-        if (!rid.isNullOrEmpty()) {
-            val playUrlReq = "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url"
-            val playConn = java.net.URL(playUrlReq).openConnection() as java.net.HttpURLConnection
-            playConn.connectTimeout = 1500
-            // 🌟 极度关键：绝对不能用普通浏览器UA，伪装成官方APP底层组件
-            playConn.setRequestProperty("User-Agent", "okhttp/3.11.0")
-            val playUrl = playConn.inputStream.bufferedReader().use { it.readText() }.trim()
-            
-            if (playUrl.startsWith("http") && isValidAudioStream(playUrl)) {
-                return@withContext playUrl.replace("http://", "https://")
-            }
-        }
-    } catch (e: Exception) { }
-    return@withContext ""
-}
-
-// 🌟 核心分发：酷狗优先 -> 酷我备用，删除了你多余粘贴的一份，绝不报冲突！
-private suspend fun fetchFallbackFullUrl(title: String, artist: String): String = withContext(Dispatchers.IO) {
-    kotlinx.coroutines.withTimeoutOrNull(1500) {
-        val kgUrl = fetchKugouFallback(title, artist)
-        if (kgUrl.isNotEmpty()) return@withTimeoutOrNull kgUrl
-
-        val kwUrl = fetchKuwoFallback(title, artist)
-        if (kwUrl.isNotEmpty()) return@withTimeoutOrNull kwUrl
-
-        ""
-    } ?: ""
-}
-
-// 🌟 核心装配：批量向官方索取链接，并发双源嗅探
-private suspend fun List<Song>.toMediaItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
-    val neteaseSongs = this@toMediaItems.filter { it.genreName == "Netease" && it.size > 0L }
-    val officialUrlMap = mutableMapOf<Long, String>()
-    val needFallbackSongs = mutableListOf<Song>()
-
-    if (neteaseSongs.isNotEmpty()) {
-        try {
-            val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context)
-            val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-            val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
-            val idsStr = neteaseSongs.map { it.size }.joinToString(",")
-            val separator = if (baseUrl.contains("?")) "&" else "?"
-            val urlStr = "$baseUrl/song/url/v1?id=$idsStr&level=standard$separator" + "cookie=$encodedCookie"
-
-            val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 3000
-            conn.readTimeout = 3000
-            conn.setRequestProperty("Cookie", cookie)
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-
-            if (conn.responseCode == 200) {
-                val json = conn.inputStream.bufferedReader().use { it.readText() }
-                val data = org.json.JSONObject(json).optJSONArray("data")
-                if (data != null) {
-                    for (i in 0 until data.length()) {
-                        val item = data.getJSONObject(i)
-                        val id = item.optLong("id", 0L)
-                        val rawUrl = item.optString("url", "")
-                        val freeTrialInfo = item.optJSONObject("freeTrialInfo")
-                        val isTrial = freeTrialInfo != null || (item.optJSONObject("freeTimeTrialPrivilege")?.optInt("remainTime", 0) ?: 0) > 0
-
-                        if (id != 0L && rawUrl.isNotEmpty() && rawUrl != "null" && !isTrial) {
-                            officialUrlMap[id] = rawUrl.replace("http://", "https://")
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        for (song in neteaseSongs) {
-            if (!officialUrlMap.containsKey(song.size)) {
-                needFallbackSongs.add(song)
-            }
-        }
-    }
-
-    val fallbackMap = if (needFallbackSongs.isNotEmpty()) {
-        kotlinx.coroutines.coroutineScope {
-            needFallbackSongs.map { song ->
-                async(Dispatchers.IO) {
-                    val fullUrl = fetchFallbackFullUrl(song.title, song.artistName)
-                    song.size to fullUrl
-                }
-            }.awaitAll().toMap()
-        }
-    } else {
-        emptyMap<Long, String>() // 🌟 显式指定类型，彻底解决泛型推断失败报错
-    }
-
-    mapNotNull { song ->
-        if (song.genreName == "Netease" && song.size > 0L) {
-            val officialUrl = officialUrlMap[song.size]
-            val fallbackUrl = fallbackMap[song.size]?.takeIf { it.isNotEmpty() }
-            
-            // 优先官方 -> 备用源。如果都失败，直接抛弃，绝不使用会导致崩溃的 outer/url 外链！
-            val finalUrl = officialUrl ?: fallbackUrl
-
-            // 🌟 保护播放器：拿不到真流直接从队列剔除跳过，杜绝白屏和报错
-            if (finalUrl.isNullOrEmpty()) {
-                return@mapNotNull null
-            }
-
-            MediaItem.Builder()
-                .setMediaId(song.id.toString())
-                .setUri(android.net.Uri.parse(finalUrl))
-                .setMediaMetadata(
-                    androidx.media3.common.MediaMetadata.Builder()
-                        .setTitle(song.title)
-                        .setArtist(song.artistName)
-                        .setAlbumTitle(song.albumName)
-                        .setAlbumArtist(song.artistName)
-                        .setGenre("Netease")
-                        .build()
-                )
-                .build()
-        } else {
-            song.toMediaItem().takeUnless { it == MediaItem.EMPTY }
-        }
-    }
+private fun List<Song>.toMediaItems() = mapNotNull { songs ->
+    songs.toMediaItem().takeUnless { item -> item == MediaItem.EMPTY }
 }
 
 @OptIn(FlowPreview::class, ExperimentalAtomicApi::class)
@@ -285,7 +72,7 @@ class PlayerViewModel(
     private val preferences: SharedPreferences,
     private val repository: Repository,
     queueStateHolder: QueueStateHolder
-) : ViewModel(), Player.Listener, KoinComponent {
+) : ViewModel(), Player.Listener {
 
     private val progressObserver = ProgressObserver(intervalMs = 100)
     private val shuffleManager = ShuffleManager()
@@ -433,133 +220,7 @@ class PlayerViewModel(
     }
 
     fun toggleFavorite() {
-        val song = currentSong
-        if (song == Song.emptySong) return
-
-        when (song.getAudioSourceType()) {
-            AudioSourceType.LOCAL -> {
-                mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
-            }
-            AudioSourceType.RADIO -> {
-                handleRadioFavorite(appContext, song)
-            }
-            AudioSourceType.NETEASE -> {
-                handleNeteaseFavorite(appContext, song)
-            }
-            AudioSourceType.UNKNOWN -> {
-                Toast.makeText(appContext, "未知音频源", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun handleNeteaseFavorite(context: Context, song: Song) {
-        Toast.makeText(context, "❤️ 已收藏，正在同步并极速下载...", Toast.LENGTH_SHORT).show()
-
-        // 1. 本地瞬间亮起红心
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.toggleFavorite(song)
-        }
-
-        // 2. 严格同步至网易云与保底下载
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val realNeteaseId = song.size 
-                if (realNeteaseId > 0) {
-                    // 去除末尾可能多余的斜杠，防止双斜杠 API 报错
-                    val baseUrl = com.mardous.booming.data.network.ApiConfigManager.getNeteaseBaseUrl(context).trimEnd('/')
-                    val cookie = com.mardous.booming.data.network.ApiConfigManager.getCookie(context)
-                    val encodedCookie = java.net.URLEncoder.encode(cookie, "UTF-8")
-                    val ts = System.currentTimeMillis()
-                    
-                    // 将 cookie 压入 URL 参数，Node API 防丢必杀技
-                    val likeUrl = "$baseUrl/like?id=$realNeteaseId&like=true&timestamp=$ts&cookie=$encodedCookie"
-                    
-                    try {
-                        val conn = java.net.URL(likeUrl).openConnection() as java.net.HttpURLConnection
-                        conn.connectTimeout = 5000
-                        conn.requestMethod = "GET"
-                        // Header 同步注入，形成参数+请求头双重保险
-                        conn.setRequestProperty("Cookie", cookie)
-                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                        
-                        // 强制读取流，确保服务器真正接收并处理请求
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "⚠️ 网易云同步受限: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-                
-                // 3. 物理下载双保险机制
-                val targetDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "newdown")
-                if (!targetDir.exists()) targetDir.mkdirs()
-
-                // 先尝试官方本地引擎下载
-                val downloadItem = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.NetSongItem(
-                    id = song.size, title = song.title, artist = song.artistName,
-                    album = song.albumName, picUrl = "", durationMs = song.duration,
-                    year = "", format = "mp3", fileSizeStr = "标准直连", requestedLevel = "standard" 
-                )
-                var downloadedFile = com.mardous.booming.data.local.lyrics.ttml.UniversalDownloadEngine.downloadSong(context, downloadItem, targetDir) { _ -> }
-
-                // 🌟 VIP 兜底：如果官方引擎下载失败（返回空或文件不存在），直接嗅探备用源并强行写入文件
-                if (downloadedFile == null || !downloadedFile.exists()) {
-                    val fallbackUrl = fetchFallbackFullUrl(song.title, song.artistName)
-                    if (fallbackUrl.isNotEmpty()) {
-                        val file = File(targetDir, "${song.artistName} - ${song.title}.mp3")
-                        val streamConn = java.net.URL(fallbackUrl).openConnection() as java.net.HttpURLConnection
-                        streamConn.connectTimeout = 5000
-                        streamConn.setRequestProperty("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 12)")
-                        streamConn.inputStream.use { input ->
-                            file.outputStream().use { output -> input.copyTo(output) }
-                        }
-                        downloadedFile = file
-                    }
-                }
-
-                if (downloadedFile != null && downloadedFile.exists()) {
-                    kotlinx.coroutines.delay(1000)
-                    val localSong = repository.songByFilePath(downloadedFile.absolutePath, ignoreBlacklist = false)
-                    if (localSong != Song.emptySong) {
-                        repository.toggleFavorite(localSong) 
-                    }
-                    withContext(Dispatchers.Main) { 
-                        Toast.makeText(context, "✅ 红心已同步网易云，歌曲已下载至 newdown！", Toast.LENGTH_SHORT).show() 
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    private fun handleRadioFavorite(context: Context, song: Song) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val radioFavName = "[Radio]我的收藏"
-                var playlistId = repository.checkPlaylistExists(radioFavName).firstOrNull()?.playListId
-                if (playlistId == null) {
-                    playlistId = repository.createPlaylist(PlaylistEntity(playlistName = radioFavName))
-                }
-                
-                val existingSongs = repository.playlistSongs(playlistId)
-                if (existingSongs.any { it.data == song.data }) {
-                    withContext(Dispatchers.Main) { Toast.makeText(context, "已取消电台收藏", Toast.LENGTH_SHORT).show() }
-                } else {
-                    val radioEntity = com.mardous.booming.data.local.room.SongEntity(
-                        id = (System.currentTimeMillis() * 1000), 
-                        title = song.title, artistName = song.artistName, albumName = song.albumName,
-                        duration = 0L, data = song.data, playlistCreatorId = playlistId,
-                        trackNumber = 0, year = 0, size = 0L,
-                        dateAdded = System.currentTimeMillis(), dateModified = System.currentTimeMillis(),
-                        albumId = -1L, artistId = -1L, albumArtist = "网络电台", genreName = "直播"
-                    )
-                    repository.insertSongsInPlaylist(listOf(radioEntity))
-                    withContext(Dispatchers.Main) { Toast.makeText(context, "❤️ 已收藏至电台列表", Toast.LENGTH_SHORT).show() }
-                }
-            } catch (e: Exception) { e.printStackTrace() }
-        }
+        mediaController?.sendCustomCommand(SessionCommand(Playback.TOGGLE_FAVORITE, Bundle.EMPTY), Bundle.EMPTY)
     }
 
     fun cycleRepeatMode() {
@@ -612,22 +273,18 @@ class PlayerViewModel(
         }
     }
 
-    fun playMediaItem(mediaItem: MediaItem, shuffleMode: Boolean = false) {
+    fun playMediaId(mediaId: String, shuffleMode: Boolean = false) {
         mediaController?.let { controller ->
             controller.shuffleModeEnabled = shuffleMode
-            controller.setMediaItem(mediaItem, true)
+            controller.setMediaItem(
+                MediaItem.Builder()
+                    .setMediaId(mediaId)
+                    .build(),
+                true
+            )
             controller.prepare()
             controller.play()
         }
-    }
-
-    fun playMediaId(mediaId: String, shuffleMode: Boolean = false) {
-        playMediaItem(
-            mediaItem = MediaItem.Builder()
-                .setMediaId(mediaId)
-                .build(),
-            shuffleMode = shuffleMode
-        )
     }
 
     fun openQueue(
@@ -641,49 +298,24 @@ class PlayerViewModel(
             if (!preferences.getBoolean(REMEMBER_SHUFFLE_MODE, true)) {
                 shuffleModeEnabled = false
             }
-            
-            // 🌟 核心修复 1：记住用户实际点击的歌曲 ID，而不是死板的原始索引
-            val targetSongId = queue.getOrNull(position)?.id?.toString()
-            
-            // 这里执行多源嗅探与过滤。过滤后，假录音和网页报错被剔除，列表长度可能变短
-            val mediaItems = queue.toMediaItems(appContext)
-            
-            val finalShuffleMode = when (shuffleMode) {
+            val mediaItems = withContext(IO) { queue.toMediaItems() }
+            val shuffleMode = when (shuffleMode) {
                 OpenShuffleMode.On -> true
                 OpenShuffleMode.Off -> false
                 OpenShuffleMode.Remember -> shuffleModeEnabled
             }
-            
             if (mediaItems.isNotEmpty()) {
-                controller.shuffleModeEnabled = finalShuffleMode
-                
-                // 🌟 核心修复 2：在过滤后的安全列表中，重新定位这首歌的新索引
-                var safePosition = 0
-                if (targetSongId != null) {
-                    val newIndex = mediaItems.indexOfFirst { it.mediaId == targetSongId }
-                    if (newIndex != -1) {
-                        safePosition = newIndex
-                    }
-                }
-                
-                // 🌟 核心修复 3：绝对安全门限制。彻底根绝 IllegalSeekPositionException 越界崩溃！
-                safePosition = safePosition.coerceIn(0, mediaItems.size - 1)
-                
-                controller.setMediaItems(mediaItems, safePosition, C.TIME_UNSET)
+                controller.shuffleModeEnabled = shuffleMode
+                controller.setMediaItems(mediaItems, position, C.TIME_UNSET)
                 controller.playWhenReady = startPlaying
                 controller.prepare()
-            } else {
-                // 🌟 如果极极端情况下整张歌单全军覆没，给提示而不是崩溃
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(appContext, "⚠️ 该列表全部音源均已失效或受限", Toast.LENGTH_SHORT).show()
-                }
             }
         }
     }
 
     fun openAndShuffleQueue(queue: List<Song>) = viewModelScope.launch {
         mediaController?.let { controller ->
-            val mediaItems = queue.toMediaItems(appContext)
+            val mediaItems = withContext(IO) { queue.toMediaItems() }
             if (mediaItems.isNotEmpty()) {
                 controller.shuffleModeEnabled = true
                 controller.setMediaItems(mediaItems, true)
@@ -699,7 +331,7 @@ class PlayerViewModel(
         sortMode: SongSortMode
     ) = liveData {
         val mediaItems = withContext(IO) {
-            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems(appContext)
+            shuffleManager.shuffleByProvider(providers, mode, sortMode).toMediaItems()
         }
         if (mediaItems.isNotEmpty()) {
             mediaController?.let { controller ->
@@ -727,7 +359,7 @@ class PlayerViewModel(
         if (shuffleOperationState.value.isIdle) {
             _shuffleOperationState.value = ShuffleOperationState(mode, ShuffleOperationState.Status.InProgress)
             val mediaItems = withContext(IO) {
-                shuffleManager.applySmartShuffle(songs, mode).toMediaItems(appContext)
+                shuffleManager.applySmartShuffle(songs, mode).toMediaItems()
             }
             if (mediaItems.isNotEmpty()) {
                 mediaController?.let { controller ->
@@ -791,7 +423,7 @@ class PlayerViewModel(
         }
     }
 
-    fun queueNext(song: Song) = viewModelScope.launch {
+    fun queueNext(song: Song) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
@@ -800,15 +432,12 @@ class PlayerViewModel(
                 if (nextIndex == C.INDEX_UNSET) {
                     nextIndex = controller.mediaItemCount
                 }
-                val item = listOf(song).toMediaItems(appContext).firstOrNull()
-                if (item != null) {
-                    controller.addMediaItem(nextIndex, item)
-                }
+                controller.addMediaItem(nextIndex, song.toMediaItem())
             }
         }
     }
 
-    fun queueNext(songs: List<Song>) = viewModelScope.launch {
+    fun queueNext(songs: List<Song>) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
@@ -817,37 +446,32 @@ class PlayerViewModel(
                 if (nextIndex == C.INDEX_UNSET) {
                     nextIndex = controller.mediaItemCount
                 }
-                val items = songs.toMediaItems(appContext)
-                controller.addMediaItems(nextIndex, items)
+                controller.addMediaItems(nextIndex, songs.toMediaItems())
             }
         }
     }
 
-    fun enqueue(song: Song, toPosition: Int = -1) = viewModelScope.launch {
+    fun enqueue(song: Song, toPosition: Int = -1) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(listOf(song), startPlaying = false)
             } else {
                 val toIndex = position.getIndexForPosition(toPosition)
-                val item = listOf(song).toMediaItems(appContext).firstOrNull()
-                if (item != null) {
-                    if (toPosition >= 0 && toIndex >= 0) {
-                        controller.addMediaItem(toIndex, item)
-                    } else {
-                        controller.addMediaItem(item)
-                    }
+                if (toPosition >= 0 && toIndex >= 0) {
+                    controller.addMediaItem(toIndex, song.toMediaItem())
+                } else {
+                    controller.addMediaItem(song.toMediaItem())
                 }
             }
         }
     }
 
-    fun enqueue(songs: List<Song>) = viewModelScope.launch {
+    fun enqueue(songs: List<Song>) {
         mediaController?.let { controller ->
             if (controller.currentTimeline.isEmpty) {
                 openQueue(songs, startPlaying = false)
             } else {
-                val items = songs.toMediaItems(appContext)
-                controller.addMediaItems(items)
+                controller.addMediaItems(songs.toMediaItems())
             }
         }
     }
@@ -953,8 +577,6 @@ class PlayerViewModel(
             Log.e(TAG, "Failed to load color scheme", result.exceptionOrNull())
         }
     }
-
-    private val appContext: Context by inject()
 
     companion object {
         private const val TAG = "PlayerViewModel"
