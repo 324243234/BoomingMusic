@@ -1059,14 +1059,14 @@ class PlaybackService :
             val entry = metadata.get(i)
             
             // 📡 1. 抓取传统 Icecast/Shoutcast 的 ICY 标签 (主要针对纯音频网络台、国外台)
-            if (entry is IcyInfo) {
-                streamTitle = entry.title
+            // 📡 1. 抓取 ICY 并抢救中文乱码
+            if (entry is androidx.media3.extractor.metadata.icy.IcyInfo) {
+                streamTitle = fixEncoding(entry.title ?: "")
             } 
-            // 📺 2. 抓取 HLS (.m3u8) 流中的 ID3 标签 (主要针对国内电台、卫视伴音)
-            else if (entry is TextInformationFrame) {
-                // TIT2 或 TT2 通常是 ID3 规范里存放“当前播放曲目/节目”的字段
+            // 📺 2. 抓取 ID3 并抢救中文乱码
+            else if (entry is androidx.media3.extractor.metadata.id3.TextInformationFrame) {
                 if (entry.id.uppercase() == "TIT2" || entry.id.uppercase() == "TT2") {
-                    streamTitle = entry.value
+                    streamTitle = fixEncoding(entry.value ?: "")
                 }
             }
         }
@@ -1078,9 +1078,8 @@ class PlaybackService :
             // 防御机制：排除空白、排除未知、排除与电台名完全一样的情况
             if (cleanTitle.isNotEmpty() && cleanTitle != "未知" && cleanTitle != stationName) {
                 // 确保在主线程弹出，防止崩溃
-                uiHandler.post {
-                    showToast("🎵 $cleanTitle")
-                }
+                uiHandler.post { showToast("🎵 $cleanTitle") }
+                com.mardous.booming.data.local.lyrics.RadioEpgFetcher.currentIcyMetadata.value = cleanTitle
             }
         }
     }
@@ -1623,6 +1622,32 @@ class PlaybackService :
             } else {
                 item
             }
+        }
+    }
+	
+	// 🌟 中文字符串乱码急救引擎
+    private fun fixEncoding(str: String): String {
+        if (str.isEmpty()) return str
+        
+        // 如果原生字符串已经成功解析出了中文字符，说明没乱码，原样返回
+        if (str.matches(Regex(".*[\\u4e00-\\u9fa5]+.*"))) return str
+
+        return try {
+            // 将乱码强制拆回底层的 ISO-8859-1 原始字节
+            val bytes = str.toByteArray(Charsets.ISO_8859_1)
+            
+            // 抢救 1：尝试用 UTF-8 重新组装
+            var fixed = String(bytes, Charsets.UTF_8)
+            if (fixed.matches(Regex(".*[\\u4e00-\\u9fa5]+.*"))) return fixed
+
+            // 抢救 2：尝试用 GBK 重新组装（国内推流服务器最爱用）
+            fixed = String(bytes, java.nio.charset.Charset.forName("GBK"))
+            if (fixed.matches(Regex(".*[\\u4e00-\\u9fa5]+.*"))) return fixed
+
+            // 都抢救不回来，只能返回原乱码
+            str
+        } catch (e: Exception) {
+            str
         }
     }
     
