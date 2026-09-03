@@ -283,8 +283,9 @@ class LyricsViewModel(
                         baseEpgLrc
                     }
                     
-                    // 🌟 4. 【核心修复点】将普通 String 字符串包装为原生的 RawLyrics 对象
-                    val rawLyricsWrapper = RawLyrics.Remote(dynamicLrc)
+                    // 🌟 4. 【核心修复点】将 String 包装为 RawLyrics.Embedded
+                    // 相比于 Remote，Embedded 结构原生只接收单一 String，绝对不会引发编译报错
+                    val rawLyricsWrapper = RawLyrics.Embedded(dynamicLrc)
                     
                     // 5. 激活 BoomingMusic 原生的歌词滚动引擎！
                     val parsed = runCatching { repository.parseRawLyrics(song, rawLyricsWrapper) }.getOrNull()
