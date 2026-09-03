@@ -16,6 +16,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -57,6 +58,7 @@ object RadioEpgFetcher {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
         }
 
+        // 央广 CNR / CRI 规范化
         if (cleanName.contains("中国之声") || cleanName.equals("CNR1", true)) cleanName = "中国之声"
         else if (cleanName.contains("经济之声") || cleanName.equals("CNR2", true)) cleanName = "经济之声"
         else if (cleanName.contains("音乐之声") || cleanName.equals("CNR3", true)) cleanName = "音乐之声"
@@ -73,6 +75,7 @@ object RadioEpgFetcher {
         else if (cleanName.contains("轻松调频") || cleanName.equals("EZFM", true)) cleanName = "轻松调频"
         else if (cleanName.contains("劲曲调频") || cleanName.equals("HITFM", true)) cleanName = "劲曲调频"
 
+        // 🌟 凤凰卫视系识别
         var isPhoenix = false
         var phoenixKind = 0
         if (cleanName.contains("凤凰")) {
@@ -97,50 +100,45 @@ object RadioEpgFetcher {
         }
 
         try {
-            val maxWaitMs = if (isPhoenix) 6000L else 3000L
+            // 凤凰走官方大文件解析，给予 5 秒超时保护
+            val maxWaitMs = if (isPhoenix) 5000L else 3000L
 
             val result = withTimeoutOrNull(maxWaitMs) {
                 var validPrograms: List<JSONObject>? = null
-                val dashDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                
+                // 🌟 强制锁定北京时间，防止跨时区向凤凰服务器请求到越界日期的空数据
+                val dashDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).apply {
+                    timeZone = TimeZone.getTimeZone("Asia/Shanghai")
+                }
                 val todayDashStr = dashDateFormat.format(Date())
                 val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
+                // 1. CCTV 官方直通车
                 if (cleanName.startsWith("CCTV", ignoreCase = true)) {
                     val cctvCode = cleanName.lowercase().replace("+", "plus")
                     val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
                     val cntvRes = httpGet(cntvUrl, timeoutMs = 1500)
-                    if (cntvRes != null) {
-                        validPrograms = parseCntvPrograms(cntvRes, cctvCode)
-                    }
+                    if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, cctvCode)
                 }
 
-                // 🌟 完全基于凤凰官网原生 API 的 JSONP 提取方案
+                // 🌟 2. 凤凰卫视：首选官方原生 JSONP 接口 (携带全套指纹)
                 if (validPrograms == null && isPhoenix) {
-                    // 严格遵守抓取到的参数规范: yyyy-MM-dd 格式以及 callback 名称
-                    val officialApiUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayDashStr&to=$todayDashStr&callback=menuCallback"
-                    val officialRes = httpGet(officialApiUrl, timeoutMs = 3000)
+                    val officialApiUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayDashStr&to=$todayDashStr&jsonCallback=menuCallback"
+                    val officialRes = httpGet(officialApiUrl, timeoutMs = 3500)
                     if (officialRes != null) {
                         validPrograms = parsePhoenixOfficialPrograms(officialRes, phoenixKind)
                     }
 
-                    // 官网发生网络阻塞时的备用通道
+                    // 官网通道异常时无缝降级 epg.pw 数字 ID 专线
                     if (validPrograms == null) {
                         val phoenixTargetUrls = when (phoenixKind) {
-                            0 -> listOf(
-                                "https://epg.pw/api/epg.json?channel_id=561392",
-                                "https://epg.pw/api/epg.json?channel_id=410378"
-                            )
-                            1 -> listOf(
-                                "https://epg.pw/api/epg.json?channel_id=561393",
-                                "https://epg.pw/api/epg.json?channel_id=410355"
-                            )
-                            else -> listOf(
-                                "https://epg.pw/api/epg.json?channel_name=${Uri.encode(cleanName)}"
-                            )
+                            0 -> listOf("https://epg.pw/api/epg.json?channel_id=561392", "https://epg.pw/api/epg.json?channel_id=410378")
+                            1 -> listOf("https://epg.pw/api/epg.json?channel_id=561393", "https://epg.pw/api/epg.json?channel_id=410355")
+                            else -> listOf("https://epg.pw/api/epg.json?channel_name=${Uri.encode(cleanName)}")
                         }
 
                         for (targetUrl in phoenixTargetUrls) {
-                            val res = httpGet(targetUrl, timeoutMs = 2500) ?: continue
+                            val res = httpGet(targetUrl, timeoutMs = 3500) ?: continue
                             val programs = parseUniversalEpgPrograms(res, todayDashStr)
                             if (!programs.isNullOrEmpty()) {
                                 validPrograms = programs
@@ -150,18 +148,21 @@ object RadioEpgFetcher {
                     }
                 }
 
+                // 3. 百度电视指南开放通道 (涵盖内地主流卫视与 CNR/CRI)
                 if (validPrograms == null && !isPhoenix) {
                     val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
                     val baiduRes = httpGet(baiduUrl, timeoutMs = 1500)
                     if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
                 }
 
+                // 4. 内地省级卫视：51zmt 网页直提 (80 端口)
                 if (validPrograms == null && !isPhoenix) {
                     val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
                     val htmlRes = httpGet(webUrl, timeoutMs = 1500)
                     if (htmlRes != null) validPrograms = parse51zmtWebHtml(htmlRes)
                 }
 
+                // 5. 内地省级卫视：CNTV 官方接口兜底
                 if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
                     val code = SATELLITE_CODE_MAP[cleanName]!!
                     var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact", timeoutMs = 1500)
@@ -231,46 +232,44 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 解析并剥离凤凰卫视原生 JSONP 接口包装
+    // 🌟 【终极 JSONP 解包提取器】彻底免疫外层变异
     private fun parsePhoenixOfficialPrograms(jsonpStr: String, channelKind: Int): List<JSONObject>? {
         return try {
-            // 切割剥离外部包装：menuCallback({ ... })
-            val startIndex = jsonpStr.indexOf("{")
-            val endIndex = jsonpStr.lastIndexOf("}")
-            if (startIndex == -1 || endIndex == -1) return null
+            val startObj = jsonpStr.indexOf("{")
+            val startArr = jsonpStr.indexOf("[")
+            val startIndex = if (startObj != -1 && startArr != -1) Math.min(startObj, startArr) else Math.max(startObj, startArr)
+            
+            val endObj = jsonpStr.lastIndexOf("}")
+            val endArr = jsonpStr.lastIndexOf("]")
+            val endIndex = Math.max(endObj, endArr)
+            
+            if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) return null
             val jsonStr = jsonpStr.substring(startIndex, endIndex + 1)
             
-            val root = JSONObject(jsonStr)
-            val dataArray = root.optJSONArray("data") ?: return null
+            val rootNode: Any = if (jsonStr.startsWith("{")) JSONObject(jsonStr) else JSONArray(jsonStr)
 
             val targetKey = when (channelKind) {
-                1 -> "资讯台"
-                2 -> "电影台"
-                3 -> "香港台"
-                else -> "中文台" // 默认为中文台
+                1 -> "资讯"
+                2 -> "电影"
+                3 -> "香港"
+                else -> "中文"
             }
 
-            var programArray: JSONArray? = null
-            for (i in 0 until dataArray.length()) {
-                val item = dataArray.optJSONObject(i) ?: continue
-                val colName = item.optString("columnName", "")
-                if (colName.contains(targetKey.substring(0, 2))) {
-                    programArray = item.optJSONArray("programs")
-                    break
-                }
-            }
-
-            if (programArray == null || programArray.length() == 0) return null
+            val programArray = findPhoenixArray(rootNode, targetKey) ?: return null
 
             val validList = mutableListOf<JSONObject>()
             for (i in 0 until programArray.length()) {
                 val item = programArray.getJSONObject(i)
-                val title = item.optString("videoName", "").ifEmpty { item.optString("title", "") }.trim()
-                val time = item.optString("playTime", "").ifEmpty { item.optString("time", "") }.trim()
+                val title = item.optString("videoName", "")
+                    .ifEmpty { item.optString("title", "") }
+                    .ifEmpty { item.optString("name", "") }
+                val time = item.optString("playTime", "")
+                    .ifEmpty { item.optString("time", "") }
+                    .ifEmpty { item.optString("start", "") }
                 
                 if (title.isNotEmpty() && time.isNotEmpty()) {
                     validList.add(JSONObject().apply {
-                        put("title", title)
+                        put("title", title.trim())
                         put("start", formatTime(time))
                         put("end", "")
                     })
@@ -280,6 +279,47 @@ object RadioEpgFetcher {
         } catch (e: Exception) {
             null
         }
+    }
+
+    // 🌟 多维树无差别雷达探测算法：无视结构层级，全网拉网式寻回当日子节目数组
+    private fun findPhoenixArray(node: Any, targetKey: String): JSONArray? {
+        if (node is JSONObject) {
+            val keys = node.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key.contains(targetKey) || key.contains(targetKey.replace("资讯", "資訊").replace("电影", "電影"))) {
+                    val arr = node.optJSONArray(key)
+                    if (arr != null) return arr
+                }
+                val value = node.opt(key)
+                if (value != null) {
+                    val found = findPhoenixArray(value, targetKey)
+                    if (found != null) return found
+                }
+            }
+        } else if (node is JSONArray) {
+            for (i in 0 until node.length()) {
+                val item = node.optJSONObject(i)
+                if (item != null) {
+                    val name = item.optString("columnName", "")
+                        .ifEmpty { item.optString("channelName", "") }
+                        .ifEmpty { item.optString("name", "") }
+                        .ifEmpty { item.optString("title", "") }
+                    
+                    if (name.contains(targetKey) || name.contains(targetKey.replace("资讯", "資訊").replace("电影", "電影"))) {
+                        val subArr = item.optJSONArray("programs") 
+                            ?: item.optJSONArray("list") 
+                            ?: item.optJSONArray("data")
+                            ?: item.optJSONArray("periodList")
+                        if (subArr != null) return subArr
+                    }
+                    
+                    val found = findPhoenixArray(item, targetKey)
+                    if (found != null) return found
+                }
+            }
+        }
+        return null
     }
 
     private fun parseUniversalEpgPrograms(jsonStr: String, targetDateStr: String = ""): List<JSONObject>? {
@@ -529,7 +569,8 @@ object RadioEpgFetcher {
         }
     }
 
-    private fun httpGet(urlString: String, timeoutMs: Int = 1500): String? {
+    // 🌟 极限克隆：注入你提供的 Edge 浏览器全量指纹，直接击穿腾讯云 Lego Server WAF 拦截
+    private fun httpGet(urlString: String, timeoutMs: Int = 1500, referer: String? = null): String? {
         var conn: HttpURLConnection? = null
         return try {
             val url = URL(urlString)
@@ -549,8 +590,18 @@ object RadioEpgFetcher {
 
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            conn.setRequestProperty("Accept", "application/json,text/html,*/*")
+            
+            // 使用你抓包日志中的原始合法指纹[cite: 7, 8, 9]
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Edg/151.0.0.0 Mobile Safari/537.36")
+            conn.setRequestProperty("sec-ch-ua", "\"Not=A?Brand\";v=\"99\", \"Microsoft Edge\";v=\"151\", \"Chromium\";v=\"151\"")
+            conn.setRequestProperty("sec-ch-ua-mobile", "?1")
+            conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
+            conn.setRequestProperty("Origin", "https://phtv.ifeng.com")
+            conn.setRequestProperty("Referer", referer ?: "https://phtv.ifeng.com/programme")
+            conn.setRequestProperty("Accept", "*/*")
+            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            // 避免 HttpURLConnection 擅自压缩导致流解析乱码
+            conn.setRequestProperty("Accept-Encoding", "identity") 
 
             if (conn.responseCode in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
