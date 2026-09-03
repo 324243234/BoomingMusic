@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -56,7 +57,7 @@ object RadioEpgFetcher {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
         }
 
-        // 🌟 凤凰系强力提取：同时保留用于百度的“全称”和用于 DIYP 的“短名”
+        // 🌟 凤凰系强力提取：同时保留用于官方通道的全称和 DIYP 专线的短名
         var isPhoenix = false
         var phoenixFullName = ""
         var phoenixShortName = ""
@@ -98,34 +99,32 @@ object RadioEpgFetcher {
         }
 
         try {
-            var validPrograms: List<JSONObject>? = null
-            val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            // 🌟 开启 4 秒绝对熔断保护，防止任何网络波动卡死
+            val result = withTimeoutOrNull(4000L) {
+                var validPrograms: List<JSONObject>? = null
+                val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
-            // 1. CCTV 官方直通车
-            if (cleanName.startsWith("CCTV", ignoreCase = true)) {
-                val cctvCode = cleanName.lowercase().replace("+", "plus")
-                val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
-                val cntvRes = httpGet(cntvUrl)
-                if (cntvRes != null) {
-                    validPrograms = parseCntvPrograms(cntvRes, cctvCode)
+                // 1. CCTV 官方直通车
+                if (cleanName.startsWith("CCTV", ignoreCase = true)) {
+                    val cctvCode = cleanName.lowercase().replace("+", "plus")
+                    val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
+                    val cntvRes = httpGet(cntvUrl)
+                    if (cntvRes != null) {
+                        validPrograms = parseCntvPrograms(cntvRes, cctvCode)
+                    }
                 }
-            }
 
-            // 2. 凤凰卫视：首选国内超高速百度 CDN
-            if (validPrograms == null && isPhoenix) {
-                val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(phoenixFullName + "节目表")}"
-                val baiduRes = httpGet(baiduUrl)
-                if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
-
-                // 2.1 百度若没查到，降级至国内阿里云 112114 专线 (同时测试全称和短名)
-                if (validPrograms == null) {
-                    val phoenixDiypUrls = listOf(
-                        "http://aliepg.112114.xyz/?ch=${Uri.encode(phoenixShortName)}",
-                        "https://diyp.112114.xyz/?ch=${Uri.encode(phoenixShortName)}",
-                        "http://aliepg.112114.xyz/?ch=${Uri.encode(phoenixFullName)}",
-                        "https://diyp.112114.xyz/?ch=${Uri.encode(phoenixFullName)}"
+                // 🌟 2. 凤凰卫视绝对防卡死专线（彻底切除所有 112114 污染域名，直连国内高速节点）
+                if (validPrograms == null && isPhoenix) {
+                    // 凤凰卫视必须短名和长名都试一遍，国内高速镜像源
+                    val safePhoenixUrls = listOf(
+                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
+                        "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
+                        "http://epg.erw.cc/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
+                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(phoenixFullName)}",
+                        "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(phoenixFullName)}"
                     )
-                    for (targetUrl in phoenixDiypUrls) {
+                    for (targetUrl in safePhoenixUrls) {
                         val res = httpGet(targetUrl) ?: continue
                         val programs = parseUniversalEpgPrograms(res)
                         if (!programs.isNullOrEmpty()) {
@@ -134,51 +133,54 @@ object RadioEpgFetcher {
                         }
                     }
                 }
-            }
 
-            // 3. 内地卫视：51zmt 网页直提
-            if (validPrograms == null && !isPhoenix) {
-                val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
-                val htmlRes = httpGet(webUrl)
-                if (htmlRes != null) validPrograms = parse51zmtWebHtml(htmlRes)
-            }
-
-            // 4. 内地卫视：CNTV 卫视通道兜底
-            if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
-                val code = SATELLITE_CODE_MAP[cleanName]!!
-                var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact")
-                if (cntvRes == null || !cntvRes.contains("\"list\"")) {
-                    cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=tvcctv&d=$dateCompact")
+                // 3. 内地卫视：51zmt 网页直提
+                if (validPrograms == null && !isPhoenix) {
+                    val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
+                    val htmlRes = httpGet(webUrl)
+                    if (htmlRes != null) validPrograms = parse51zmtWebHtml(htmlRes)
                 }
-                if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, code)
-            }
 
-            // 5. 内地卫视终极兜底：百度引擎 + 112114 阿里专线
-            if (validPrograms == null && !isPhoenix) {
-                val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
-                val baiduRes = httpGet(baiduUrl)
-                if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
+                // 4. 内地卫视：CNTV 卫视通道兜底
+                if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
+                    val code = SATELLITE_CODE_MAP[cleanName]!!
+                    var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact")
+                    if (cntvRes == null || !cntvRes.contains("\"list\"")) {
+                        cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=tvcctv&d=$dateCompact")
+                    }
+                    if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, code)
+                }
 
-                if (validPrograms == null) {
-                    val candidateUrls = listOf(
-                        "http://aliepg.112114.xyz/?ch=${Uri.encode(cleanName)}",
-                        "https://diyp.112114.xyz/?ch=${Uri.encode(cleanName)}",
-                        "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}",
-                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}"
-                    )
-                    for (targetUrl in candidateUrls) {
-                        val res = httpGet(targetUrl) ?: continue
-                        val programs = parseUniversalEpgPrograms(res)
-                        if (!programs.isNullOrEmpty()) {
-                            validPrograms = programs
-                            break
+                // 5. 内地卫视终极兜底：百度引擎 + 纯净镜像节点
+                if (validPrograms == null && !isPhoenix) {
+                    val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
+                    val baiduRes = httpGet(baiduUrl)
+                    if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
+
+                    // 依然没查到，降级国内极速节点（彻底删除 112114）
+                    if (validPrograms == null) {
+                        val candidateUrls = listOf(
+                            "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}",
+                            "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}",
+                            "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(cleanName)}",
+                            "http://epg.erw.cc/api/diyp/?ch=${Uri.encode(cleanName)}"
+                        )
+                        for (targetUrl in candidateUrls) {
+                            val res = httpGet(targetUrl) ?: continue
+                            val programs = parseUniversalEpgPrograms(res)
+                            if (!programs.isNullOrEmpty()) {
+                                validPrograms = programs
+                                break
+                            }
                         }
                     }
                 }
+                
+                validPrograms
             }
 
-            if (validPrograms.isNullOrEmpty()) {
-                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (暂未收录该频道排期或源离线)"
+            if (result.isNullOrEmpty()) {
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
             }
 
             val cal = Calendar.getInstance()
@@ -188,14 +190,14 @@ object RadioEpgFetcher {
             sb.append("📡 ").append(cleanName).append(" 今日节目单\n")
             sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
 
-            for (i in validPrograms.indices) {
-                val prog = validPrograms[i]
+            for (i in result.indices) {
+                val prog = result[i]
                 val title = prog.optString("title", "未知节目")
                 val startTime = prog.optString("start", "")
                 var endTime = prog.optString("end", "")
 
-                if (endTime.isEmpty() && i + 1 < validPrograms.size) {
-                    endTime = validPrograms[i + 1].optString("start", "")
+                if (endTime.isEmpty() && i + 1 < result.size) {
+                    endTime = result[i + 1].optString("start", "")
                 }
 
                 var prefix = "⏳ "
@@ -495,9 +497,9 @@ object RadioEpgFetcher {
                 conn.setHostnameVerifier { _, _ -> true }
             }
 
-            // 🌟 强力防止阻塞假死：单个节点最多仅等待 1.5 秒
-            conn.connectTimeout = 1500
-            conn.readTimeout = 1500
+            // 🌟 强力防止阻塞假死：单个节点连接绝对不超过 1.2 秒
+            conn.connectTimeout = 1200
+            conn.readTimeout = 1200
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8")
 
