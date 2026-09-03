@@ -14,6 +14,7 @@
     <string name="app_widget_card_desc">Minimalist and simplified style</string>
     <string name="action_play">Play</string>
     <string name="action_play_all">Play all</string>
+    <string name="action_play_x">Play %s</string>
     <string name="action_shuffle_play">Shuffle play</string>
     <string name="action_queue_next">Queue next</string>
     <string name="shuffle_all_label">Shuffle all</string>
@@ -399,9 +400,8 @@
     <string name="top_albums">Top albums</string>
     <string name="recent_artists">Recent artists</string>
     <string name="recent_albums">Recent albums</string>
-    <string name="no_suggestions">There are no suggestions for you</string>
-    <string name="home_empty_title">No suggestions yet</string>
-    <string name="home_empty_subtitle">Listen to some music to get started</string>
+    <string name="home_empty_title">Nothing to recommend</string>
+    <string name="home_empty_subtitle">Listen to some music first</string>
     <string name="home_shuffle_title">Shuffle your music</string>
     <string name="home_for_you_title">For you</string>
     <string name="home_for_you_subtitle">Your all-time favorites in one place</string>
