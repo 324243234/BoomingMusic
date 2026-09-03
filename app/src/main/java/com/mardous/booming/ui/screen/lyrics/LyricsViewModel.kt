@@ -270,33 +270,19 @@ class LyricsViewModel(
                 // 1. 重置 ICY 状态
                 com.mardous.booming.data.local.lyrics.RadioEpgFetcher.currentIcyMetadata.value = ""
                 
-                // 2. 获取 LRC 歌词格式的节目排期
-                val baseEpgLrc = com.mardous.booming.data.local.lyrics.RadioEpgFetcher.fetchEpgForRadio(song.title)
+                // 2. 获取纯净排版格式的节目单
+                val baseEpgText = com.mardous.booming.data.local.lyrics.RadioEpgFetcher.fetchEpgForRadio(song.title)
                 
-                // 3. 动态监听 ICY 实时歌名
+                // 3. 响应式监听实时 ICY 歌名并刷新面板
                 com.mardous.booming.data.local.lyrics.RadioEpgFetcher.currentIcyMetadata.collect { icyText ->
-                    val dynamicLrc = if (icyText.isNotBlank()) {
-                        // 🌟 强行把实时流插入到 1秒钟(00:01.00) 的进度节点！
-                        // 它会立刻盖过之前的所有旧节目，在歌词面板的【正中央高亮定格】！
-                        "$baseEpgLrc\n[00:01.00]🎶 实时流：$icyText"
+                    val finalDisplayText = if (icyText.isNotBlank()) {
+                        "$baseEpgText\n\n🎶 当前播放：$icyText"
                     } else {
-                        baseEpgLrc
+                        baseEpgText
                     }
                     
-                    // 🌟 4. 【核心修复点】将 String 包装为 RawLyrics.Embedded
-                    // 相比于 Remote，Embedded 结构原生只接收单一 String，绝对不会引发编译报错
-                    val rawLyricsWrapper = RawLyrics.Embedded(dynamicLrc)
-                    
-                    // 5. 激活 BoomingMusic 原生的歌词滚动引擎！
-                    val parsed = runCatching { repository.parseRawLyrics(song, rawLyricsWrapper) }.getOrNull()
-                    
-                    if (isActive && parsed?.hasContent == true) {
-                        // 🌟 使用 Synced 状态，彻底告别 Plain 的死板全屏显示！
-                        _lyricsUiState.value = LyricsUiState.Synced(song.id, parsed)
-                    } else if (isActive) {
-                        // 解析失败的兜底
-                        val plainText = dynamicLrc.replace(Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]"), "")
-                        _lyricsUiState.value = LyricsUiState.Plain(song.id, plainText)
+                    if (isActive) {
+                        _lyricsUiState.value = LyricsUiState.Plain(song.id, finalDisplayText)
                     }
                 }
                 return@launch
