@@ -57,15 +57,34 @@ object RadioEpgFetcher {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
         }
 
-        // 🌟 凤凰卫视系强力标准化：直接归一为标准库接收的名词
+        // 🌟 凤凰卫视系强力标准化：分别生成百度全称与标准 DIYP 短名
         var isPhoenix = false
+        var phoenixBaiduQuery = ""
+        var phoenixDiypName = ""
         if (cleanName.contains("凤凰")) {
             isPhoenix = true
-            cleanName = when {
-                cleanName.contains("资讯") || cleanName.contains("咨询") -> "凤凰资讯"
-                cleanName.contains("电影") -> "凤凰电影"
-                cleanName.contains("香港") -> "凤凰香港"
-                else -> "凤凰中文"
+            val norm = cleanName.replace("咨询", "资讯")
+            when {
+                norm.contains("资讯") -> {
+                    phoenixDiypName = "凤凰资讯"
+                    phoenixBaiduQuery = "凤凰卫视资讯台"
+                    cleanName = "凤凰资讯"
+                }
+                norm.contains("电影") -> {
+                    phoenixDiypName = "凤凰电影"
+                    phoenixBaiduQuery = "凤凰卫视电影台"
+                    cleanName = "凤凰电影"
+                }
+                norm.contains("香港") -> {
+                    phoenixDiypName = "凤凰香港"
+                    phoenixBaiduQuery = "凤凰卫视香港台"
+                    cleanName = "凤凰香港"
+                }
+                else -> {
+                    phoenixDiypName = "凤凰中文"
+                    phoenixBaiduQuery = "凤凰卫视中文台"
+                    cleanName = "凤凰中文"
+                }
             }
         }
 
@@ -80,14 +99,13 @@ object RadioEpgFetcher {
         }
 
         try {
-            // 🌟 加入全局 5 秒熔断保护，杜绝任何持续转圈挂死现象
-            val result = withTimeoutOrNull(5000L) {
+            val result = withTimeoutOrNull(8000L) {
                 var validPrograms: List<JSONObject>? = null
                 val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 val todayStr = dateFormat.format(Date())
                 val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
-                // 1. CCTV 官方直通车
+                // 🌟 1. CCTV 官方直通车
                 if (cleanName.startsWith("CCTV", ignoreCase = true)) {
                     val cctvCode = cleanName.lowercase().replace("+", "plus")
                     val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
@@ -97,27 +115,36 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 2. 凤凰卫视国内专属通道（彻底移除境外死链，使用阿里直连镜像）
+                // 🌟 2. 凤凰卫视专属链路：国内百度阿拉丁引擎作为第 1 优先级
                 if (validPrograms == null && isPhoenix) {
-                    val phoenixCandidateUrls = listOf(
-                        "http://aliepg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "https://diyp.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
-                    )
+                    // 2.1 百度阿拉丁（国内高速 CDN 直连）
+                    val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(phoenixBaiduQuery + "节目表")}"
+                    val baiduRes = httpGet(baiduUrl)
+                    if (baiduRes != null) {
+                        validPrograms = parseBaiduPrograms(baiduRes)
+                    }
 
-                    for (targetUrl in phoenixCandidateUrls) {
-                        val res = httpGet(targetUrl) ?: continue
-                        val programs = parseUniversalEpgPrograms(res)
-                        if (!programs.isNullOrEmpty()) {
-                            validPrograms = programs
-                            break
+                    // 2.2 若百度未命中，轮询国内与免流 DIYP 镜像（去掉固定 date 参数避免时区拒止）
+                    if (validPrograms == null) {
+                        val phoenixDiypUrls = listOf(
+                            "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(phoenixDiypName)}",
+                            "http://aliepg.112114.xyz/?ch=${Uri.encode(phoenixDiypName)}",
+                            "https://diyp.112114.xyz/?ch=${Uri.encode(phoenixDiypName)}",
+                            "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(phoenixDiypName)}",
+                            "https://epg.112114.xyz/?ch=${Uri.encode(phoenixDiypName)}&date=$todayStr"
+                        )
+                        for (targetUrl in phoenixDiypUrls) {
+                            val res = httpGet(targetUrl) ?: continue
+                            val programs = parseUniversalEpgPrograms(res)
+                            if (!programs.isNullOrEmpty()) {
+                                validPrograms = programs
+                                break
+                            }
                         }
                     }
                 }
 
-                // 3. 内地卫视：51zmt 网页直提 (80 端口)
+                // 🌟 3. 内地省级卫视：51zmt 网页直提 (80 端口)
                 if (validPrograms == null && !isPhoenix) {
                     val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
                     val htmlRes = httpGet(webUrl)
@@ -126,7 +153,7 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 4. 内地卫视：CNTV/CBox 官方卫视频道接口
+                // 🌟 4. 内地省级卫视：CNTV/CBox 官方卫视频道接口
                 if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
                     val code = SATELLITE_CODE_MAP[cleanName]!!
                     var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact")
@@ -138,14 +165,23 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 5. 兜底通用节点
+                // 🌟 5. 内地卫视兜底：百度电视指南
                 if (validPrograms == null && !isPhoenix) {
-                    val candidateUrls = listOf(
-                        "http://aliepg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr",
-                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
+                    val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
+                    val baiduRes = httpGet(baiduUrl)
+                    if (baiduRes != null) {
+                        validPrograms = parseBaiduPrograms(baiduRes)
+                    }
+                }
+
+                // 🌟 6. 全局兜底镜像
+                if (validPrograms == null) {
+                    val fallbackUrls = listOf(
+                        "http://aliepg.112114.xyz/?ch=${Uri.encode(cleanName)}",
+                        "http://51zmt.top/api/diyp/?ch=${Uri.encode(cleanName)}",
+                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}"
                     )
-                    for (targetUrl in candidateUrls) {
+                    for (targetUrl in fallbackUrls) {
                         val res = httpGet(targetUrl) ?: continue
                         val programs = parseUniversalEpgPrograms(res)
                         if (!programs.isNullOrEmpty()) {
@@ -213,6 +249,51 @@ object RadioEpgFetcher {
         } catch (e: Exception) {
             Log.e(TAG, "获取节目单失败", e)
             return@withContext "📺 当前频道：$cleanName\n📡 直播流连接成功"
+        }
+    }
+
+    private fun parseBaiduPrograms(jsonStr: String): List<JSONObject>? {
+        return try {
+            val root = JSONObject(jsonStr)
+            val dataArray = root.optJSONArray("data") ?: return null
+            if (dataArray.length() == 0) return null
+            val firstData = dataArray.getJSONObject(0)
+            val resultArray = firstData.optJSONArray("result") ?: return null
+            if (resultArray.length() == 0) return null
+
+            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val todayShort = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date())
+            var targetProgramArray: JSONArray? = null
+
+            for (i in 0 until resultArray.length()) {
+                val dayObj = resultArray.getJSONObject(i)
+                val date = dayObj.optString("date", "")
+                if (date.contains(todayStr) || date.contains(todayShort) || date.contains("今天") || date.contains("今日")) {
+                    targetProgramArray = dayObj.optJSONArray("program")
+                    break
+                }
+            }
+            if (targetProgramArray == null) {
+                targetProgramArray = resultArray.getJSONObject(0).optJSONArray("program")
+            }
+            if (targetProgramArray == null || targetProgramArray.length() == 0) return null
+
+            val validList = mutableListOf<JSONObject>()
+            for (i in 0 until targetProgramArray.length()) {
+                val item = targetProgramArray.getJSONObject(i)
+                val title = item.optString("name", "").ifEmpty { item.optString("title", "") }.trim()
+                val time = item.optString("time", "").ifEmpty { item.optString("start", "") }
+                if (title.isNotEmpty() && time.isNotEmpty()) {
+                    validList.add(JSONObject().apply {
+                        put("title", title)
+                        put("start", formatTime(time))
+                        put("end", "")
+                    })
+                }
+            }
+            if (validList.isNotEmpty()) validList else null
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -432,9 +513,8 @@ object RadioEpgFetcher {
                 conn.setHostnameVerifier { _, _ -> true }
             }
 
-            // 紧凑的毫秒超时，防止主协程挂起
-            conn.connectTimeout = 1200
-            conn.readTimeout = 1500
+            conn.connectTimeout = 2000
+            conn.readTimeout = 2500
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8")
 
