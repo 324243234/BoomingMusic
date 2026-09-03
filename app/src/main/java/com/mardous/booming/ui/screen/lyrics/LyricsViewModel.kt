@@ -284,10 +284,10 @@ class LyricsViewModel(
                     }
                     
                     // 4. 将伪装的 LRC 解析成对象，激活 BoomingMusic 原生的歌词滚动引擎！
-                    val parsed = runCatching { lyricsRepository.parseRawLyrics(song, dynamicLrc) }.getOrNull()
-                    if (isActive && parsed != null && parsed.lines.isNotEmpty()) {
-                        // 🌟 使用 Lyric 状态，彻底告别 Plain 的死板全屏显示！
-                        _lyricsUiState.value = LyricsUiState.Lyric(song.id, parsed)
+                    val parsed = runCatching { repository.parseRawLyrics(song, dynamicLrc) }.getOrNull()
+                    if (isActive && parsed?.hasContent == true) {
+                        // 🌟 使用 Synced 状态，彻底告别 Plain 的死板全屏显示！
+                        _lyricsUiState.value = LyricsUiState.Synced(song.id, parsed)
                     } else if (isActive) {
                         // 解析失败的兜底
                         val plainText = dynamicLrc.replace(Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]"), "")
