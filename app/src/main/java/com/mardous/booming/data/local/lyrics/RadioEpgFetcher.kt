@@ -57,34 +57,38 @@ object RadioEpgFetcher {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
         }
 
-        // 🌟 凤凰系强力提取：同时保留用于官方通道的全称和 DIYP 专线的短名
+        // 🌟 1. 央广 CNR / 国际台 CRI 标准化（完美对接百度电视指南）
+        if (cleanName.contains("中国之声") || cleanName.equals("CNR1", true)) cleanName = "中国之声"
+        else if (cleanName.contains("经济之声") || cleanName.equals("CNR2", true)) cleanName = "经济之声"
+        else if (cleanName.contains("音乐之声") || cleanName.equals("CNR3", true)) cleanName = "音乐之声"
+        else if (cleanName.contains("经典音乐") || cleanName.equals("CNR4", true)) cleanName = "经典音乐广播"
+        else if (cleanName.contains("台海之声") || cleanName.contains("中华之声") || cleanName.equals("CNR5", true)) cleanName = "台海之声"
+        else if (cleanName.contains("神州之声") || cleanName.equals("CNR6", true)) cleanName = "神州之声"
+        else if (cleanName.contains("大湾区") || cleanName.contains("华夏之声") || cleanName.equals("CNR7", true)) cleanName = "大湾区之声"
+        else if (cleanName.contains("民族之声") || cleanName.equals("CNR8", true)) cleanName = "民族之声"
+        else if (cleanName.contains("文艺之声") || cleanName.equals("CNR9", true)) cleanName = "文艺之声"
+        else if (cleanName.contains("老年之声") || cleanName.equals("CNR10", true)) cleanName = "老年之声"
+        else if (cleanName.contains("藏语广播") || cleanName.equals("CNR11", true)) cleanName = "藏语广播"
+        else if (cleanName.contains("阅读之声") || cleanName.equals("CNR12", true)) cleanName = "阅读之声"
+        else if (cleanName.contains("娱乐广播") || cleanName.equals("CNR13", true)) cleanName = "娱乐广播"
+        else if (cleanName.contains("香港之声") || cleanName.equals("CNR14", true)) cleanName = "香港之声"
+        else if (cleanName.contains("交通广播") || cleanName.equals("CNR15", true)) cleanName = "中国交通广播"
+        else if (cleanName.contains("乡村之声") || cleanName.equals("CNR16", true)) cleanName = "中国乡村之声"
+        else if (cleanName.contains("环球资讯") || cleanName.equals("CRI", true)) cleanName = "环球资讯广播"
+        else if (cleanName.contains("轻松调频") || cleanName.equals("EZFM", true)) cleanName = "轻松调频"
+        else if (cleanName.contains("劲曲调频") || cleanName.equals("HITFM", true)) cleanName = "劲曲调频"
+
+        // 🌟 2. 凤凰卫视系强力标准化：直接归一为短名
         var isPhoenix = false
-        var phoenixFullName = ""
         var phoenixShortName = ""
         if (cleanName.contains("凤凰")) {
             isPhoenix = true
             val norm = cleanName.replace("咨询", "资讯")
             when {
-                norm.contains("资讯") -> {
-                    phoenixShortName = "凤凰资讯"
-                    phoenixFullName = "凤凰卫视资讯台"
-                    cleanName = "凤凰资讯"
-                }
-                norm.contains("电影") -> {
-                    phoenixShortName = "凤凰电影"
-                    phoenixFullName = "凤凰卫视电影台"
-                    cleanName = "凤凰电影"
-                }
-                norm.contains("香港") -> {
-                    phoenixShortName = "凤凰香港"
-                    phoenixFullName = "凤凰卫视香港台"
-                    cleanName = "凤凰香港"
-                }
-                else -> {
-                    phoenixShortName = "凤凰中文"
-                    phoenixFullName = "凤凰卫视中文台"
-                    cleanName = "凤凰中文"
-                }
+                norm.contains("资讯") -> { phoenixShortName = "凤凰资讯"; cleanName = "凤凰资讯" }
+                norm.contains("电影") -> { phoenixShortName = "凤凰电影"; cleanName = "凤凰电影" }
+                norm.contains("香港") -> { phoenixShortName = "凤凰香港"; cleanName = "凤凰香港" }
+                else -> { phoenixShortName = "凤凰中文"; cleanName = "凤凰中文" }
             }
         }
 
@@ -92,19 +96,18 @@ object RadioEpgFetcher {
             cleanName = cleanName.replace("卫视台", "卫视")
         }
 
-        if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n📡 纯享直播流"
+        if (cleanName.isEmpty()) return@withContext "[00:00.00]📻 当前频道：$stationName\n[00:00.10]📡 纯享直播流"
 
-        if (isRadioStation) {
-            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的节目)"
+        if (isRadioStation && !cleanName.contains("之声") && !cleanName.contains("广播") && !cleanName.contains("调频")) {
+            return@withContext "[00:00.00]📻 电台直播：$cleanName\n[00:00.10]📡 纯享音频流\n[00:00.20]✨ 若有实时节目，将在此高亮显示"
         }
 
         try {
-            // 🌟 开启 4 秒绝对熔断保护，防止任何网络波动卡死
-            val result = withTimeoutOrNull(4000L) {
+            val result = withTimeoutOrNull(4500L) {
                 var validPrograms: List<JSONObject>? = null
                 val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
-                // 1. CCTV 官方直通车
+                // A. CCTV 官方直通车
                 if (cleanName.startsWith("CCTV", ignoreCase = true)) {
                     val cctvCode = cleanName.lowercase().replace("+", "plus")
                     val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
@@ -114,15 +117,13 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 🌟 2. 凤凰卫视绝对防卡死专线（彻底切除所有 112114 污染域名，直连国内高速节点）
+                // B. 凤凰卫视绝对防卡死专线（屏蔽境外域名，使用国内极速镜像）
                 if (validPrograms == null && isPhoenix) {
-                    // 凤凰卫视必须短名和长名都试一遍，国内高速镜像源
                     val safePhoenixUrls = listOf(
                         "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
                         "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
-                        "http://epg.erw.cc/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
-                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(phoenixFullName)}",
-                        "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(phoenixFullName)}"
+                        "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(phoenixShortName)}",
+                        "https://diyp.288448.xyz/?ch=${Uri.encode(phoenixShortName)}"
                     )
                     for (targetUrl in safePhoenixUrls) {
                         val res = httpGet(targetUrl) ?: continue
@@ -134,14 +135,21 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 3. 内地卫视：51zmt 网页直提
+                // C. 百度阿拉丁电视指南接口（覆盖全量卫视及 CNR/CRI）
+                if (validPrograms == null && !isPhoenix) {
+                    val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
+                    val baiduRes = httpGet(baiduUrl)
+                    if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
+                }
+
+                // D. 内地卫视：51zmt 网页直提 (80 端口)
                 if (validPrograms == null && !isPhoenix) {
                     val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
                     val htmlRes = httpGet(webUrl)
                     if (htmlRes != null) validPrograms = parse51zmtWebHtml(htmlRes)
                 }
 
-                // 4. 内地卫视：CNTV 卫视通道兜底
+                // E. 内地卫视：CNTV 官方卫视频道接口兜底
                 if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
                     val code = SATELLITE_CODE_MAP[cleanName]!!
                     var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact")
@@ -151,44 +159,36 @@ object RadioEpgFetcher {
                     if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, code)
                 }
 
-                // 5. 内地卫视终极兜底：百度引擎 + 纯净镜像节点
+                // F. 极速通用节点终极兜底
                 if (validPrograms == null && !isPhoenix) {
-                    val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
-                    val baiduRes = httpGet(baiduUrl)
-                    if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
-
-                    // 依然没查到，降级国内极速节点（彻底删除 112114）
-                    if (validPrograms == null) {
-                        val candidateUrls = listOf(
-                            "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}",
-                            "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}",
-                            "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(cleanName)}",
-                            "http://epg.erw.cc/api/diyp/?ch=${Uri.encode(cleanName)}"
-                        )
-                        for (targetUrl in candidateUrls) {
-                            val res = httpGet(targetUrl) ?: continue
-                            val programs = parseUniversalEpgPrograms(res)
-                            if (!programs.isNullOrEmpty()) {
-                                validPrograms = programs
-                                break
-                            }
+                    val candidateUrls = listOf(
+                        "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}",
+                        "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}",
+                        "http://epg.aptvapp.com/api/diyp/?ch=${Uri.encode(cleanName)}"
+                    )
+                    for (targetUrl in candidateUrls) {
+                        val res = httpGet(targetUrl) ?: continue
+                        val programs = parseUniversalEpgPrograms(res)
+                        if (!programs.isNullOrEmpty()) {
+                            validPrograms = programs
+                            break
                         }
                     }
                 }
-                
                 validPrograms
             }
 
             if (result.isNullOrEmpty()) {
-                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
+                return@withContext "[00:00.00]📺 正在收听：$cleanName\n[00:00.10]📡 直播流连接成功 (今日暂无详细排期)"
             }
 
+            // 🌟 魔法转换：将时间戳计算相对差值，转换为歌词 LRC 格式
             val cal = Calendar.getInstance()
-            val currentMinutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+            val nowMs = System.currentTimeMillis()
 
             val sb = StringBuilder()
-            sb.append("📡 ").append(cleanName).append(" 今日节目单\n")
-            sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
+            sb.append("[00:00.00]📡 $cleanName 今日节目单\n")
+            var basePastTime = 100L // 过去节目的递增底数
 
             for (i in result.indices) {
                 val prog = result[i]
@@ -200,39 +200,48 @@ object RadioEpgFetcher {
                     endTime = result[i + 1].optString("start", "")
                 }
 
-                var prefix = "⏳ "
+                val timeDisplay = if (endTime.isNotEmpty()) "[$startTime - $endTime]" else "[$startTime]"
+                val lineText = "$timeDisplay $title"
+
                 if (startTime.length >= 4) {
                     val sMin = timeToMinutes(startTime)
-                    val eMin = if (endTime.length >= 4) timeToMinutes(endTime) else sMin + 45
+                    if (sMin != -1) {
+                        val startCal = Calendar.getInstance()
+                        startCal.set(Calendar.HOUR_OF_DAY, sMin / 60)
+                        startCal.set(Calendar.MINUTE, sMin % 60)
+                        startCal.set(Calendar.SECOND, 0)
+                        val progStartMs = startCal.timeInMillis
 
-                    if (sMin != -1 && eMin != -1) {
-                        var adjustedEMin = eMin
-                        var adjustedCur = currentMinutes
+                        val offsetMs = progStartMs - nowMs
 
-                        if (eMin < sMin) {
-                            adjustedEMin += 24 * 60
-                            if (currentMinutes <= eMin) {
-                                adjustedCur += 24 * 60
-                            }
+                        // 如果是过去的节目，赋予 0.1秒、0.2秒... 以确保持续在上方滚动
+                        // 如果是将来的节目，赋予其真实未来的等待时间戳！
+                        val lrcTimeMs = if (offsetMs <= 0) {
+                            basePastTime += 100L
+                            basePastTime
+                        } else {
+                            offsetMs
                         }
 
-                        if (adjustedCur in sMin until adjustedEMin) {
-                            prefix = "🔴 [正在直播] "
-                        } else if (adjustedCur >= adjustedEMin) {
-                            prefix = "✅ "
-                        }
+                        val safeLrcTimeMs = if (lrcTimeMs < 0) 0L else lrcTimeMs
+                        val min = safeLrcTimeMs / 60000
+                        val sec = (safeLrcTimeMs % 60000) / 1000
+                        val ms = (safeLrcTimeMs % 1000) / 10
+                        val timeStr = String.format(Locale.getDefault(), "[%02d:%02d.%02d]", min, sec, ms)
+                        sb.append("$timeStr $lineText\n")
+                    } else {
+                        sb.append("[00:00.00] $lineText\n")
                     }
+                } else {
+                    sb.append("[00:00.00] $lineText\n")
                 }
-
-                val timeDisplay = if (endTime.isNotEmpty()) "[$startTime - $endTime]" else "[$startTime]"
-                sb.append(prefix).append(timeDisplay).append(" ").append(title).append("\n\n")
             }
 
             return@withContext sb.toString().trimEnd()
 
         } catch (e: Exception) {
             Log.e(TAG, "获取节目单失败", e)
-            return@withContext "📺 当前频道：$cleanName\n📡 直播流连接成功"
+            return@withContext "[00:00.00]📺 当前频道：$cleanName\n[00:00.10]📡 直播流连接成功"
         }
     }
 
@@ -497,7 +506,6 @@ object RadioEpgFetcher {
                 conn.setHostnameVerifier { _, _ -> true }
             }
 
-            // 🌟 强力防止阻塞假死：单个节点连接绝对不超过 1.2 秒
             conn.connectTimeout = 1200
             conn.readTimeout = 1200
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
