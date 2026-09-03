@@ -283,8 +283,12 @@ class LyricsViewModel(
                         baseEpgLrc
                     }
                     
-                    // 4. 将伪装的 LRC 解析成对象，激活 BoomingMusic 原生的歌词滚动引擎！
-                    val parsed = runCatching { repository.parseRawLyrics(song, dynamicLrc) }.getOrNull()
+                    // 🌟 4. 【核心修复点】将普通 String 字符串包装为原生的 RawLyrics 对象
+                    val rawLyricsWrapper = RawLyrics.Remote(dynamicLrc)
+                    
+                    // 5. 激活 BoomingMusic 原生的歌词滚动引擎！
+                    val parsed = runCatching { repository.parseRawLyrics(song, rawLyricsWrapper) }.getOrNull()
+                    
                     if (isActive && parsed?.hasContent == true) {
                         // 🌟 使用 Synced 状态，彻底告别 Plain 的死板全屏显示！
                         _lyricsUiState.value = LyricsUiState.Synced(song.id, parsed)
