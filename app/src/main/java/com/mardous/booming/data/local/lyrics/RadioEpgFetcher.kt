@@ -26,13 +26,12 @@ object RadioEpgFetcher {
             .replace(Regex("""\s+"""), "")
             .trim()
 
-        // 📺 CCTV 频道极致标准化
+        // 📺 核心修复 1：CCTV 极致标准化，强制去除减号 (CCTV-1 -> CCTV1)
         val cctvMatch = Regex("""(?i)^cctv[-\s]*(\d+\+?).*""").find(cleanName)
         if (cctvMatch != null) {
-            cleanName = "CCTV-${cctvMatch.groupValues[1]}"
+            cleanName = "CCTV${cctvMatch.groupValues[1]}"
         }
 
-        // 📺 凤凰卫视极致匹配
         cleanName = cleanName.replace("凤凰卫视中文台", "凤凰中文")
         cleanName = cleanName.replace("凤凰卫视资讯台", "凤凰资讯")
         cleanName = cleanName.replace("凤凰卫视电影台", "凤凰电影")
@@ -44,15 +43,16 @@ object RadioEpgFetcher {
         if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n📡 纯享直播流"
 
         if (isRadioStation) {
-            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的歌曲/节目)"
+            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的节目)"
         }
 
         try {
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
 
-            val urlA = "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr"
-            val urlB = "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
+            // 🌟 核心修复 2：主客场对调。不受限的 51zmt 做主节点，112114 做备胎
+            val urlA = "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
+            val urlB = "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr"
 
             var jsonRes = httpGet(urlA)
             if (jsonRes == null || !isValidEpg(jsonRes)) {
@@ -76,7 +76,6 @@ object RadioEpgFetcher {
                 val rawTitle = prog.optString("title", "").trim()
                 val start = prog.optString("start", "")
                 
-                // 🌟 核心修复 1：洗掉 HTML 转义字符和烦人的免费水印
                 val title = rawTitle
                     .replace("&ensp;", " ")
                     .replace("&nbsp;", " ")
@@ -86,8 +85,8 @@ object RadioEpgFetcher {
                     .replace("112114", "")
                     .trim()
                 
-                // 🌟 核心修复 2：撤销对 "转播" 的误杀，仅拦截真正的无用占位符
-                if (title.isEmpty() || title == "精彩节目" || title == "未知节目" || title == "无节目") continue
+                // 🌟 核心修复 3：全面绞杀额度耗尽提示
+                if (title.isEmpty() || title == "精彩节目" || title == "未知节目" || title == "无节目" || title.contains("额度")) continue
                 if (start.isEmpty()) continue
                 
                 prog.put("title_clean", title)
