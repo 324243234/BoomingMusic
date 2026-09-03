@@ -3,17 +3,26 @@ package com.mardous.booming.data.local.lyrics
 import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
+
+    val currentIcyMetadata = MutableStateFlow<String>("")
 
     suspend fun fetchEpgForRadio(stationName: String): String = withContext(Dispatchers.IO) {
         val isRadioStation = Regex("""(?i)(广播|之声|电台|调频|fm|am)""").containsMatchIn(stationName)
@@ -26,7 +35,6 @@ object RadioEpgFetcher {
             .replace(Regex("""\s+"""), "")
             .trim()
 
-        // 📺 核心修复 1：CCTV 极致标准化，强制去除减号 (CCTV-1 -> CCTV1)
         val cctvMatch = Regex("""(?i)^cctv[-\s]*(\d+\+?).*""").find(cleanName)
         if (cctvMatch != null) {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
@@ -50,17 +58,24 @@ object RadioEpgFetcher {
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = dateFormat.format(Date())
 
-            // 🌟 核心修复 2：主客场对调。不受限的 51zmt 做主节点，112114 做备胎
-            val urlA = "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
-            val urlB = "https://epg.112114.xyz/?ch=${Uri.encode(cleanName)}&date=$todayStr"
+            // 🌟 聚合多节点轮询（涵盖 51zmt 标准口、SSL 口以及开源镜像）
+            val candidateUrls = listOf(
+                "http://epg.51zmt.top:8000/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr",
+                "https://epg.51zmt.top:8001/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr",
+                "https://epg.v1.mk/api/diyp/?ch=${Uri.encode(cleanName)}&date=$todayStr"
+            )
 
-            var jsonRes = httpGet(urlA)
-            if (jsonRes == null || !isValidEpg(jsonRes)) {
-                jsonRes = httpGet(urlB)
+            var jsonRes: String? = null
+            for (targetUrl in candidateUrls) {
+                val res = httpGet(targetUrl)
+                if (res != null && isValidEpg(res)) {
+                    jsonRes = res
+                    break
+                }
             }
 
             if (jsonRes == null) {
-                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (公益 EPG 节点暂时拥堵)"
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (暂未收录该频道排期或节点离线)"
             }
 
             val rootObj = JSONObject(jsonRes)
@@ -85,7 +100,6 @@ object RadioEpgFetcher {
                     .replace("112114", "")
                     .trim()
                 
-                // 🌟 核心修复 3：全面绞杀额度耗尽提示
                 if (title.isEmpty() || title == "精彩节目" || title == "未知节目" || title == "无节目" || title.contains("额度")) continue
                 if (start.isEmpty()) continue
                 
@@ -149,7 +163,8 @@ object RadioEpgFetcher {
     private fun isValidEpg(jsonStr: String): Boolean {
         return try {
             val obj = JSONObject(jsonStr)
-            obj.has("epg_data") && obj.optJSONArray("epg_data")?.length() ?: 0 > 0
+            val data = obj.optJSONArray("epg_data")
+            data != null && data.length() > 0
         } catch (e: Exception) {
             false
         }
@@ -167,15 +182,34 @@ object RadioEpgFetcher {
     private fun httpGet(urlString: String): String? {
         var conn: HttpURLConnection? = null
         return try {
-            conn = URL(urlString).openConnection() as HttpURLConnection
+            val url = URL(urlString)
+            conn = url.openConnection() as HttpURLConnection
+            
+            // 针对 HTTPS 请求注入宽松信任，防止 8001 自签名证书导致中断
+            if (conn is HttpsURLConnection) {
+                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+                })
+                val sc = SSLContext.getInstance("SSL")
+                sc.init(null, trustAllCerts, SecureRandom())
+                conn.sslSocketFactory = sc.socketFactory
+                conn.setHostnameVerifier { _, _ -> true }
+            }
+
             conn.connectTimeout = 4000
             conn.readTimeout = 4000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             conn.setRequestProperty("Accept", "application/json")
+            
             if (conn.responseCode in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
-            } else null
+            } else {
+                null
+            }
         } catch (e: Exception) {
+            Log.w(TAG, "请求接口异常: $urlString, 错误: ${e.message}")
             null
         } finally {
             conn?.disconnect()
