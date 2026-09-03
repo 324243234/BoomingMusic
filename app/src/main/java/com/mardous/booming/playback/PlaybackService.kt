@@ -42,6 +42,7 @@ import androidx.core.os.postDelayed
 import androidx.media.utils.MediaConstants
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -195,7 +196,6 @@ class PlaybackService :
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
-    private var currentCarWithLyricsWhole = ""
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -252,6 +252,7 @@ class PlaybackService :
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
+    // 🌟 CarWith 直通车代理层：接管 MediaSession 取值，彻底摆脱原生 Title 的脏修改限制
     private class CarWithPlayerWrapper(
         player: Player,
         private val metadataEnricher: (MediaMetadata) -> MediaMetadata
@@ -364,7 +365,11 @@ class PlaybackService :
         player.addListener(this)
 
         carWithPlayerWrapper = CarWithPlayerWrapper(player) { baseMetadata ->
-            buildEnrichedCarWithMetadata(baseMetadata)
+            // 确保透传的基础 Metadata 完整，且携带最新的 ucar 扩展
+            val currentExtras = baseMetadata.extras ?: Bundle.EMPTY
+            baseMetadata.buildUpon()
+                .setExtras(currentExtras)
+                .build()
         }
 
         mediaSession = MediaLibrarySession.Builder(this, carWithPlayerWrapper, this)
@@ -752,7 +757,7 @@ class PlaybackService :
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ONE
                     }
-                    else -> { // 2: 列表循环
+                    else -> { // 2
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ALL
                     }
@@ -1499,7 +1504,6 @@ class PlaybackService :
         }
     }
 
-    // 🌟 核心引擎：采用“零宽字符 (Tickle)”机制暴力打破 Media3 对 Bundle 比对失效的天然屏障
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
@@ -1508,7 +1512,6 @@ class PlaybackService :
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
             val expectedItem = player.getMediaItemAt(currentIndex)
             
-            // 🌟 核心修复：在此处提取 player 状态为主线程安全变量
             val isShuffleEnabled = player.shuffleModeEnabled
             val currentRepeatMode = player.repeatMode
 
@@ -1568,21 +1571,8 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    // 🌟 核心突破：Tickle(挠痒)机制。交替追加“零宽空格”，强制唤醒 Media3。
-                    carWithTickleToggle = !carWithTickleToggle
-                    val tickleStr = if (carWithTickleToggle) "\u200B" else ""
-                    
-                    val originalTitle = if (currentExtras.containsKey("BT_ORIGINAL_TITLE")) {
-                        latestItem.mediaMetadata.title?.toString() ?: song.title
-                    } else {
-                        song.title
-                    }
-
-                    val cleanTitle = originalTitle.replace("\u200B", "")
-                    val newTitle = cleanTitle + tickleStr
-
+                    // 纯净状态流转：通过 Wrapper 直接告知 CarWith，没有任何字符串欺骗
                     val updatedMetadata = latestItem.mediaMetadata.buildUpon()
-                        .setTitle(newTitle)
                         .setExtras(newExtras)
                         .build()
 
@@ -1613,8 +1603,7 @@ class PlaybackService :
                     .setUri(rs.data)
                     .setMediaMetadata(
                         item.mediaMetadata.buildUpon()
-                            // 🌟 彻底修复：使用数据库里真实保存的电台名称，不再覆盖为“网络电台”
-                            .setTitle(rs.title)
+                            .setTitle(rs.title) // 完美保留原生解析的标题，拒绝乱改
                             .setArtist("网络电台")
                             .setArtworkData(null, null) 
                             .setArtworkUri(null)        
