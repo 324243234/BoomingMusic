@@ -459,11 +459,11 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 🌟 核心注入：向 CarWith 声明支持的自定义动作
+        // 🌟 注入 CarWith 专属控制指令，授权车机端能够向这里发送意图
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
-        // 车机握手成功后，延迟 150ms 推送一次全局元数据，破除上车卡片空白死结
+        // 🌟【唤醒装甲】：握手建立后，延迟 150ms 强推一次带指纹的完整数据源，破除卡片上车空白的死结
         serviceScope.launch(Main) {
             delay(150)
             updateCarWithMetadata()
@@ -913,7 +913,7 @@ class PlaybackService :
             withContext(Main) {
                 refreshMediaButtonCustomLayout()
                 
-                // 无论蓝牙歌词是否开启，全面执行包含 Tickle 欺骗防御机制的数据派发
+                // 🌟 切歌必触发刷新：无论有无开启蓝牙，全速分发装甲元数据
                 updateCarWithMetadata()
 
                 if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
@@ -1162,6 +1162,7 @@ class PlaybackService :
 
         withContext(Main) {
             refreshMediaButtonCustomLayout()
+            // 🌟 通知车机强刷红心图标
             updateCarWithMetadata()
         }
 
@@ -1479,6 +1480,10 @@ class PlaybackService :
             val currentIndex = player.currentMediaItemIndex
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
             val expectedItem = player.getMediaItemAt(currentIndex)
+            
+            // 🌟 核心修复：在此处提前将 player 状态保存为局部变量（安全访问）
+            val isShuffleEnabled = player.shuffleModeEnabled
+            val currentRepeatMode = player.repeatMode
 
             withContext(IO) {
                 val song = runCatching { repository.songByMediaItem(expectedItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
@@ -1514,14 +1519,14 @@ class PlaybackService :
                     if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
                 }
 
-                // 完全对齐 CarWith 所需的播放模式位操作[cite: 19]
+                // 完全对齐 CarWith 所需的播放模式位操作
                 val playMode: Long = when {
-                    player.shuffleModeEnabled -> 0L
-                    player.repeatMode == Player.REPEAT_MODE_ONE -> 1L
+                    isShuffleEnabled -> 0L
+                    currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
                     else -> 2L
                 }
                 
-                // 完全对齐 CarWith 的红心状态（"1" 为高亮选中）[cite: 14]
+                // 完全对齐 CarWith 的红心状态（"1" 为高亮选中）
                 val collectState = if (currentIsFavorite) "1" else "0"
 
                 withContext(Main) {
