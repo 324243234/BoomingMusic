@@ -91,10 +91,11 @@ object RadioEpgFetcher {
             cleanName = cleanName.replace("卫视台", "卫视")
         }
 
-        if (cleanName.isEmpty()) return@withContext "[00:00.00]📻 当前频道：$stationName\n[00:00.10]📡 纯享直播流"
+        // 回归整洁的文本排版
+        if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n\n📡 纯享直播流"
 
         if (isRadioStation && !cleanName.contains("之声") && !cleanName.contains("广播") && !cleanName.contains("调频")) {
-            return@withContext "[00:00.00]📻 电台直播：$cleanName\n[00:00.10]📡 纯享音频流\n[00:00.20]✨ 若有实时节目，将在此高亮显示"
+            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的节目)"
         }
 
         try {
@@ -115,7 +116,6 @@ object RadioEpgFetcher {
                     if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, cctvCode)
                 }
 
-                // 🌟 完全基于原生结构树直接提取
                 if (validPrograms == null && isPhoenix) {
                     val officialApiUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayDashStr&to=$todayDashStr&callback=parseData"
                     val officialRes = httpGet(officialApiUrl, timeoutMs = 3000, referer = "https://phtv.ifeng.com/")
@@ -166,13 +166,15 @@ object RadioEpgFetcher {
             }
 
             if (result.isNullOrEmpty()) {
-                return@withContext "[00:00.00]📺 正在收听：$cleanName\n[00:00.10]📡 直播流连接成功 (今日暂无详细排期)"
+                return@withContext "📺 正在收听：$cleanName\n\n📡 直播流连接成功 (今日暂无详细排期)"
             }
 
-            val nowMs = System.currentTimeMillis()
+            val cal = Calendar.getInstance()
+            val currentMinutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+
             val sb = StringBuilder()
-            sb.append("[00:00.00]📡 $cleanName 今日节目单\n")
-            var basePastTime = 100L
+            sb.append("📡 $cleanName 今日节目单\n")
+            sb.append("━━━━━━━━━━━━━━━━━━━━\n\n")
 
             for (i in result.indices) {
                 val prog = result[i]
@@ -184,48 +186,42 @@ object RadioEpgFetcher {
                     endTime = result[i + 1].optString("start", "")
                 }
 
-                val timeDisplay = if (endTime.isNotEmpty()) "[$startTime - $endTime]" else "[$startTime]"
-                val lineText = "$timeDisplay $title"
-
+                var prefix = "⏳ "
                 if (startTime.length >= 4) {
                     val sMin = timeToMinutes(startTime)
-                    if (sMin != -1) {
-                        val startCal = Calendar.getInstance()
-                        startCal.set(Calendar.HOUR_OF_DAY, sMin / 60)
-                        startCal.set(Calendar.MINUTE, sMin % 60)
-                        startCal.set(Calendar.SECOND, 0)
-                        val progStartMs = startCal.timeInMillis
+                    val eMin = if (endTime.length >= 4) timeToMinutes(endTime) else sMin + 45
 
-                        val offsetMs = progStartMs - nowMs
-                        val lrcTimeMs = if (offsetMs <= 0) {
-                            basePastTime += 100L
-                            basePastTime
-                        } else {
-                            offsetMs
+                    if (sMin != -1 && eMin != -1) {
+                        var adjustedEMin = eMin
+                        var adjustedCur = currentMinutes
+
+                        if (eMin < sMin) {
+                            adjustedEMin += 24 * 60
+                            if (currentMinutes <= eMin) {
+                                adjustedCur += 24 * 60
+                            }
                         }
 
-                        val safeLrcTimeMs = if (lrcTimeMs < 0) 0L else lrcTimeMs
-                        val min = safeLrcTimeMs / 60000
-                        val sec = (safeLrcTimeMs % 60000) / 1000
-                        val ms = (safeLrcTimeMs % 1000) / 10
-                        val timeStr = String.format(Locale.getDefault(), "[%02d:%02d.%02d]", min, sec, ms)
-                        sb.append("$timeStr $lineText\n")
-                    } else {
-                        sb.append("[00:00.00] $lineText\n")
+                        if (adjustedCur in sMin until adjustedEMin) {
+                            prefix = "🔴 [正在直播] "
+                        } else if (adjustedCur >= adjustedEMin) {
+                            prefix = "✅ "
+                        }
                     }
-                } else {
-                    sb.append("[00:00.00] $lineText\n")
                 }
+
+                val timeDisplay = if (endTime.isNotEmpty()) "[$startTime - $endTime]" else "[$startTime]"
+                sb.append(prefix).append(timeDisplay).append(" ").append(title).append("\n\n")
             }
+
             return@withContext sb.toString().trimEnd()
 
         } catch (e: Exception) {
             Log.e(TAG, "获取节目单失败", e)
-            return@withContext "[00:00.00]📺 当前频道：$cleanName\n[00:00.10]📡 直播流连接成功"
+            return@withContext "📺 当前频道：$cleanName\n\n📡 直播流连接成功"
         }
     }
 
-    // 🌟 精准降维打击：通过分析原生结构树进行 O(1) 快速提取
     private fun parsePhoenixOfficialPrograms(jsonpStr: String, channelKind: Int, targetDate: String): List<JSONObject>? {
         return try {
             val startIndex = jsonpStr.indexOf("{")
@@ -236,18 +232,15 @@ object RadioEpgFetcher {
             val rootObj = JSONObject(jsonStr)
             val dataObj = rootObj.optJSONObject("data") ?: return null
             
-            // 直接定位当天的对象: data -> "2026-09-03"
             val dayData = dataObj.optJSONObject(targetDate) ?: return null
             
-            // 完美对接提取到的英文 Key
             val targetKey = when (channelKind) {
-                1 -> "phtvNews"      // 资讯台
-                2 -> "phtvMovie"     // 电影台
-                3 -> "phtvHK"        // 香港台
-                else -> "phtvChinese"// 中文台
+                1 -> "phtvNews"
+                2 -> "phtvMovie"
+                3 -> "phtvHK"
+                else -> "phtvChinese"
             }
             
-            // 精确抵达目标数组
             val programArray = dayData.optJSONArray(targetKey) ?: return null
             
             val validList = mutableListOf<JSONObject>()
