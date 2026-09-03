@@ -117,32 +117,37 @@ object RadioEpgFetcher {
                     }
                 }
 
-                // 🌟 2. 凤凰卫视：直连 epg.pw 官方精确 ID (中国区为主，香港区为备)
+                // 🌟 2. 凤凰卫视：直连凤凰官网原生 JSONP 接口 (国内绝对秒开，优先级最高)
                 if (validPrograms == null && isPhoenix) {
-                    val phoenixTargetUrls = when (phoenixKind) {
-                        0 -> listOf(
-                            "https://epg.pw/api/epg.json?channel_id=561392&date=$todayStr", // 中国区 凤凰中文
-                            "https://epg.pw/api/epg.json?channel_id=410378&date=$todayStr", // 香港区 凤凰卫视中文
-                            "https://epg.pw/api/epg.json?channel_id=561392",
-                            "https://epg.pw/api/epg.json?channel_id=410378"
-                        )
-                        1 -> listOf(
-                            "https://epg.pw/api/epg.json?channel_id=561393&date=$todayStr", // 中国区 凤凰资讯
-                            "https://epg.pw/api/epg.json?channel_id=410355&date=$todayStr", // 香港区 凤凰资讯
-                            "https://epg.pw/api/epg.json?channel_id=561393",
-                            "https://epg.pw/api/epg.json?channel_id=410355"
-                        )
-                        else -> listOf(
-                            "https://epg.pw/api/epg.json?channel_name=${Uri.encode(cleanName)}&date=$todayStr"
-                        )
+                    val phoenixOfficialUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayStr&to=$todayStr"
+                    val officialRes = httpGet(phoenixOfficialUrl, timeoutMs = 2500)
+                    if (officialRes != null) {
+                        validPrograms = parsePhoenixOfficialPrograms(officialRes, phoenixKind, todayStr)
                     }
 
-                    for (targetUrl in phoenixTargetUrls) {
-                        val res = httpGet(targetUrl, timeoutMs = 3200) ?: continue
-                        val programs = parseUniversalEpgPrograms(res, todayStr)
-                        if (!programs.isNullOrEmpty()) {
-                            validPrograms = programs
-                            break
+                    // 如果官网抓取异常，降级到 epg.pw 官方精确 ID
+                    if (validPrograms == null) {
+                        val phoenixTargetUrls = when (phoenixKind) {
+                            0 -> listOf(
+                                "https://epg.pw/api/epg.json?channel_id=561392&date=$todayStr", 
+                                "https://epg.pw/api/epg.json?channel_id=410378&date=$todayStr"
+                            )
+                            1 -> listOf(
+                                "https://epg.pw/api/epg.json?channel_id=561393&date=$todayStr",
+                                "https://epg.pw/api/epg.json?channel_id=410355&date=$todayStr"
+                            )
+                            else -> listOf(
+                                "https://epg.pw/api/epg.json?channel_name=${Uri.encode(cleanName)}&date=$todayStr"
+                            )
+                        }
+
+                        for (targetUrl in phoenixTargetUrls) {
+                            val res = httpGet(targetUrl, timeoutMs = 3200) ?: continue
+                            val programs = parseUniversalEpgPrograms(res, todayStr)
+                            if (!programs.isNullOrEmpty()) {
+                                validPrograms = programs
+                                break
+                            }
                         }
                     }
                 }
@@ -231,6 +236,83 @@ object RadioEpgFetcher {
         }
     }
 
+    // 🌟 解析凤凰卫视原生 JSONP 接口的智能重组提取器
+    private fun parsePhoenixOfficialPrograms(jsonpStr: String, channelKind: Int, targetDate: String): List<JSONObject>? {
+        return try {
+            val startIndex = jsonpStr.indexOf("{")
+            val endIndex = jsonpStr.lastIndexOf("}")
+            if (startIndex == -1 || endIndex == -1) return null
+            val jsonStr = jsonpStr.substring(startIndex, endIndex + 1)
+            
+            val root = JSONObject(jsonStr)
+            val dataObj = root.optJSONObject("data")
+            val dataArray = root.optJSONArray("data")
+
+            var programArray: JSONArray? = null
+            val targetKey = when (channelKind) {
+                1 -> "资讯台"
+                2 -> "电影台"
+                3 -> "香港台"
+                else -> "中文台"
+            }
+
+            if (dataObj != null) {
+                // 适配格式: { "2026-09-03": { "中文台": [...] } }
+                var dayData = dataObj.optJSONObject(targetDate)
+                if (dayData == null && dataObj.keys().hasNext()) {
+                    dayData = dataObj.optJSONObject(dataObj.keys().next())
+                }
+                if (dayData != null) {
+                    programArray = dayData.optJSONArray(targetKey)
+                    if (programArray == null) {
+                        val keys = dayData.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            if (k.contains(targetKey.substring(0, 2))) {
+                                programArray = dayData.optJSONArray(k)
+                                break
+                            }
+                        }
+                    }
+                }
+            } else if (dataArray != null) {
+                // 适配格式: [ { "columnName": "中文台", "programs": [...] } ]
+                for (i in 0 until dataArray.length()) {
+                    val item = dataArray.optJSONObject(i) ?: continue
+                    val name = item.optString("columnName", "").ifEmpty { item.optString("channelName", "") }
+                    if (name.contains(targetKey.substring(0, 2))) {
+                        programArray = item.optJSONArray("programs") ?: item.optJSONArray("list")
+                        break
+                    }
+                }
+            }
+
+            if (programArray == null || programArray.length() == 0) return null
+
+            val validList = mutableListOf<JSONObject>()
+            for (i in 0 until programArray.length()) {
+                val item = programArray.getJSONObject(i)
+                val title = item.optString("videoName", "")
+                    .ifEmpty { item.optString("title", "") }
+                    .ifEmpty { item.optString("name", "") }
+                val time = item.optString("playTime", "")
+                    .ifEmpty { item.optString("time", "") }
+                    .ifEmpty { item.optString("start", "") }
+                
+                if (title.isNotEmpty() && time.isNotEmpty()) {
+                    validList.add(JSONObject().apply {
+                        put("title", title.trim())
+                        put("start", formatTime(time))
+                        put("end", "")
+                    })
+                }
+            }
+            if (validList.isNotEmpty()) validList else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun parseUniversalEpgPrograms(jsonStr: String, targetDateStr: String = ""): List<JSONObject>? {
         return try {
             val trimmed = jsonStr.trim()
@@ -264,12 +346,10 @@ object RadioEpgFetcher {
                     .ifEmpty { prog.optString("endTime", "") }
                     .ifEmpty { prog.optString("end_time", "") }
 
-                // 跨天数据过滤：若返回多天排期且带有日期，仅保留当天的节目
+                // 跨天数据过滤
                 if (targetDateStr.isNotEmpty() && rawStart.contains("-")) {
                     val datePart = rawStart.substringBefore(" ").substringBefore("T")
-                    if (datePart.isNotEmpty() && datePart != targetDateStr) {
-                        continue
-                    }
+                    if (datePart.isNotEmpty() && datePart != targetDateStr) continue
                 }
 
                 val cleanTitle = rawTitle
@@ -442,41 +522,24 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 全格式时间兼容解析器
     private fun formatTime(timeVal: String): String {
         val str = timeVal.trim()
         if (str.isEmpty()) return ""
 
-        // 1. Unix 时间戳 (秒或毫秒)
         val timestamp = str.toLongOrNull()
         if (timestamp != null && timestamp > 1000000000L) {
             val ms = if (timestamp < 100000000000L) timestamp * 1000L else timestamp
             return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
         }
 
-        // 2. ISO 8601 格式 (如 "2026-09-03T00:15:00")
-        if (str.contains("T") && str.contains(":")) {
-            val afterT = str.substringAfter("T")
-            val parts = afterT.split(":")
-            if (parts.size >= 2) {
-                val h = parts[0].filter { it.isDigit() }.padStart(2, '0')
-                val m = parts[1].filter { it.isDigit() }.padStart(2, '0')
-                return "$h:$m"
-            }
-        }
-
-        // 3. 空格隔开的完整日期 (如 "2026-09-03 00:15:00")
         if (str.contains(" ") && str.contains(":")) {
-            val afterSpace = str.substringAfter(" ")
-            val parts = afterSpace.split(":")
+            val timePart = str.substringAfter(" ")
+            val parts = timePart.split(":")
             if (parts.size >= 2) {
-                val h = parts[0].filter { it.isDigit() }.padStart(2, '0')
-                val m = parts[1].filter { it.isDigit() }.padStart(2, '0')
-                return "$h:$m"
+                return "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}"
             }
         }
 
-        // 4. 标准时间格式 (如 "00:15" 或 "00:15:00")
         if (str.contains(":")) {
             val parts = str.split(":")
             if (parts.size >= 2) {
