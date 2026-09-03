@@ -95,7 +95,7 @@ object RadioEpgFetcher {
         if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n\n📡 纯享直播流"
 
         if (isRadioStation && !cleanName.contains("之声") && !cleanName.contains("广播") && !cleanName.contains("调频")) {
-            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流\n✨ (若该电台支持，界面将实时提示正在播放的节目)"
+            return@withContext "📻 电台直播：$cleanName\n\n📡 纯享音频流✨"
         }
 
         try {

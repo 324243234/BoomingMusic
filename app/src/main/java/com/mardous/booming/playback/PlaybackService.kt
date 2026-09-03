@@ -126,6 +126,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
+import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.resume
@@ -185,6 +186,7 @@ class PlaybackService :
     private lateinit var persistentStorage: PersistentStorage
     private lateinit var customCommands: List<CommandButton>
     private lateinit var player: AdvancedForwardingPlayer
+    private lateinit var carWithPlayerWrapper: CarWithPlayerWrapper
     private var mediaSession: MediaLibrarySession? = null
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
@@ -193,9 +195,7 @@ class PlaybackService :
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
-    
-    // 🌟 Tickle 欺骗开关：强制 Media3 底层触发 onMetadataChanged 回调
-    private var carWithTickleToggle = false
+    private var currentCarWithLyricsWhole = ""
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -251,6 +251,37 @@ class PlaybackService :
         get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
+
+    private class CarWithPlayerWrapper(
+        player: Player,
+        private val metadataEnricher: (MediaMetadata) -> MediaMetadata
+    ) : ForwardingPlayer(player) {
+        private val sessionListeners = CopyOnWriteArraySet<Player.Listener>()
+        private var customMediaMetadata: MediaMetadata? = null
+
+        override fun addListener(listener: Player.Listener) {
+            super.addListener(listener)
+            sessionListeners.add(listener)
+        }
+
+        override fun removeListener(listener: Player.Listener) {
+            super.removeListener(listener)
+            sessionListeners.remove(listener)
+        }
+
+        override fun getMediaMetadata(): MediaMetadata {
+            val base = customMediaMetadata ?: super.getMediaMetadata()
+            return metadataEnricher(base)
+        }
+
+        fun notifyMetadataChanged(newMetadata: MediaMetadata) {
+            customMediaMetadata = newMetadata
+            val enriched = metadataEnricher(newMetadata)
+            for (listener in sessionListeners) {
+                listener.onMediaMetadataChanged(enriched)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -332,7 +363,11 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        mediaSession = MediaLibrarySession.Builder(this, player, this)
+        carWithPlayerWrapper = CarWithPlayerWrapper(player) { baseMetadata ->
+            buildEnrichedCarWithMetadata(baseMetadata)
+        }
+
+        mediaSession = MediaLibrarySession.Builder(this, carWithPlayerWrapper, this)
             .setId(packageName)
             .setSessionActivity(createSessionActivityIntent())
             .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this@PlaybackService)))
@@ -459,11 +494,9 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 🌟 注入 CarWith 专属控制指令，授权车机端能够向这里发送意图
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
-        // 🌟【唤醒装甲】：握手建立后，延迟 150ms 强推一次带指纹的完整数据源，破除卡片上车空白的死结
         serviceScope.launch(Main) {
             delay(150)
             updateCarWithMetadata()
@@ -699,16 +732,13 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS, modesBundle())
             }
 
-            // 🌟 响应 CarWith 车机端发送的收藏指令
             Playback.TOGGLE_FAVORITE, "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 awaitRestoration()
-                toggleFavorite() 
+                toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 响应 CarWith 车机端发送的播放模式切换指令
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
-                // 车机传来的是卡片当前处于什么模式。我们读取后进行 +1 轮转。
                 val currentCarMode = args.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
                     ?: (if (player.shuffleModeEnabled) 0 else if (player.repeatMode == Player.REPEAT_MODE_ONE) 1 else 2)
                 
@@ -722,12 +752,11 @@ class PlaybackService :
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ONE
                     }
-                    else -> { // 2
+                    else -> { // 2: 列表循环
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ALL
                     }
                 }
-                // 状态变更后主动推回车机，更新 UI 显示
                 updateCarWithMetadata()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
@@ -913,7 +942,6 @@ class PlaybackService :
             withContext(Main) {
                 refreshMediaButtonCustomLayout()
                 
-                // 🌟 切歌必触发刷新：无论有无开启蓝牙，全速分发装甲元数据
                 updateCarWithMetadata()
 
                 if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
@@ -1162,7 +1190,6 @@ class PlaybackService :
 
         withContext(Main) {
             refreshMediaButtonCustomLayout()
-            // 🌟 通知车机强刷红心图标
             updateCarWithMetadata()
         }
 
@@ -1481,7 +1508,7 @@ class PlaybackService :
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
             val expectedItem = player.getMediaItemAt(currentIndex)
             
-            // 🌟 核心修复：在此处提前将 player 状态保存为局部变量（安全访问）
+            // 🌟 核心修复：在此处提取 player 状态为主线程安全变量
             val isShuffleEnabled = player.shuffleModeEnabled
             val currentRepeatMode = player.repeatMode
 
@@ -1519,14 +1546,12 @@ class PlaybackService :
                     if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
                 }
 
-                // 完全对齐 CarWith 所需的播放模式位操作
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
                     currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
                     else -> 2L
                 }
                 
-                // 完全对齐 CarWith 的红心状态（"1" 为高亮选中）
                 val collectState = if (currentIsFavorite) "1" else "0"
 
                 withContext(Main) {
@@ -1543,7 +1568,7 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    // 🌟 核心突破：Tickle(挠痒)机制。交替追加“零宽空格”，让底层 `equals()` 检查判定 Title 已更改，强制广播 `MediaMetadataChanged` 至车机端。
+                    // 🌟 核心突破：Tickle(挠痒)机制。交替追加“零宽空格”，强制唤醒 Media3。
                     carWithTickleToggle = !carWithTickleToggle
                     val tickleStr = if (carWithTickleToggle) "\u200B" else ""
                     
@@ -1565,6 +1590,8 @@ class PlaybackService :
                         .setMediaMetadata(updatedMetadata)
                         .build()
 
+                    carWithPlayerWrapper.notifyMetadataChanged(updatedMetadata)
+                    
                     val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
                     realPlayer.replaceMediaItem(latestIndex, updatedItem)
                 }
@@ -1586,6 +1613,7 @@ class PlaybackService :
                     .setUri(rs.data)
                     .setMediaMetadata(
                         item.mediaMetadata.buildUpon()
+                            // 🌟 彻底修复：使用数据库里真实保存的电台名称，不再覆盖为“网络电台”
                             .setTitle(rs.title)
                             .setArtist("网络电台")
                             .setArtworkData(null, null) 
