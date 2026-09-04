@@ -127,7 +127,8 @@ object RadioEpgFetcher {
             cleanName.contains("文艺之声") || cleanName.equals("CNR9", true) -> cleanName = "文艺之声"
             cleanName.contains("老年之声") || cleanName.equals("CNR10", true) -> cleanName = "老年之声"
             cleanName.contains("阅读之声") || cleanName.equals("CNR12", true) -> cleanName = "阅读之声"
-            cleanName == "交通广播" || cleanName == "中国交通广播" || cleanName.equals("CNR15", true) -> cleanName = "中国交通广播"
+            // 🌟 同时兼容：包含“中国交通广播”、写着“cnr-15”或“CNR15”的均识别为中国交通广播
+            cleanName.contains("中国交通广播") || cleanName.contains("cnr-15") || cleanName.equals("CNR15", true) -> cleanName = "中国交通广播"
             cleanName.contains("环球资讯") || cleanName.equals("CRI", true) -> cleanName = "环球资讯广播"
             cleanName.contains("轻松调频") || cleanName.equals("EZFM", true) -> cleanName = "轻松调频"
             cleanName.contains("劲曲调频") || cleanName.equals("HITFM", true) -> cleanName = "劲曲调频"
