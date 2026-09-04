@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
@@ -17,6 +18,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.UUID
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -26,6 +28,17 @@ object RadioEpgFetcher {
     private const val TAG = "RadioEpgFetcher"
 
     val currentIcyMetadata = MutableStateFlow<String>("")
+
+    // 🌟 央广云听 (radio.cn) 官方电台 ID 映射表
+    private val RADIO_CN_MAP = mapOf(
+        "中国之声" to "639", "经济之声" to "640", "音乐之声" to "641",
+        "经典音乐广播" to "642", "台海之声" to "643", "神州之声" to "644",
+        "大湾区之声" to "645", "香港之声" to "646", "民族之声" to "647",
+        "文艺之声" to "648", "老年之声" to "649", "藏语广播" to "650",
+        "维吾尔语广播" to "651", "中国交通广播" to "653", "中国乡村之声" to "654",
+        "哈萨克语广播" to "655", "南海之声" to "664", "环球资讯广播" to "692",
+        "英语资讯广播 CGTN Radio" to "734"
+    )
 
     private val SATELLITE_CODE_MAP = mapOf(
         "天津卫视" to "tianjin", "北京卫视" to "beijing", "东方卫视" to "dongfang",
@@ -50,6 +63,7 @@ object RadioEpgFetcher {
             .replace(Regex("""(?i)[-\s_]*(fm|am)\s*\d+\.?\d*"""), "")
             .replace(Regex("""\(.*?\)|\[.*?\]|【.*?】|<.*?>"""), "")
             .replace(Regex("""(?i)(高清|测试|网络|直播|伴音|音频|纯音|4k|8k|fhd).*$"""), "")
+            .replace(Regex("""(?i)(?:中央人民广播电台|中国国际广播电台|央广|国广|CNR|CRI)[-\s_]*(?=[\u4e00-\u9fa5])"""), "")
             .replace(Regex("""\s+"""), "")
             .trim()
 
@@ -73,7 +87,6 @@ object RadioEpgFetcher {
         } else if (Regex("福建私家车|福建都市|98\\.?7|987|1736").containsMatchIn(lowerStation)) {
             qtfmChannelId = "1736"
             cleanName = "福建都市广播.私家车987"
-        
         } else if (Regex("福州交通|fm\\s*876").containsMatchIn(lowerStation)) {
             qtfmChannelId = "5026"
             cleanName = "福州交通之声"
@@ -105,16 +118,15 @@ object RadioEpgFetcher {
         when {
             cleanName.contains("中国之声") || cleanName.equals("CNR1", true) -> cleanName = "中国之声"
             cleanName.contains("经济之声") || cleanName.equals("CNR2", true) -> cleanName = "经济之声"
-            cleanName == "音乐之声" || cleanName.equals("CNR3", true) -> cleanName = "音乐之声"
-            cleanName == "经典音乐广播" || cleanName.equals("CNR4", true) -> cleanName = "经典音乐广播"
+            cleanName.contains("音乐之声") || cleanName.equals("CNR3", true) -> cleanName = "音乐之声"
+            cleanName.contains("经典音乐") || cleanName.equals("CNR4", true) -> cleanName = "经典音乐广播"
             cleanName.contains("台海之声") || cleanName.contains("中华之声") || cleanName.equals("CNR5", true) -> cleanName = "台海之声"
             cleanName.contains("神州之声") || cleanName.equals("CNR6", true) -> cleanName = "神州之声"
             cleanName.contains("大湾区之声") || cleanName.contains("华夏之声") || cleanName.equals("CNR7", true) -> cleanName = "大湾区之声"
-            cleanName == "民族之声" || cleanName.equals("CNR8", true) -> cleanName = "民族之声"
-            cleanName == "文艺之声" || cleanName.equals("CNR9", true) -> cleanName = "文艺之声"
-            cleanName == "老年之声" || cleanName.equals("CNR10", true) -> cleanName = "老年之声"
-            cleanName == "阅读之声" || cleanName.equals("CNR12", true) -> cleanName = "阅读之声"
-            // 严格匹配，防止误伤地方台
+            cleanName.contains("民族之声") || cleanName.equals("CNR8", true) -> cleanName = "民族之声"
+            cleanName.contains("文艺之声") || cleanName.equals("CNR9", true) -> cleanName = "文艺之声"
+            cleanName.contains("老年之声") || cleanName.equals("CNR10", true) -> cleanName = "老年之声"
+            cleanName.contains("阅读之声") || cleanName.equals("CNR12", true) -> cleanName = "阅读之声"
             cleanName == "交通广播" || cleanName == "中国交通广播" || cleanName.equals("CNR15", true) -> cleanName = "中国交通广播"
             cleanName.contains("环球资讯") || cleanName.equals("CRI", true) -> cleanName = "环球资讯广播"
             cleanName.contains("轻松调频") || cleanName.equals("EZFM", true) -> cleanName = "轻松调频"
@@ -145,7 +157,6 @@ object RadioEpgFetcher {
         }
 
         try {
-            // 增加超时时间，防止国内广电服务器响应过慢
             val maxWaitMs = if (isPhoenix) 6000L else 4000L
 
             val result = withTimeoutOrNull(maxWaitMs) {
@@ -156,28 +167,74 @@ object RadioEpgFetcher {
                 val todayDashStr = dashDateFormat.format(Date())
                 val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
-                if (cleanName.startsWith("CCTV", ignoreCase = true)) {
+                val radioCnId = RADIO_CN_MAP[cleanName]
+
+                // 🌟 0. 央广云听 双重保险机制 (H5无签名优先)
+                if (validPrograms == null && radioCnId != null) {
+                    val tm = System.currentTimeMillis().toString()
+                    
+                    // 【主方案：H5稳定接口 (无签名，抗封杀)】
+                    try {
+                        val h5Url = "https://ytapi.radio.cn/ytsrv/srv/interactive/program/list"
+                        val h5PostData = "startdate=$todayDashStr&enddate=$todayDashStr&appKey=&broadCastId=$radioCnId&userId="
+                        val h5Headers = mapOf(
+                            "timestamp" to tm,
+                            "version" to "4.0.0",
+                            "providerCode" to "25010",
+                            "equipmentId" to UUID.randomUUID().toString(),
+                            "equipmentSource" to "WEB",
+                            "equipmentType" to "3",
+                            "platformCode" to "H5",
+                            "productId" to "1605403829833195520",
+                            "Content-Type" to "application/x-www-form-urlencoded"
+                        )
+                        val h5Res = httpPost(h5Url, postData = h5PostData, timeoutMs = 3000, referer = "https://ytweb.radio.cn/", headers = h5Headers)
+                        if (h5Res != null) validPrograms = parseRadioCnH5Programs(h5Res)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "H5 API failed", e)
+                    }
+
+                    // 【副方案：老版接口 (有签名，作备用)】
+                    if (validPrograms == null) {
+                        try {
+                            val key = "f0fc4c668392f9f9a447e48584c214ee"
+                            val signText = "broadcastId=$radioCnId&date=$todayDashStr&timestamp=$tm&key=$key"
+                            val sign = md5(signText).uppercase(Locale.ROOT)
+
+                            val oldUrl = "https://ytmsout.radio.cn/web/appProgram/listByDate?date=$todayDashStr&broadcastId=$radioCnId"
+                            val oldHeaders = mapOf(
+                                "timestamp" to tm,
+                                "sign" to sign,
+                                "platformcode" to "WEB",
+                                "equipmentid" to "0000"
+                            )
+                            val oldRes = httpGet(oldUrl, timeoutMs = 3000, referer = "https://www.radio.cn/", headers = oldHeaders)
+                            if (oldRes != null) validPrograms = parseRadioCnPrograms(oldRes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Old App API failed", e)
+                        }
+                    }
+                }
+
+                if (validPrograms == null && cleanName.startsWith("CCTV", ignoreCase = true)) {
                     val cctvCode = cleanName.lowercase().replace("+", "plus")
                     val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
                     val cntvRes = httpGet(cntvUrl, timeoutMs = 2000)
                     if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, cctvCode)
                 }
 
-                // 🌟 福建台专属请求
                 if (validPrograms == null && fjtvChannelId != null) {
                     val fjtvUrl = "https://radio.fjtv.net/m2o/program_switch.php?channel_id=$fjtvChannelId&dates=$todayDashStr&shownums=7"
                     val htmlRes = httpGet(fjtvUrl, timeoutMs = 3000, referer = "https://radio.fjtv.net/")
                     if (htmlRes != null) validPrograms = parseFjtvWebHtml(htmlRes)
                 }
 
-                // 🌟 蜻蜓FM 专属请求
                 if (validPrograms == null && qtfmChannelId != null) {
                     val qtfmUrl = "https://m.qtfm.cn/channels/$qtfmChannelId/"
                     val htmlRes = httpGet(qtfmUrl, timeoutMs = 3000, referer = "https://m.qtfm.cn/")
                     if (htmlRes != null) validPrograms = parseQtfmWebHtml(htmlRes)
                 }
 
-                // 凤凰及其他兜底逻辑...
                 if (validPrograms == null && isPhoenix) {
                     val officialApiUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayDashStr&to=$todayDashStr&callback=parseData"
                     val officialRes = httpGet(officialApiUrl, timeoutMs = 3000, referer = "https://phtv.ifeng.com/")
@@ -284,11 +341,70 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 终极版 蜻蜓FM 提取引擎（正则优先提取 + 栈匹配兜底），无视任何 JSON 异常
+    private fun md5(string: String): String {
+        val bytes = MessageDigest.getInstance("MD5").digest(string.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    // 🌟 新增 H5 稳定接口 JSON 提取器
+    private fun parseRadioCnH5Programs(jsonStr: String): List<JSONObject>? {
+        return try {
+            val root = JSONObject(jsonStr)
+            val conArray = root.optJSONArray("con") ?: return null
+            if (conArray.length() == 0) return null
+            
+            val progamlist = conArray.optJSONObject(0)?.optJSONArray("progamlist") ?: return null
+            
+            val validList = mutableListOf<JSONObject>()
+            for (i in 0 until progamlist.length()) {
+                val item = progamlist.getJSONObject(i)
+                val title = item.optString("name", "").trim()
+                val startTime = item.optString("startTime", "")
+                val endTime = item.optString("endTime", "")
+                
+                if (title.isNotEmpty() && startTime.isNotEmpty()) {
+                    validList.add(JSONObject().apply {
+                        put("title", title)
+                        put("start", formatTime(startTime))
+                        put("end", formatTime(endTime))
+                    })
+                }
+            }
+            if (validList.isNotEmpty()) validList else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun parseRadioCnPrograms(jsonStr: String): List<JSONObject>? {
+        return try {
+            val root = JSONObject(jsonStr)
+            val dataArray = root.optJSONArray("data") ?: return null
+            
+            val validList = mutableListOf<JSONObject>()
+            for (i in 0 until dataArray.length()) {
+                val item = dataArray.getJSONObject(i)
+                val title = item.optString("programName", "").trim()
+                val startTime = item.optString("startTime", "")
+                val endTime = item.optString("endTime", "")
+                
+                if (title.isNotEmpty() && startTime.isNotEmpty()) {
+                    validList.add(JSONObject().apply {
+                        put("title", title)
+                        put("start", formatTime(startTime))
+                        put("end", formatTime(endTime))
+                    })
+                }
+            }
+            if (validList.isNotEmpty()) validList else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun parseQtfmWebHtml(html: String): List<JSONObject>? {
         return try {
             val list = mutableListOf<JSONObject>()
-            // 方法1：无视 JSON 语法结构，强行正则挖出 today 数组内的所有数据
             val todayRegex = Regex(""""today":\s*\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL)
             val todayMatch = todayRegex.find(html)
             if (todayMatch != null) {
@@ -316,7 +432,6 @@ object RadioEpgFetcher {
                                 end = parts[1].trim()
                             }
                         }
-                        // 兜底时间
                         if (start.isEmpty()) {
                             val startIsoMatch = Regex(""""startTime":\s*"([^"]+)"""").find(content)
                             if (startIsoMatch != null) {
@@ -338,7 +453,6 @@ object RadioEpgFetcher {
                 return list
             }
 
-            // 方法2：原生栈提取兜底
             val startToken = "window.__initStores ="
             val startIndex = html.indexOf(startToken)
             if (startIndex != -1) {
@@ -723,8 +837,12 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 终极穿甲弹请求头：全要素模仿 Chrome 手机端浏览器，直接打穿对方云 WAF 防火墙
-    private fun httpGet(urlString: String, timeoutMs: Int = 4000, referer: String? = null): String? {
+    private fun httpGet(
+        urlString: String, 
+        timeoutMs: Int = 4000, 
+        referer: String? = null, 
+        headers: Map<String, String>? = null
+    ): String? {
         var conn: HttpURLConnection? = null
         return try {
             val url = URL(urlString)
@@ -745,20 +863,75 @@ object RadioEpgFetcher {
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
             
-            // 完整模拟你抓包抓出来的头部特征，专门克制防爬拦截
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             conn.setRequestProperty("Connection", "keep-alive")
-            conn.setRequestProperty("DNT", "1")
-            conn.setRequestProperty("Upgrade-Insecure-Requests", "1")
-            conn.setRequestProperty("Sec-Fetch-Dest", "document")
-            conn.setRequestProperty("Sec-Fetch-Mode", "navigate")
-            conn.setRequestProperty("Sec-Fetch-Site", "none")
-            conn.setRequestProperty("Sec-Fetch-User", "?1")
 
             if (referer != null) {
                 conn.setRequestProperty("Referer", referer)
+            }
+
+            headers?.forEach { (key, value) ->
+                conn.setRequestProperty(key, value)
+            }
+
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    // 🌟 新增的 POST 请求封装器（配合 H5 接口食用）
+    private fun httpPost(
+        urlString: String, 
+        postData: String,
+        timeoutMs: Int = 4000, 
+        referer: String? = null, 
+        headers: Map<String, String>? = null
+    ): String? {
+        var conn: HttpURLConnection? = null
+        return try {
+            val url = URL(urlString)
+            conn = url.openConnection() as HttpURLConnection
+
+            if (conn is HttpsURLConnection) {
+                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+                })
+                val sc = SSLContext.getInstance("SSL")
+                sc.init(null, trustAllCerts, SecureRandom())
+                conn.sslSocketFactory = sc.socketFactory
+                conn.setHostnameVerifier { _, _ -> true }
+            }
+
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+            
+            if (referer != null) {
+                conn.setRequestProperty("Referer", referer)
+            }
+
+            headers?.forEach { (key, value) ->
+                conn.setRequestProperty(key, value)
+            }
+
+            conn.outputStream.use { os ->
+                os.write(postData.toByteArray(Charsets.UTF_8))
+                os.flush()
             }
 
             if (conn.responseCode in 200..299) {
