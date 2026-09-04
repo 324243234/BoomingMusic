@@ -108,6 +108,21 @@ object RadioEpgFetcher {
         } else if (Regex("厦门综合广播|1107|1737").containsMatchIn(lowerStation)) {
             qtfmChannelId = "1737"
             cleanName = "厦门综合广播"
+        } else if (Regex("北京交通广播|1039|103\\.?9").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "336"
+            cleanName = "北京交通广播"
+        } else if (Regex("广东交通之声|1052|105\\.?2").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1262"
+            cleanName = "广东交通之声.羊城交通台"
+        } else if (Regex("欧美音乐|Hit FM|887|88\\.?7").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "15318703"
+            cleanName = "欧美音乐.Hit FM"
+        } else if (Regex("上海动感|上海动感101|1017|101\\.?7").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "274"
+            cleanName = "上海动感101"
+        } else if (Regex("江苏交通广播|江苏交通广播网|1011|101\\.?1").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "4054"
+            cleanName = "江苏交通广播"
         }
 
         val cctvMatch = Regex("""(?i)^cctv[-\s]*(\d+\+?).*""").find(cleanName)
