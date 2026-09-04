@@ -117,7 +117,6 @@ object RadioEpgFetcher {
             cleanName == "文艺之声" || cleanName.equals("CNR9", true) -> cleanName = "文艺之声"
             cleanName == "老年之声" || cleanName.equals("CNR10", true) -> cleanName = "老年之声"
             cleanName == "阅读之声" || cleanName.equals("CNR12", true) -> cleanName = "阅读之声"
-            // 严格匹配，防止把"福建交通广播"误伤变成"中国交通广播"
             cleanName == "交通广播" || cleanName == "中国交通广播" || cleanName.equals("CNR15", true) -> cleanName = "中国交通广播"
             cleanName.contains("环球资讯") || cleanName.equals("CRI", true) -> cleanName = "环球资讯广播"
             cleanName.contains("轻松调频") || cleanName.equals("EZFM", true) -> cleanName = "轻松调频"
@@ -174,7 +173,7 @@ object RadioEpgFetcher {
                     if (htmlRes != null) validPrograms = parseFjtvWebHtml(htmlRes)
                 }
 
-                // 3. 🌟 福州广播电台（蜻蜓FM源）专属抓取
+                // 3. 🌟 蜻蜓FM源专属抓取
                 if (validPrograms == null && qtfmChannelId != null) {
                     val qtfmUrl = "https://m.qtfm.cn/channels/$qtfmChannelId/"
                     val htmlRes = httpGet(qtfmUrl, timeoutMs = 2500, referer = "https://m.qtfm.cn/")
@@ -291,51 +290,49 @@ object RadioEpgFetcher {
         }
     }
 
-    // 🌟 蜻蜓FM (qtfm.cn) 移动端内置 JSON 精准提取器
+    // 🌟 蜻蜓FM (qtfm.cn) 移动端内置 JSON 精确截取器
     private fun parseQtfmWebHtml(html: String): List<JSONObject>? {
         return try {
             val startToken = "window.__initStores ="
+            val endToken = "window.ssr ="
             val startIndex = html.indexOf(startToken)
+            val endIndex = html.indexOf(endToken)
             
-            if (startIndex != -1) {
-                // 截取剩余字符串
-                val remainingHtml = html.substring(startIndex + startToken.length)
-                // 精准定位 JSON 的首尾括号，避免换行符和分号的干扰
-                val firstBrace = remainingHtml.indexOf('{')
-                val lastBrace = remainingHtml.lastIndexOf('}')
-                
-                if (firstBrace != -1 && lastBrace != -1 && firstBrace < lastBrace) {
-                    val jsonStr = remainingHtml.substring(firstBrace, lastBrace + 1)
-                    val root = JSONObject(jsonStr)
-                    
-                    val todayArr = root.optJSONObject("ChannelStore")
-                        ?.optJSONObject("playBill")
-                        ?.optJSONArray("today") ?: return null
-                        
-                    val list = mutableListOf<JSONObject>()
-                    for (i in 0 until todayArr.length()) {
-                        val item = todayArr.getJSONObject(i)
-                        val title = item.optString("title", "").trim()
-                        val durationStr = item.optString("durationStr", "")
-                        
-                        var start = ""
-                        var end = ""
-                        if (durationStr.contains("~")) {
-                            val parts = durationStr.split("~")
-                            start = parts[0].trim()
-                            end = parts[1].trim()
-                        }
-                        
-                        if (title.isNotEmpty() && start.isNotEmpty()) {
-                            list.add(JSONObject().apply {
-                                put("title", title)
-                                put("start", start)
-                                put("end", end)
-                            })
-                        }
-                    }
-                    if (list.isNotEmpty()) return list
+            if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
+                // 精准剔除首尾干扰字符，确保 JSON 纯净
+                var jsonStr = html.substring(startIndex + startToken.length, endIndex).trim()
+                if (jsonStr.endsWith(";")) {
+                    jsonStr = jsonStr.dropLast(1)
                 }
+                
+                val root = JSONObject(jsonStr)
+                val todayArr = root.optJSONObject("ChannelStore")
+                    ?.optJSONObject("playBill")
+                    ?.optJSONArray("today") ?: return null
+                    
+                val list = mutableListOf<JSONObject>()
+                for (i in 0 until todayArr.length()) {
+                    val item = todayArr.getJSONObject(i)
+                    val title = item.optString("title", "").trim()
+                    val durationStr = item.optString("durationStr", "")
+                    
+                    var start = ""
+                    var end = ""
+                    if (durationStr.contains("~")) {
+                        val parts = durationStr.split("~")
+                        start = parts[0].trim()
+                        end = parts[1].trim()
+                    }
+                    
+                    if (title.isNotEmpty() && start.isNotEmpty()) {
+                        list.add(JSONObject().apply {
+                            put("title", title)
+                            put("start", start)
+                            put("end", end)
+                        })
+                    }
+                }
+                if (list.isNotEmpty()) return list
             }
             null
         } catch (e: Exception) {
@@ -699,23 +696,16 @@ object RadioEpgFetcher {
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
             
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-            conn.setRequestProperty("sec-ch-ua", "\"Not=A?Brand\";v=\"99\", \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\"")
-            conn.setRequestProperty("sec-ch-ua-mobile", "?1")
-            conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
+            // 使用主流浏览器的 UA，降低被风控几率
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             
-            // 🌟 动态适配 Origin 和 Referer 防止服务器 WAF 防盗链拦截
+            // 🌟 移除了 Origin 请求头，GET 请求强制携带 Origin 极易触发各大厂 WAF 的 CSRF 防御拦截返回 403
             if (referer != null) {
                 conn.setRequestProperty("Referer", referer)
-                try {
-                    val refererUrl = URL(referer)
-                    conn.setRequestProperty("Origin", "${refererUrl.protocol}://${refererUrl.host}")
-                } catch (e: Exception) {}
             }
             
             conn.setRequestProperty("Accept", "*/*")
             conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            // 🌟 移除了 "Accept-Encoding: identity"，允许 HttpURLConnection 原生处理 Gzip 压缩，防止被对方服务器退回
 
             if (conn.responseCode in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
