@@ -58,21 +58,22 @@ object RadioEpgFetcher {
         val lowerStation = stationName.lowercase()
         
         // 地方台精准路由
-        if (Regex("福建新闻|fm\\s*1036|fm\\s*103\\.6").containsMatchIn(lowerStation)) {
-            fjtvChannelId = "665247887399424000"
+        if (Regex("福建新闻广播|1036|1731|103\\.?6").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1731"
             cleanName = "福建新闻广播"
         } else if (Regex("福建东南|am\\s*585").containsMatchIn(lowerStation)) {
             fjtvChannelId = "665247519068229632"
             cleanName = "福建东南广播"
-        } else if (Regex("福建经济|福建经接|fm\\s*961|fm\\s*96\\.1").containsMatchIn(lowerStation)) {
-            fjtvChannelId = "665247815009931264"
+        } else if (Regex("福建经济|福建经济广播|96\\.?1|961|1732").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1732"
             cleanName = "福建经济广播"
-        } else if (Regex("福建交通|fm\\s*1007|fm\\s*100\\.7").containsMatchIn(lowerStation)) {
-            fjtvChannelId = "665247838078603264"
+        } else if (Regex("福建交通|福建交通广播|100\\.?7|1007|1733").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1733"
             cleanName = "福建交通广播"
-        } else if (Regex("福建都市|fm\\s*987|fm\\s*98\\.7").containsMatchIn(lowerStation)) {
-            fjtvChannelId = "665247862439120896"
-            cleanName = "福建都市广播"
+        } else if (Regex("福建私家车|福建都市|98\\.?7|987|1736").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1736"
+            cleanName = "福建都市广播.私家车987"
+        
         } else if (Regex("福州交通|fm\\s*876").containsMatchIn(lowerStation)) {
             qtfmChannelId = "5026"
             cleanName = "福州交通之声"
