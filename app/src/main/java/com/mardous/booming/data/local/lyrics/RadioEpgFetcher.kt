@@ -53,6 +53,52 @@ object RadioEpgFetcher {
             .replace(Regex("""\s+"""), "")
             .trim()
 
+        // 🌟 针对福建系列电台的专属识别与规范化处理
+        var fjtvChannelId: String? = null
+        var qtfmChannelId: String? = null
+        val lowerStation = stationName.lowercase()
+        
+        // 福建广电系列
+        if (Regex("福建新闻|fm\\s*1036|fm\\s*103\\.6").containsMatchIn(lowerStation)) {
+            fjtvChannelId = "665247887399424000"
+            cleanName = "福建新闻广播"
+        } else if (Regex("福建东南|am\\s*585").containsMatchIn(lowerStation)) {
+            fjtvChannelId = "665247519068229632"
+            cleanName = "福建东南广播"
+        } else if (Regex("福建经济|福建经接|fm\\s*961|fm\\s*96\\.1").containsMatchIn(lowerStation)) {
+            fjtvChannelId = "665247815009931264"
+            cleanName = "福建经济广播"
+        } else if (Regex("福建交通|fm\\s*1007|fm\\s*100\\.7").containsMatchIn(lowerStation)) {
+            fjtvChannelId = "665247838078603264"
+            cleanName = "福建交通广播"
+        } else if (Regex("福建都市|fm\\s*987|fm\\s*98\\.7").containsMatchIn(lowerStation)) {
+            fjtvChannelId = "665247862439120896"
+            cleanName = "福建都市广播"
+        } 
+        // 福州电台（蜻蜓FM源）系列
+        else if (Regex("福州交通|fm\\s*876").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "5026"
+            cleanName = "福州交通之声"
+        } else if (Regex("福州新闻|5025").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "5025"
+            cleanName = "福州新闻广播"
+        } else if (Regex("左海之声|901|3937").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "3937"
+            cleanName = "左海之声"
+        } else if (Regex("泉州904交通之声广播电台|904|15318189").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "15318189"
+            cleanName = "泉州904交通之声"
+        } else if (Regex("泉州广播电视台889新闻综合广播|889|15318346").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "15318346"
+            cleanName = "泉州广播电视台889新闻综合广播"
+        } else if (Regex("厦门交通旅游广播|107|1738").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1738"
+            cleanName = "厦门交通旅游广播"
+        } else if (Regex("厦门综合广播|1107|1737").containsMatchIn(lowerStation)) {
+            qtfmChannelId = "1737"
+            cleanName = "厦门综合广播"
+        }
+
         val cctvMatch = Regex("""(?i)^cctv[-\s]*(\d+\+?).*""").find(cleanName)
         if (cctvMatch != null) {
             cleanName = "CCTV${cctvMatch.groupValues[1]}"
@@ -91,7 +137,6 @@ object RadioEpgFetcher {
             cleanName = cleanName.replace("卫视台", "卫视")
         }
 
-        // 回归整洁的文本排版
         if (cleanName.isEmpty()) return@withContext "📻 当前频道：$stationName\n\n📡 纯享直播流"
 
         if (isRadioStation && !cleanName.contains("之声") && !cleanName.contains("广播") && !cleanName.contains("调频")) {
@@ -109,6 +154,7 @@ object RadioEpgFetcher {
                 val todayDashStr = dashDateFormat.format(Date())
                 val dateCompact = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
 
+                // 1. CCTV
                 if (cleanName.startsWith("CCTV", ignoreCase = true)) {
                     val cctvCode = cleanName.lowercase().replace("+", "plus")
                     val cntvUrl = "https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$cctvCode&serviceId=tvcctv&d=$dateCompact"
@@ -116,6 +162,21 @@ object RadioEpgFetcher {
                     if (cntvRes != null) validPrograms = parseCntvPrograms(cntvRes, cctvCode)
                 }
 
+                // 2. 福建广播电视台（FJTV）专属抓取
+                if (validPrograms == null && fjtvChannelId != null) {
+                    val fjtvUrl = "https://radio.fjtv.net/m2o/program_switch.php?channel_id=$fjtvChannelId&dates=$todayDashStr&shownums=7"
+                    val htmlRes = httpGet(fjtvUrl, timeoutMs = 2000, referer = "https://radio.fjtv.net/")
+                    if (htmlRes != null) validPrograms = parseFjtvWebHtml(htmlRes)
+                }
+
+                // 3. 🌟 福州广播电台（蜻蜓FM源）专属抓取
+                if (validPrograms == null && qtfmChannelId != null) {
+                    val qtfmUrl = "https://m.qtfm.cn/channels/$qtfmChannelId/"
+                    val htmlRes = httpGet(qtfmUrl, timeoutMs = 2000, referer = "https://m.qtfm.cn/")
+                    if (htmlRes != null) validPrograms = parseQtfmWebHtml(htmlRes)
+                }
+
+                // 4. Phoenix
                 if (validPrograms == null && isPhoenix) {
                     val officialApiUrl = "https://ne883dbn.ifeng.com/phtvperiodlist?from=$todayDashStr&to=$todayDashStr&callback=parseData"
                     val officialRes = httpGet(officialApiUrl, timeoutMs = 3000, referer = "https://phtv.ifeng.com/")
@@ -141,18 +202,21 @@ object RadioEpgFetcher {
                     }
                 }
 
+                // 5. Baidu Fallback
                 if (validPrograms == null && !isPhoenix) {
                     val baiduUrl = "https://opendata.baidu.com/api.php?resource_id=28266&from_mid=1&format=json&ie=utf-8&oe=utf-8&query=${Uri.encode(cleanName + "节目表")}"
                     val baiduRes = httpGet(baiduUrl, timeoutMs = 1500)
                     if (baiduRes != null) validPrograms = parseBaiduPrograms(baiduRes)
                 }
 
+                // 6. 51zmt Fallback
                 if (validPrograms == null && !isPhoenix) {
                     val webUrl = "http://51zmt.top/channel/${Uri.encode(cleanName)}/"
                     val htmlRes = httpGet(webUrl, timeoutMs = 1500)
                     if (htmlRes != null) validPrograms = parse51zmtWebHtml(htmlRes)
                 }
 
+                // 7. CNTV Satellite Fallback
                 if (validPrograms == null && !isPhoenix && SATELLITE_CODE_MAP.containsKey(cleanName)) {
                     val code = SATELLITE_CODE_MAP[cleanName]!!
                     var cntvRes = httpGet("https://api.cntv.cn/epg/getEpgInfoByChannelNew?c=$code&serviceId=cbox&d=$dateCompact", timeoutMs = 1500)
@@ -219,6 +283,101 @@ object RadioEpgFetcher {
         } catch (e: Exception) {
             Log.e(TAG, "获取节目单失败", e)
             return@withContext "📺 当前频道：$cleanName\n\n📡 直播流连接成功"
+        }
+    }
+
+    // 🌟 蜻蜓FM (qtfm.cn) 移动端内置 JSON 提取器
+    private fun parseQtfmWebHtml(html: String): List<JSONObject>? {
+        return try {
+            val startToken = "window.__initStores ="
+            val endToken = "window.ssr ="
+            val startIndex = html.indexOf(startToken)
+            val endIndex = html.indexOf(endToken)
+            
+            if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
+                var jsonStr = html.substring(startIndex + startToken.length, endIndex).trim()
+                if (jsonStr.endsWith(";")) {
+                    jsonStr = jsonStr.dropLast(1)
+                }
+                
+                val root = JSONObject(jsonStr)
+                val todayArr = root.optJSONObject("ChannelStore")
+                    ?.optJSONObject("playBill")
+                    ?.optJSONArray("today") ?: return null
+                    
+                val list = mutableListOf<JSONObject>()
+                for (i in 0 until todayArr.length()) {
+                    val item = todayArr.getJSONObject(i)
+                    val title = item.optString("title", "").trim()
+                    val durationStr = item.optString("durationStr", "")
+                    
+                    var start = ""
+                    var end = ""
+                    if (durationStr.contains("~")) {
+                        val parts = durationStr.split("~")
+                        start = parts[0].trim()
+                        end = parts[1].trim()
+                    }
+                    
+                    if (title.isNotEmpty() && start.isNotEmpty()) {
+                        list.add(JSONObject().apply {
+                            put("title", title)
+                            put("start", start)
+                            put("end", end)
+                        })
+                    }
+                }
+                if (list.isNotEmpty()) return list
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // 福建台专属 HTML 解析器
+    private fun parseFjtvWebHtml(html: String): List<JSONObject>? {
+        return try {
+            val cleanHtml = html.replace(Regex("""(?is)<script.*?</script>"""), "")
+                .replace(Regex("""(?is)<style.*?</style>"""), "")
+
+            val lines = cleanHtml.replace(Regex("""<[^>]+>"""), "\n")
+                .split("\n")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+
+            val list = mutableListOf<JSONObject>()
+            val timeRegex = Regex("""^(\d{2}:\d{2})(:\d{2})?$""") 
+
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i]
+                val timeMatch = timeRegex.find(line)
+                if (timeMatch != null) {
+                    val start = timeMatch.groupValues[1] 
+                    if (i + 1 < lines.size) {
+                        val nextLine = lines[i + 1]
+                        if (!timeRegex.matches(nextLine) && !nextLine.contains("当前直播") && !nextLine.contains("返回直播")) {
+                            val cleanTitle = nextLine
+                                .replace("&ensp;", " ")
+                                .replace("&nbsp;", " ")
+                                .replace("&amp;", "&")
+                                .trim()
+
+                            list.add(JSONObject().apply {
+                                put("title", cleanTitle)
+                                put("start", start)
+                                put("end", "") 
+                            })
+                            i++ 
+                        }
+                    }
+                }
+                i++
+            }
+            if (list.isNotEmpty()) list else null
+        } catch (e: Exception) {
+            null
         }
     }
 
