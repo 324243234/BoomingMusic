@@ -15,45 +15,63 @@ import java.io.FileOutputStream
 object RadioBackupManager {
 
     suspend fun exportAllRadios(context: Context, radioPlaylists: List<PlaylistWithSongs>) = withContext(Dispatchers.IO) {
-    try {
-        val appContext = context.applicationContext
-        val resolver = appContext.contentResolver
-        
-        radioPlaylists.forEach { playlist ->
-            if (playlist.songs.isEmpty()) return@forEach
-            val safeName = playlist.playlistEntity.playlistName.removePrefix("[Radio]").replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".m3u"
+        try {
+            val appContext = context.applicationContext
+            val resolver = appContext.contentResolver
+            val collection = android.provider.MediaStore.Files.getContentUri("external")
             
-            val m3uContent = StringBuilder().apply {
-                append("#EXTM3U\r\n")
-                playlist.songs.forEach { song ->
-                    append("#EXTINF:0,${song.title}\r\n${song.data}\r\n") // 0 代表直播流
+            radioPlaylists.forEach { playlist ->
+                if (playlist.songs.isEmpty()) return@forEach
+                val safeName = playlist.playlistEntity.playlistName.removePrefix("[Radio]").replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".m3u"
+                val folderName = "Music/RadioBackups"
+                
+                val m3uContent = java.lang.StringBuilder().apply {
+                    append("#EXTM3U\r\n")
+                    playlist.songs.forEach { song ->
+                        append("#EXTINF:0,${song.title}\r\n${song.data}\r\n")
+                    }
+                }
+                
+                // 🌟 查询现有文件以覆盖
+                val selection = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+                val selectionArgs = arrayOf(safeName, "$folderName%")
+                var existingUri: android.net.Uri? = null
+                
+                resolver.query(collection, arrayOf(android.provider.MediaStore.MediaColumns._ID), selection, selectionArgs, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns._ID))
+                        existingUri = android.content.ContentUris.withAppendedId(collection, id)
+                    }
+                }
+                
+                if (existingUri != null) {
+                    resolver.openOutputStream(existingUri!!, "wt")?.use { fos ->
+                        fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+                    }
+                } else {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, folderName)
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val newUri = resolver.insert(collection, contentValues)
+                    if (newUri != null) {
+                        resolver.openOutputStream(newUri)?.use { fos ->
+                            fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+                        }
+                        contentValues.clear()
+                        contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        resolver.update(newUri, contentValues, null, null)
+                    }
                 }
             }
-            
-            // 🌟 使用 MediaStore 适配 Android 13+ 存储权限
-            val contentValues = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safeName)
-                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl")
-                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Music/RadioBackups")
-                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            
-            val uri = resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { fos ->
-                    fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
-                }
-                contentValues.clear()
-                contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(uri, contentValues, null, null)
-            }
+            withContext(Dispatchers.Main) { Toast.makeText(appContext, "电台已备份至 Music/RadioBackups", Toast.LENGTH_LONG).show() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            withContext(Dispatchers.Main) { Toast.makeText(appContext, "备份失败: ${e.message}", Toast.LENGTH_SHORT).show() }
         }
-        withContext(Dispatchers.Main) { Toast.makeText(context, "电台已备份至 Music/RadioBackups", Toast.LENGTH_LONG).show() }
-    } catch (e: Exception) {
-        e.printStackTrace()
-        withContext(Dispatchers.Main) { Toast.makeText(context, "备份失败: ${e.message}", Toast.LENGTH_SHORT).show() }
     }
-}
 
     suspend fun importRadioFromM3u(context: Context, repository: Repository, m3uFile: File) = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext // 获取全局上下文防泄漏

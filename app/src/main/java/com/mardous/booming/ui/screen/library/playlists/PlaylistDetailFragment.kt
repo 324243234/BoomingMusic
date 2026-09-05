@@ -859,57 +859,76 @@ class PlaylistDetailFragment : AbsMainActivityFragment(R.layout.fragment_playlis
     }
 
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-   private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
-    if (playlistName.isBlank() || songs.isEmpty()) return
-    val appContext = requireContext().applicationContext
-    val safeSongs = songs.toList()
-    
-    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-        try {
-            val m3uContent = java.lang.StringBuilder()
-            m3uContent.append("#EXTM3U\r\n")
-            for (song in safeSongs) {
-                val durationSec = song.duration / 1000
-                m3uContent.append("#EXTINF:$durationSec,${song.artistName} - ${song.title}\r\n")
-                m3uContent.append("${song.data}\r\n")
-            }
-            
-            // 🌟 核心修复：使用 MediaStore 替代物理 File 写入
-            val folderName = if (playlistName.startsWith("[Radio]")) "Music/RadioBackups" else "Music/Playlists"
-            val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".m3u"
-            
-            val contentValues = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safeFileName)
-                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl")
-                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, folderName)
-                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            
-            val resolver = appContext.contentResolver
-            val uri = resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
-            
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { fos ->
-                    fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+    private fun syncPlaylistToLocalM3u(playlistName: String, songs: List<Song>, isManualExport: Boolean) {
+        if (playlistName.isBlank() || songs.isEmpty()) return
+        val appContext = requireContext().applicationContext
+        val safeSongs = songs.toList()
+        
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val m3uContent = java.lang.StringBuilder()
+                m3uContent.append("#EXTM3U\r\n")
+                for (song in safeSongs) {
+                    val durationSec = song.duration / 1000
+                    m3uContent.append("#EXTINF:$durationSec,${song.artistName} - ${song.title}\r\n")
+                    m3uContent.append("${song.data}\r\n")
                 }
-                contentValues.clear()
-                contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                resolver.update(uri, contentValues, null, null)
+                
+                val folderName = if (playlistName.startsWith("[Radio]")) "Music/RadioBackups" else "Music/Playlists"
+                val safeFileName = playlistName.replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".m3u"
+                
+                val resolver = appContext.contentResolver
+                val collection = android.provider.MediaStore.Files.getContentUri("external")
+                
+                // 🌟 1. 查询文件是否已存在
+                val selection = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+                val selectionArgs = arrayOf(safeFileName, "$folderName%")
+                var existingUri: android.net.Uri? = null
+                
+                resolver.query(collection, arrayOf(android.provider.MediaStore.MediaColumns._ID), selection, selectionArgs, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns._ID))
+                        existingUri = android.content.ContentUris.withAppendedId(collection, id)
+                    }
+                }
+                
+                if (existingUri != null) {
+                    // 🌟 2. 文件已存在，使用 "wt" 模式截断并覆盖写入
+                    resolver.openOutputStream(existingUri!!, "wt")?.use { fos ->
+                        fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+                    }
+                } else {
+                    // 🌟 3. 文件不存在，插入新文件
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safeFileName)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, folderName)
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val newUri = resolver.insert(collection, contentValues)
+                    if (newUri != null) {
+                        resolver.openOutputStream(newUri)?.use { fos ->
+                            fos.write(m3uContent.toString().toByteArray(Charsets.UTF_8))
+                        }
+                        contentValues.clear()
+                        contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        resolver.update(newUri, contentValues, null, null)
+                    }
+                }
                 
                 if (isManualExport) {
                     withContext(Dispatchers.Main) { 
                         Toast.makeText(appContext, "列表已导出至: $folderName/$safeFileName", Toast.LENGTH_LONG).show() 
                     }
                 }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            if (isManualExport) {
-                withContext(Dispatchers.Main) { Toast.makeText(appContext, "导出失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                if (isManualExport) {
+                    withContext(Dispatchers.Main) { Toast.makeText(appContext, "导出失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                }
             }
         }
     }
-}
 
     override fun onPause() {
         recyclerViewDragDropManager?.cancelDrag()

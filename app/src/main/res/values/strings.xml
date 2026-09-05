@@ -1085,6 +1085,8 @@
     <string name="uncaught_error_restart_app">Restart app</string>
     <string name="uncaught_error_github">Open issue on GitHub</string>
     <string name="uncaught_error_send">Send report</string>
+	<string name="action_previous_song">上一首</string>
+    <string name="action_next_song">下一首</string>
 
     <!-- 新增：蓝牙歌词开关文案 -->
     <string name="pref_enable_bluetooth_lyrics">启用车载蓝牙歌词</string>
