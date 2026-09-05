@@ -19,6 +19,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothA2dp
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -90,6 +91,8 @@ import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.repository.Repository
+import com.mardous.booming.extensions.isBluetoothA2dpConnected
+import com.mardous.booming.extensions.isBluetoothA2dpDisconnected
 import com.mardous.booming.extensions.showToast
 import com.mardous.booming.playback.equalizer.EqualizerManager
 import com.mardous.booming.playback.library.LibraryProvider
@@ -168,6 +171,7 @@ class PlaybackService :
         )
     }
 
+    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -301,7 +305,8 @@ class PlaybackService :
         nm = requireNotNull(getSystemService<NotificationManager>())
         createNotificationChannel()
 
-        packageValidator = PackageValidator(this, R.xml.allowed_media_browser_callers)
+        // 🌟 Fix from Upstream: remove library gatekeeper for non-Play versions (fixes #550)
+        packageValidator = PackageValidator(this)
 
         customCommands = listOf(
             CommandButton.Builder(CommandButton.ICON_SHUFFLE_OFF)
@@ -368,6 +373,7 @@ class PlaybackService :
                 .setHandleAudioBecomingNoisy(true)
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
                 .setSeekBackIncrementMs(seekInterval)
+                .setSeekForwardIncrementMs(seekInterval)
                 .setPlaybackLooper(playerThread.looper)
                 .build()
         )
@@ -1030,6 +1036,7 @@ class PlaybackService :
         }
     }
 
+    /** Warms the next item's tags so the audio processor can peek instead of reading files. */
     private fun prefetchNextReplayGain() {
         if (!replayGainProcessor.mode.isOn) return
         val nextIndex = player.nextMediaItemIndex
@@ -1072,6 +1079,7 @@ class PlaybackService :
                 dispatchPlayQueue(player)
                 if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
                     val exoPlayer = this.player.exoPlayer
+                    // Keep the staged start index while the queue is empty.
                     if (exoPlayer.mediaItemCount > 0) {
                         exoPlayer.applyRandomShuffleOrder()
                     }
@@ -1095,7 +1103,7 @@ class PlaybackService :
             prefetchNextReplayGain()
         }
     }
-	
+    
     override fun onMetadata(metadata: Metadata) {
         val currentItem = player.currentMediaItem
         val isRadio = currentItem?.localConfiguration?.uri?.toString()?.startsWith("http") == true 
@@ -1190,10 +1198,12 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
+    /** A command issued before the saved state lands has nothing to act on */
     private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
+    /** The write is debounced */
     private suspend fun awaitSavedState() {
         persistentStorage.saveState()
         persistentStorage.awaitPendingSave()
@@ -1232,6 +1242,7 @@ class PlaybackService :
         )
     }
 
+    /** Only the fields that genuinely come from the player; the rest is [WidgetDataSource]'s. */
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
         val id = player.currentMediaItem?.mediaId?.toLongOrNull()
             ?: return PlaybackState()
@@ -1317,6 +1328,9 @@ class PlaybackService :
                 }
 
                 if (isInTimelineUpdate.exchange(false)) {
+                    // The queue structure changed due to the removal of some elements,
+                    // so the last snapshot is no longer valid; what remains now is to
+                    // force a new capture to ensure consistency.
                     buildPlayQueue(player, onCompletion)
                     return@withContext
                 }
@@ -1371,7 +1385,9 @@ class PlaybackService :
         mediaSession?.setCustomLayout(buttonLayout)
         
         mediaSession?.connectedControllers?.forEach { controllerInfo ->
-            mediaSession?.setMediaButtonPreferences(controllerInfo, buttonLayout)
+            if (mediaSession?.isRemoteController(controllerInfo) == true) {
+                mediaSession?.setMediaButtonPreferences(controllerInfo, buttonLayout)
+            }
         }
     }
 
@@ -1419,6 +1435,7 @@ class PlaybackService :
             }
         }
         serviceScope.launch {
+            // Turning ReplayGain on must also affect the track already playing.
             equalizerManager.replayGainState.map { it.mode }.distinctUntilChanged()
                 .collect { mode -> if (mode.isOn) submitReplayGain() }
         }
@@ -1452,6 +1469,7 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1493,18 +1511,30 @@ class PlaybackService :
     private var bluetoothConnectedRegistered = false
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+        addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+        addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
     }
     private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
-            if (intent?.action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED) {
-                when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
-                    BluetoothA2dp.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
-                        if (!player.isPlaying) player.play()
-                    }
-                    BluetoothA2dp.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
-                        if (player.isPlaying) player.pause()
+            when (intent?.action) {
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                    when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
+                        BluetoothA2dp.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
+                            if (!player.isPlaying) player.play()
+                        }
+                        BluetoothA2dp.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
+                            if (player.isPlaying) player.pause()
+                        }
                     }
                 }
+                BluetoothDevice.ACTION_ACL_CONNECTED ->
+                    if (context.isBluetoothA2dpConnected() && Preferences.isResumeOnConnect(true)) {
+                        if (!player.isPlaying) player.play()
+                    }
+                BluetoothDevice.ACTION_ACL_DISCONNECTED ->
+                    if (context.isBluetoothA2dpDisconnected() && Preferences.isPauseOnDisconnect(true)) {
+                        if (player.isPlaying) player.pause()
+                    }
             }
         }
     }
@@ -1519,6 +1549,7 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
+                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
@@ -1700,7 +1731,7 @@ class PlaybackService :
             }
         }
     }
-	
+    
     private fun fixEncoding(str: String): String {
         if (str.isEmpty()) return str
         if (str.matches(Regex(".*[\\u4e00-\\u9fa5]+.*"))) return str
