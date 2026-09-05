@@ -530,13 +530,13 @@ abstract class AbsPlayerFragment(@LayoutRes layoutRes: Int) : Fragment(layoutRes
             }
 
 			// 🌟 新增：处理上一首、下一首的执行逻辑
-            NowPlayingAction.SkipPrevious -> {
-                playerViewModel.skipToPrevious()
+           NowPlayingAction.SkipPrevious -> {
+                playerViewModel.seekToPrevious() 
                 true
             }
 
             NowPlayingAction.SkipNext -> {
-                playerViewModel.skipToNext()
+                playerViewModel.seekToNext()
                 true
             }
 			
