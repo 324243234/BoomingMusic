@@ -71,7 +71,7 @@ sealed class Version(
 }
 
 // 🌟 同步作者更新：版本号升至 1.4.0.3
-val currentVersion: Version = Version.Beta(
+val currentVersion: Version = Version.RC(
     versionMajor = 1,
     versionMinor = 4,
     versionPatch = 0,
