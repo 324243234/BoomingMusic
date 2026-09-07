@@ -1639,7 +1639,7 @@ class PlaybackService :
 
                     // ⚠️ 【核心修复】：跨进程 IPC Binder 极易在发热降频时被撑爆！
                     // 车机屏幕最多显示 3-4 行，截取前 1500 个字符完全足够，彻底解决断开问题。
-                    if (rawLrcText.length > 1500) rawLrcText.substring(0, 1500) else rawLrcText
+                    if (rawLrcText.length > 5000) rawLrcText.substring(0, 1500) else rawLrcText
                 }
 
                 // 【核心映射】：严格按照 CarWith 规范映射播放状态
