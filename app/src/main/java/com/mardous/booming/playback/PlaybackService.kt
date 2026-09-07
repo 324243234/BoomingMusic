@@ -766,7 +766,7 @@ class PlaybackService :
             // 🌟 接收车机发来的“红心”点击，彻底告别时差死锁
             Playback.TOGGLE_FAVORITE, "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 awaitRestoration()
-                toggleFavorite()
+                toggleFavorite() // toggleFavorite() 方法内部最后会调用 updateCarWithMetadata()，完美闭环！
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
@@ -1579,11 +1579,11 @@ class PlaybackService :
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心
+    // 🌟 CarWith 专用信号分发中心（纯净、安全、防崩溃版）
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
-        // 全物理隔离：不让车机去管蓝牙歌词
+        // 如果开启了蓝牙歌词，阻断车机专有数据的发送
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             return
         }
@@ -1593,7 +1593,6 @@ class PlaybackService :
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
             val expectedItem = player.getMediaItemAt(currentIndex)
             
-            // 线程安全：直接在主线程中抓取最新鲜的 ExoPlayer 模式状态
             val isShuffleEnabled = player.shuffleModeEnabled
             val currentRepeatMode = player.repeatMode
 
@@ -1638,16 +1637,17 @@ class PlaybackService :
                         }
                     } ?: ""
 
-                    if (rawLrcText.length > 8000) rawLrcText.substring(0, 8000) else rawLrcText
+                    // ⚠️ 【核心修复】：跨进程 IPC Binder 极易在发热降频时被撑爆！
+                    // 车机屏幕最多显示 3-4 行，截取前 1500 个字符完全足够，彻底解决断开问题。
+                    if (rawLrcText.length > 1500) rawLrcText.substring(0, 1500) else rawLrcText
                 }
 
-                // 完全按照 CarWith 小米规范映射播放状态位
+                // 【核心映射】：严格按照 CarWith 规范映射播放状态
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
                     currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
                     else -> 2L
                 }
-                
                 val collectState = if (currentIsFavorite) "1" else "0"
 
                 withContext(Main) {
@@ -1665,21 +1665,19 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    // 100% 确保当前真实名称绝对纯净，完美兼容“汽水音乐”护甲解析
                     val finalTitle = resolvedTitle.ifBlank {
                         latestItem.mediaMetadata.title?.toString() ?: "未知曲目"
                     }
                     val finalArtist = if (isRadioStream) "网络电台" else (latestItem.mediaMetadata.artist?.toString() ?: song.artistName.ifEmpty { "未知歌手" })
                     val finalAlbum = if (isRadioStream) "网络电台" else (latestItem.mediaMetadata.albumTitle?.toString() ?: song.albumName.ifEmpty { "未知专辑" })
 
-                    // 🌟 利用官方 discNumber 作为变化探针：只要数字在递增，Media3 就会判定 Metadata 产生了变更并立即触发事件（车机响应零延迟）。
-                    metadataSequence = (metadataSequence % 10000) + 1
-
+                    // ⚠️ 【核心修复】：去除 discNumber 的伪装。
+                    // 只要 newExtras 发生变化，Media3 底层 equals 比对就会自动分发 onMediaMetadataChanged，
+                    // 优雅平滑推送到车机，无需破坏 Timeline。
                     val updatedMetadata = currentMetadata.buildUpon()
                         .setTitle(finalTitle)
                         .setArtist(finalArtist)
                         .setAlbumTitle(finalAlbum)
-                        .setDiscNumber(metadataSequence)
                         .setExtras(newExtras)
                         .build()
 
@@ -1687,7 +1685,6 @@ class PlaybackService :
                         .setMediaMetadata(updatedMetadata)
                         .build()
 
-                    // 完全通过标准原生入口下发更新，不需要任何私有的黑科技外挂类
                     val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
                     realPlayer.replaceMediaItem(latestIndex, updatedItem)
                 }
