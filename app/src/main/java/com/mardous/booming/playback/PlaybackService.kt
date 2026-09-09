@@ -75,7 +75,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
-import com.mardous.booming.MainActivity // ✅ 同步作者更新：重构后的 MainActivity 路径
+import com.mardous.booming.MainActivity
 import com.mardous.booming.R
 import com.mardous.booming.coil.CoilBitmapLoader
 import com.mardous.booming.core.appwidgets.WidgetData
@@ -131,7 +131,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
-import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.resume
@@ -172,7 +171,6 @@ class PlaybackService :
         )
     }
 
-    /** Ignore the transient unset duration a resumed player reports. */
     private val currentDurationMs get() = player.duration.let { if (it == C.TIME_UNSET) 0L else it }
     private val currentPositionMs get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -192,7 +190,6 @@ class PlaybackService :
     private lateinit var persistentStorage: PersistentStorage
     private lateinit var customCommands: List<CommandButton>
     private lateinit var player: AdvancedForwardingPlayer
-    private lateinit var carWithPlayerWrapper: CarWithPlayerWrapper
     private var mediaSession: MediaLibrarySession? = null
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
@@ -201,6 +198,9 @@ class PlaybackService :
     private var carWithUpdateJob: Job? = null
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
+
+    // 🌟 恢复：强制触发车机回调的破壁信号量
+    private var metadataSequence = 0
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -257,53 +257,11 @@ class PlaybackService :
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
-    // 🌟 CarWith 专用直通代理：完全符合 AndroidX Media3 规范。
-    // 在这里我们将屏蔽蓝牙歌词对 `Extras` 的影响，并在蓝牙关闭时，让车机数据完全畅通无阻。
-    private class CarWithPlayerWrapper(
-        player: Player,
-        private val carWithExtrasProvider: () -> Bundle,
-        private val isBluetoothLyricsActive: () -> Boolean
-    ) : ForwardingPlayer(player) {
-        private val listeners = CopyOnWriteArraySet<Player.Listener>()
-
-        override fun addListener(listener: Player.Listener) {
-            super.addListener(listener)
-            listeners.add(listener)
-        }
-
-        override fun removeListener(listener: Player.Listener) {
-            super.removeListener(listener)
-            listeners.remove(listener)
-        }
-
-        override fun getMediaMetadata(): MediaMetadata {
-            val base = super.getMediaMetadata()
-            // 当且仅当蓝牙歌词关闭时，我们将 CarWith 需要的 Extras（模式、收藏、歌词）注入进去
-            if (isBluetoothLyricsActive()) {
-                return base
-            }
-            val extras = Bundle(base.extras ?: Bundle.EMPTY).apply {
-                putAll(carWithExtrasProvider())
-            }
-            return base.buildUpon()
-                .setExtras(extras)
-                .build()
-        }
-
-        fun dispatchMetadataChanged() {
-            val metadata = getMediaMetadata()
-            for (listener in listeners) {
-                listener.onMediaMetadataChanged(metadata)
-            }
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
         nm = requireNotNull(getSystemService<NotificationManager>())
         createNotificationChannel()
 
-        // ✅ 同步作者安全校验回滚（防车机拦截断连）
         packageValidator = PackageValidator(this, R.xml.allowed_media_browser_callers)
 
         customCommands = listOf(
@@ -380,15 +338,8 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        // 🌟 初始化 CarWith 代理：向外暴露一个随时可读的 Extras 数据源
-        var currentCarWithExtras = Bundle()
-        carWithPlayerWrapper = CarWithPlayerWrapper(
-            player = player,
-            carWithExtrasProvider = { currentCarWithExtras },
-            isBluetoothLyricsActive = { preferences.getBoolean("enable_bluetooth_lyrics", false) }
-        )
-
-        mediaSession = MediaLibrarySession.Builder(this, carWithPlayerWrapper, this)
+        // 🌟 核心清理：完全抛弃代理外壳，使用原生 player 保证状态纯净与全量广播
+        mediaSession = MediaLibrarySession.Builder(this, player, this)
             .setId(packageName)
             .setSessionActivity(createSessionActivityIntent())
             .setBitmapLoader(CacheBitmapLoader(CoilBitmapLoader(this@PlaybackService)))
@@ -411,7 +362,6 @@ class PlaybackService :
         persistentStorage = PersistentStorage(this, serviceScope, player)
         persistentStorage.restoreState { items, shuffleOrder ->
             serviceScope.launch(IO) {
-                // 确保一开机就拦截好电台数据，绝不发送空 Title 给系统
                 val interceptedItems = interceptRadioMediaItems(items.mediaItems)
                 withContext(Main) {
                     player.setMediaItems(interceptedItems, items.startIndex, items.startPositionMs)
@@ -437,7 +387,6 @@ class PlaybackService :
             }
         }
 
-        // 彻底的物理隔离：如果未开启蓝牙歌词，坚决不实例化 BluetoothLyricManager
         if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
             bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
         }
@@ -527,7 +476,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 给 CarWith 放行其专属的私有协议通讯
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -624,7 +572,6 @@ class PlaybackService :
         pageSize: Int,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-        // ✅ 同步作者注释：getChildren resolves any id it is handed, so FAVORITES and HISTORY are reachable without ever appearing in a root listing.
         session.denyUntrusted<ImmutableList<MediaItem>>(browser)?.let { return it }
         return serviceScope.future(IO) {
             val result = runCatching {
@@ -767,29 +714,27 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS, modesBundle())
             }
 
-            // 🌟 接收车机发来的“红心”点击，彻底告别时差死锁
             Playback.TOGGLE_FAVORITE, "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 awaitRestoration()
-                toggleFavorite() // toggleFavorite() 方法内部最后会调用 updateCarWithMetadata()，完美闭环！
+                toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 接收车机发来的“模式”切换指令，纯粹地进行状态机轮转
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 val currentCarMode = args.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
                     ?: (if (player.shuffleModeEnabled) 0 else if (player.repeatMode == Player.REPEAT_MODE_ONE) 1 else 2)
                 
                 val nextMode = (currentCarMode + 1) % 3
                 when (nextMode) {
-                    0 -> { // 发来要切换成随机
+                    0 -> {
                         player.repeatMode = Player.REPEAT_MODE_ALL
                         player.shuffleModeEnabled = true
                     }
-                    1 -> { // 发来要切换成单曲循环
+                    1 -> {
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ONE
                     }
-                    else -> { // 发来要切换成列表循环 (2)
+                    else -> {
                         player.shuffleModeEnabled = false
                         player.repeatMode = Player.REPEAT_MODE_ALL
                     }
@@ -981,12 +926,11 @@ class PlaybackService :
                 
                 val isBtActive = preferences.getBoolean("enable_bluetooth_lyrics", false)
                 if (isBtActive) {
-                    // 当蓝牙开启时，CarWith 通道将彻底静默
                     bluetoothLyricManager?.loadLyricsForSong(newSong)
-                } else {
-                    // CarWith 双向控制
-                    updateCarWithMetadata()
                 }
+                
+                // 🌟 同步车机元数据（由于解除了拦截，无论蓝牙开不开都会执行）
+                updateCarWithMetadata()
             }
 
             val previousSong = songPlayCountHelper.song
@@ -1040,7 +984,6 @@ class PlaybackService :
         }
     }
 
-    /** Warms the next item's tags so the audio processor can peek instead of reading files. */
     private fun prefetchNextReplayGain() {
         if (!replayGainProcessor.mode.isOn) return
         val nextIndex = player.nextMediaItemIndex
@@ -1083,7 +1026,6 @@ class PlaybackService :
                 dispatchPlayQueue(player)
                 if (player.shuffleModeEnabled && persistentStorage.restorationState.isRestored) {
                     val exoPlayer = this.player.exoPlayer
-                    // Keep the staged start index while the queue is empty.
                     if (exoPlayer.mediaItemCount > 0) {
                         exoPlayer.applyRandomShuffleOrder()
                     }
@@ -1181,7 +1123,6 @@ class PlaybackService :
                         }
                     }
                 } else if (!enabled) {
-                    // 当蓝牙歌词功能在设置里关闭时，彻底卸载它，并立刻唤回车机的双向控制通道
                     bluetoothLyricManager?.release()
                     bluetoothLyricManager = null
                     updateCarWithMetadata()
@@ -1202,12 +1143,10 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
-    /** A command issued before the saved state lands has nothing to act on */
     private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
-    /** The write is debounced */
     private suspend fun awaitSavedState() {
         persistentStorage.saveState()
         persistentStorage.awaitPendingSave()
@@ -1235,7 +1174,6 @@ class PlaybackService :
 
         withContext(Main) {
             refreshMediaButtonCustomLayout()
-            // 在主线程完成数据库操作后，立刻向车机推送带有最新状态的元数据包裹
             updateCarWithMetadata()
         }
 
@@ -1246,7 +1184,6 @@ class PlaybackService :
         )
     }
 
-    /** Only the fields that genuinely come from the player; the rest is [WidgetDataSource]'s. */
     private suspend fun buildPlaybackState(needs: Set<WidgetData>): PlaybackState {
         val id = player.currentMediaItem?.mediaId?.toLongOrNull()
             ?: return PlaybackState()
@@ -1332,9 +1269,6 @@ class PlaybackService :
                 }
 
                 if (isInTimelineUpdate.exchange(false)) {
-                    // The queue structure changed due to the removal of some elements,
-                    // so the last snapshot is no longer valid; what remains now is to
-                    // force a new capture to ensure consistency.
                     buildPlayQueue(player, onCompletion)
                     return@withContext
                 }
@@ -1439,7 +1373,6 @@ class PlaybackService :
             }
         }
         serviceScope.launch {
-            // Turning ReplayGain on must also affect the track already playing.
             equalizerManager.replayGainState.map { it.mode }.distinctUntilChanged()
                 .collect { mode -> if (mode.isOn) submitReplayGain() }
         }
@@ -1473,7 +1406,6 @@ class PlaybackService :
         serviceScope.launch {
             audioOutputObserver.systemVolumeState.collect { systemVolume ->
                 if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
-                    // don't handle volume changes until our player is fully restored
                     if (isPlaying && systemVolume.currentVolume <= 0f) {
                         player.pause()
                         pausedByZeroVolume = true
@@ -1553,7 +1485,6 @@ class PlaybackService :
                     0 -> if (Preferences.isPauseOnDisconnect(false)) {
                         player.pause()
                     }
-                    // Check whether the current song is empty which means the playing queue hasn't restored yet
                     1 -> if (Preferences.isResumeOnConnect(false)) {
                         if (player.currentMediaItem != null) {
                             player.play()
@@ -1566,7 +1497,6 @@ class PlaybackService :
         }
     }
 
-    // 🌟 独立电台检索器：只依据流媒体本身的数据进行解析，无论何时都能提供真实、稳定的名称。
     private suspend fun resolveRadioStationTitle(mediaItem: MediaItem?): String? {
         if (mediaItem == null) return null
         val existingTitle = mediaItem.mediaMetadata.title?.toString()
@@ -1583,16 +1513,14 @@ class PlaybackService :
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心（纯净、安全、防崩溃版）
+    // 🌟 CarWith 专用信号分发中心（绝对稳定版：解决防抖与互斥覆盖）
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
-        // 如果开启了蓝牙歌词，阻断车机专有数据的发送
-        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
-            return
-        }
-
         carWithUpdateJob = serviceScope.launch(Main) {
+            // 🌟 加入防抖：合并频繁点击造成的过载，彻底消除引发断连的 CPU 峰值
+            delay(150)
+
             val currentIndex = player.currentMediaItemIndex
             if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return@launch
             val expectedItem = player.getMediaItemAt(currentIndex)
@@ -1641,12 +1569,10 @@ class PlaybackService :
                         }
                     } ?: ""
 
-                    // ⚠️ 【核心修复】：跨进程 IPC Binder 极易在发热降频时被撑爆！
-                    // 将歌词截断限制放宽至 6000 字符，完美容纳 99% 的双语长歌词，同时确保车机不断连。
-                    if (rawLrcText.length > 6000) rawLrcText.substring(0, 6000) else rawLrcText
+                    // 🌟 核心拦截：控制在安全通信体积 4000 以内（确保绝对不断连）
+                    if (rawLrcText.length > 4000) rawLrcText.substring(0, 4000) else rawLrcText
                 }
 
-                // 【核心映射】：严格按照 CarWith 规范映射播放状态
                 val playMode: Long = when {
                     isShuffleEnabled -> 0L
                     currentRepeatMode == Player.REPEAT_MODE_ONE -> 1L
@@ -1669,19 +1595,20 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    val finalTitle = resolvedTitle.ifBlank {
-                        latestItem.mediaMetadata.title?.toString() ?: "未知曲目"
-                    }
-                    val finalArtist = if (isRadioStream) "网络电台" else (latestItem.mediaMetadata.artist?.toString() ?: song.artistName.ifEmpty { "未知歌手" })
-                    val finalAlbum = if (isRadioStream) "网络电台" else (latestItem.mediaMetadata.albumTitle?.toString() ?: song.albumName.ifEmpty { "未知专辑" })
+                    // 🌟 核心适配：与蓝牙歌词互相尊重
+                    // 蓝牙歌词会不断修改标题，这里读取当前的标题，避免相互覆盖
+                    val finalTitle = currentMetadata.title?.toString() ?: resolvedTitle.ifBlank { "未知曲目" }
+                    val finalArtist = currentMetadata.artist?.toString() ?: if (isRadioStream) "网络电台" else song.artistName.ifEmpty { "未知歌手" }
+                    val finalAlbum = currentMetadata.albumTitle?.toString() ?: if (isRadioStream) "网络电台" else song.albumName.ifEmpty { "未知专辑" }
 
-                    // ⚠️ 【核心修复】：去除 discNumber 的伪装。
-                    // 只要 newExtras 发生变化，Media3 底层 equals 比对就会自动分发 onMediaMetadataChanged，
-                    // 优雅平滑推送到车机，无需破坏 Timeline。
+                    // 🌟 强推核心：递增 discNumber，强行迫使系统分发 MediaMetadata 变更给车机
+                    metadataSequence = (metadataSequence % 10000) + 1
+
                     val updatedMetadata = currentMetadata.buildUpon()
                         .setTitle(finalTitle)
                         .setArtist(finalArtist)
                         .setAlbumTitle(finalAlbum)
+                        .setDiscNumber(metadataSequence)
                         .setExtras(newExtras)
                         .build()
 
@@ -1711,7 +1638,6 @@ class PlaybackService :
                     .setUri(rs.data)
                     .setMediaMetadata(
                         item.mediaMetadata.buildUpon()
-                            // 第一时间把电台原有的数据库名称赋予过去，让通知栏及 CarWith 再也不会显示“网络电台”
                             .setTitle(rs.title)
                             .setArtist("网络电台")
                             .setAlbumTitle("网络电台")
