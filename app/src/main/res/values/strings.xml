@@ -150,6 +150,8 @@
     <string name="permission_external_storage_denied">You must grant permission to access external storage.</string>
     <string name="permission_bluetooth_title">Nearby devices (optional)</string>
     <string name="permission_bluetooth_description">The app needs nearby devices permission to check for bluetooth devices</string>
+    <string name="permission_notifications_title">Notifications (optional)</string>
+    <string name="permission_notifications_summary">This permission lets Booming Music show playback controls in your notification shade and on the lock screen.</string>
     <string name="permission_read_images_title">Read images (optional)</string>
     <string name="permission_read_images_summary">This permission is required for Booming Music to find album art files in your music folders.
         If you don\'t plan to use this feature, you can choose not to grant it.</string>
@@ -678,6 +680,8 @@
     <string name="network_summary">Manage internet features such as Last.fm integration, lyrics providers, and metadata downloads.</string>
     <string name="advanced_title">Advanced</string>
     <string name="advanced_summary">In-app language and other settings for advanced users.</string>
+    <string name="enforce_known_callers_title">Enforce known callers</string>
+    <string name="enforce_known_callers_summary">When on, only trusted apps (Android Auto, Assistant, etc.) may browse the media library. Turn off to allow any app to browse it — like open source Android Auto clients.</string>
     <string name="about_title">About</string>
     <string name="about_summary">Booming Music %s, touch for more info.</string>
 

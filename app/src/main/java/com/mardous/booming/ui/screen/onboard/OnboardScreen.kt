@@ -88,6 +88,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -131,6 +132,7 @@ import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.extensions.MIME_TYPE_APPLICATION
 import com.mardous.booming.extensions.getImagesPermission
 import com.mardous.booming.extensions.getNearbyDevicesPermissions
+import com.mardous.booming.extensions.getNotificationsPermission
 import com.mardous.booming.extensions.getStoragePermissions
 import com.mardous.booming.extensions.hasS
 import com.mardous.booming.extensions.isLandscape
@@ -460,6 +462,12 @@ private fun PermissionsStepContent(
     val permissionItems = listOfNotNull(
         storageItem,
         permissionItem(
+            permissions = getNotificationsPermission().toList(),
+            title = R.string.permission_notifications_title,
+            description = R.string.permission_notifications_summary,
+            icon = R.drawable.ic_notifications_24dp
+        ),
+        permissionItem(
             permissions = getNearbyDevicesPermissions().toList(),
             title = R.string.permission_bluetooth_title,
             description = R.string.permission_bluetooth_description,
@@ -771,7 +779,7 @@ private fun MinDurationSlider() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Slider(
-            value = draggedDuration,
+            state = rememberSliderState(value = draggedDuration, trackRange = 0f..120f),
             onValueChange = { draggedDuration = it },
             onValueChangeFinished = {
                 val seconds = draggedDuration.roundToInt()
@@ -779,7 +787,6 @@ private fun MinDurationSlider() {
                     Preferences.minimumSongDuration = seconds
                 }
             },
-            valueRange = 0f..120f,
             modifier = Modifier.weight(1f)
         )
         Text(
