@@ -43,7 +43,6 @@ import androidx.core.os.postDelayed
 import androidx.media.utils.MediaConstants
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -75,7 +74,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
-import com.mardous.booming.MainActivity
+import com.mardous.booming.MainActivity 
 import com.mardous.booming.R
 import com.mardous.booming.coil.CoilBitmapLoader
 import com.mardous.booming.core.appwidgets.WidgetData
@@ -338,7 +337,6 @@ class PlaybackService :
         player.setSequentialTimelineEnabled(sequentialTimeline)
         player.addListener(this)
 
-        // 🌟 核心清理：完全抛弃代理外壳，使用原生 player 保证状态纯净与全量广播
         mediaSession = MediaLibrarySession.Builder(this, player, this)
             .setId(packageName)
             .setSessionActivity(createSessionActivityIntent())
@@ -455,7 +453,8 @@ class PlaybackService :
             if (sessionId == myPackageName) {
                 return mediaSession
             }
-        } else if (packageValidator.isKnownCaller(controllerPackageName, controllerInfo.uid)) {
+        // ✅ 同步作者 API：使用 isAllowedCaller
+        } else if (packageValidator.isAllowedCaller(controllerPackageName, controllerInfo.uid)) {
             return mediaSession
         }
         return null
@@ -484,10 +483,21 @@ class PlaybackService :
             updateCarWithMetadata()
         }
 
+        // 🌟 ✅ 同步作者权限修复：为白名单应用和 CarWith 赋予最高控制权限（DEFAULT_PLAYER_COMMANDS）
+        // 彻底解决之前车机可能只能看不能播的隐患
+        val playerCommands =
+            if (controller.packageName == "com.miui.carlink" ||
+                controller.packageName == "com.baidu.carlife.xiaomi" ||
+                packageValidator.isAllowedCaller(controller.packageName, controller.uid)) {
+                MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+            } else {
+                connectionResult.availablePlayerCommands
+            }
+
         return Futures.immediateFuture(
             MediaSession.ConnectionResult.accept(
                 availableSessionCommands.build(),
-                connectionResult.availablePlayerCommands
+                playerCommands
             )
         )
     }
@@ -522,15 +532,19 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        val isKnownCaller = packageValidator.isKnownCaller(browser.packageName, browser.uid)
+        // 🌟 ✅ 同步作者权限修复：对 CarWith 进行同等放行
+        val isAllowedCaller = packageValidator.isAllowedCaller(browser.packageName, browser.uid) ||
+                              browser.packageName == "com.miui.carlink" ||
+                              browser.packageName == "com.baidu.carlife.xiaomi"
+                              
         val outExtras = Bundle().apply {
-            putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, isKnownCaller)
+            putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, isAllowedCaller)
         }
         val libraryParams = LibraryParams.Builder()
             .setOffline(true)
             .setExtras(outExtras)
             .build()
-        val mediaItem = if (isKnownCaller) {
+        val mediaItem = if (isAllowedCaller) {
             when {
                 params?.isRecent == true -> {
                     MediaItem.Builder()
@@ -561,8 +575,23 @@ class PlaybackService :
         } else {
             MediaItem.EMPTY
         }
-        return Futures.immediateFuture(LibraryResult.ofItem(mediaItem, libraryParams))
+        
+        // 🌟 ✅ 同步作者防崩溃修复：拦截未授权调用，防止客户端闪退
+        return Futures.immediateFuture(
+            if (isAllowedCaller) LibraryResult.ofItem(mediaItem, libraryParams)
+            else LibraryResult.ofError(SessionError.ERROR_PERMISSION_DENIED)
+        )
     }
+
+    private fun <T : Any> MediaSession.denyUntrusted(
+        controller: MediaSession.ControllerInfo
+    ): ListenableFuture<LibraryResult<T>>? =
+        // 🌟 ✅ 同步作者注释与安全校验，额外增加 CarWith 放行避免歌单为空
+        if (isTrustedController(controller) ||
+            controller.packageName == "com.miui.carlink" ||
+            controller.packageName == "com.baidu.carlife.xiaomi" ||
+            packageValidator.isAllowedCaller(controller.packageName, controller.uid)) null
+        else Futures.immediateFuture(LibraryResult.ofError<T>(SessionError.ERROR_PERMISSION_DENIED))
 
     override fun onGetChildren(
         session: MediaLibraryService.MediaLibrarySession,
@@ -686,12 +715,6 @@ class PlaybackService :
             }, ContextCompat.getMainExecutor(this))
         }
     }
-
-    private fun <T : Any> MediaSession.denyUntrusted(
-        controller: MediaSession.ControllerInfo
-    ): ListenableFuture<LibraryResult<T>>? =
-        if (isTrustedController(controller)) null
-        else Futures.immediateFuture(LibraryResult.ofError<T>(SessionError.ERROR_PERMISSION_DENIED))
 
     override fun onCustomCommand(
         session: MediaSession,
@@ -929,7 +952,6 @@ class PlaybackService :
                     bluetoothLyricManager?.loadLyricsForSong(newSong)
                 }
                 
-                // 🌟 同步车机元数据（由于解除了拦截，无论蓝牙开不开都会执行）
                 updateCarWithMetadata()
             }
 
@@ -1513,12 +1535,12 @@ class PlaybackService :
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心（绝对稳定版：解决防抖与互斥覆盖）
+    // 🌟 CarWith 专用信号分发中心（纯净、满血、自带防抖与防爆盾）
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
         carWithUpdateJob = serviceScope.launch(Main) {
-            // 🌟 加入防抖：合并频繁点击造成的过载，彻底消除引发断连的 CPU 峰值
+            // 🌟 核心保命符：150ms 协程防抖，彻底消除高频触发带来的 CPU 峰值与发热掉线
             delay(150)
 
             val currentIndex = player.currentMediaItemIndex
@@ -1539,6 +1561,7 @@ class PlaybackService :
                     expectedItem.mediaMetadata.title?.toString() ?: song.title
                 }
 
+                // 🌟 歌词必须完整正常显示！
                 val lrcText = if (isRadioStream) {
                     "📻 正在收听电台：$resolvedTitle\n📡 节目排期请在手机端查看"
                 } else {
@@ -1569,7 +1592,7 @@ class PlaybackService :
                         }
                     } ?: ""
 
-                    // 🌟 核心拦截：控制在安全通信体积 4000 以内（确保绝对不断连）
+                    // 🌟 安全防爆盾：4000 字符限制，既能完整看歌词，又绝对撑不爆 IPC 通道
                     if (rawLrcText.length > 4000) rawLrcText.substring(0, 4000) else rawLrcText
                 }
 
@@ -1595,13 +1618,12 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    // 🌟 核心适配：与蓝牙歌词互相尊重
-                    // 蓝牙歌词会不断修改标题，这里读取当前的标题，避免相互覆盖
+                    // 🌟 适配蓝牙歌词：尊重并继承当前可能被动态修改的标题
                     val finalTitle = currentMetadata.title?.toString() ?: resolvedTitle.ifBlank { "未知曲目" }
                     val finalArtist = currentMetadata.artist?.toString() ?: if (isRadioStream) "网络电台" else song.artistName.ifEmpty { "未知歌手" }
                     val finalAlbum = currentMetadata.albumTitle?.toString() ?: if (isRadioStream) "网络电台" else song.albumName.ifEmpty { "未知专辑" }
 
-                    // 🌟 强推核心：递增 discNumber，强行迫使系统分发 MediaMetadata 变更给车机
+                    // 🌟 合法破壁：利用 discNumber 强推更新给车机
                     metadataSequence = (metadataSequence % 10000) + 1
 
                     val updatedMetadata = currentMetadata.buildUpon()
