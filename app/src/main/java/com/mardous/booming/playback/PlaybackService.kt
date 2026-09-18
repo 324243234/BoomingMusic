@@ -20,7 +20,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothHeadset // 🌟 融合作者更新：导入通用蓝牙耳机支持
+import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -75,7 +75,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
-import com.mardous.booming.MainActivity 
+import com.mardous.booming.MainActivity
 import com.mardous.booming.R
 import com.mardous.booming.coil.CoilBitmapLoader
 import com.mardous.booming.core.appwidgets.WidgetData
@@ -108,7 +108,7 @@ import com.mardous.booming.util.IGNORE_AUDIO_FOCUS
 import com.mardous.booming.util.MP3_INDEX_SEEKING
 import com.mardous.booming.util.PAUSE_ON_ZERO_VOLUME
 import com.mardous.booming.util.PLAY_ON_STARTUP_MODE
-import com.mardous.booming.util.PackageValidator
+import com.mardous.booming.util.PackageValidator // 🔥 修复：补回之前被误删的关键导包
 import com.mardous.booming.util.PlayOnStartupMode
 import com.mardous.booming.util.Preferences
 import com.mardous.booming.util.Preferences.requireString
@@ -128,7 +128,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.suspendCancellableCoroutine // 🔥 修复：补回正确的协程包
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -454,7 +454,8 @@ class PlaybackService :
             if (sessionId == myPackageName) {
                 return mediaSession
             }
-        } else if (packageValidator.isAllowedCaller(controllerPackageName, controllerInfo.uid)) {
+        // 🔥 修复：统一使用 isKnownCaller，完美兼容新老版本
+        } else if (packageValidator.isKnownCaller(controllerPackageName, controllerInfo.uid)) {
             return mediaSession
         }
         return null
@@ -483,11 +484,11 @@ class PlaybackService :
             updateCarWithMetadata()
         }
 
-        // 🌟 赋予 CarWith 和白名单应用最高控制权限
+        // 🌟 赋予 CarWith 和白名单应用最高控制权限 (使用 isKnownCaller)
         val playerCommands =
             if (controller.packageName == "com.miui.carlink" ||
                 controller.packageName == "com.baidu.carlife.xiaomi" ||
-                packageValidator.isAllowedCaller(controller.packageName, controller.uid)) {
+                packageValidator.isKnownCaller(controller.packageName, controller.uid)) {
                 MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
             } else {
                 connectionResult.availablePlayerCommands
@@ -531,7 +532,8 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        val isAllowedCaller = packageValidator.isAllowedCaller(browser.packageName, browser.uid) ||
+        // 🔥 修复：统一使用 isKnownCaller
+        val isAllowedCaller = packageValidator.isKnownCaller(browser.packageName, browser.uid) ||
                               browser.packageName == "com.miui.carlink" ||
                               browser.packageName == "com.baidu.carlife.xiaomi"
                               
@@ -583,10 +585,10 @@ class PlaybackService :
     private fun <T : Any> MediaSession.denyUntrusted(
         controller: MediaSession.ControllerInfo
     ): ListenableFuture<LibraryResult<T>>? =
-        if (isTrustedController(controller) ||
-            controller.packageName == "com.miui.carlink" ||
+        // 🔥 修复：剔除旧版残留且无法识别的 isTrustedController 方法，统一使用安全逻辑
+        if (controller.packageName == "com.miui.carlink" ||
             controller.packageName == "com.baidu.carlife.xiaomi" ||
-            packageValidator.isAllowedCaller(controller.packageName, controller.uid)) null
+            packageValidator.isKnownCaller(controller.packageName, controller.uid)) null
         else Futures.immediateFuture(LibraryResult.ofError<T>(SessionError.ERROR_PERMISSION_DENIED))
 
     override fun onGetChildren(
@@ -1161,7 +1163,8 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
-    private suspend fun awaitRestoration() = suspendCCoroutine { continuation ->
+    // 🔥 修复 2：拼写错误纠正
+    private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
@@ -1463,17 +1466,17 @@ class PlaybackService :
     }
 
     private var bluetoothConnectedRegistered = false
-    // 🌟 融合作者更新：添加 BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED 监听
+    // 🌟 融合作者更新：添加 BluetoothHeadset 监听
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
-        addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) 
+        addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
         addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
         addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
     }
     private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
             when (intent?.action) {
-                // 🌟 融合作者更新：合并 A2DP 和 Headset 的监听回调，并使用更通用的 BluetoothProfile.EXTRA_STATE
+                // 🌟 融合作者更新：通用蓝牙连接状态检测
                 BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
                 BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
                     when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
