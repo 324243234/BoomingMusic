@@ -20,6 +20,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothHeadset // 🌟 融合作者更新：导入通用蓝牙耳机支持
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -198,7 +199,7 @@ class PlaybackService :
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
 
-    // 🌟 恢复：强制触发车机回调的破壁信号量
+    // 🌟 强制触发车机回调的破壁信号量
     private var metadataSequence = 0
 
     private var errorRecoveryRetryCount = 0
@@ -437,7 +438,7 @@ class PlaybackService :
         val myPackageName = this.packageName
         val controllerPackageName = controllerInfo.packageName
         
-        // 🌟 终极防拦截：直接在这里放行 CarWith 和 CarLife，彻底无视 XML 的签名校验
+        // 🌟 终极防拦截：无视 XML 校验，放行 CarWith 和 CarLife
         if (controllerPackageName == myPackageName ||
             controllerPackageName == "com.miui.carlink" ||
             controllerPackageName == "com.baidu.carlife.xiaomi" ||
@@ -453,7 +454,6 @@ class PlaybackService :
             if (sessionId == myPackageName) {
                 return mediaSession
             }
-        // ✅ 同步作者 API：使用 isAllowedCaller
         } else if (packageValidator.isAllowedCaller(controllerPackageName, controllerInfo.uid)) {
             return mediaSession
         }
@@ -483,8 +483,7 @@ class PlaybackService :
             updateCarWithMetadata()
         }
 
-        // 🌟 ✅ 同步作者权限修复：为白名单应用和 CarWith 赋予最高控制权限（DEFAULT_PLAYER_COMMANDS）
-        // 彻底解决之前车机可能只能看不能播的隐患
+        // 🌟 赋予 CarWith 和白名单应用最高控制权限
         val playerCommands =
             if (controller.packageName == "com.miui.carlink" ||
                 controller.packageName == "com.baidu.carlife.xiaomi" ||
@@ -532,7 +531,6 @@ class PlaybackService :
         browser: MediaSession.ControllerInfo,
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        // 🌟 ✅ 同步作者权限修复：对 CarWith 进行同等放行
         val isAllowedCaller = packageValidator.isAllowedCaller(browser.packageName, browser.uid) ||
                               browser.packageName == "com.miui.carlink" ||
                               browser.packageName == "com.baidu.carlife.xiaomi"
@@ -576,7 +574,6 @@ class PlaybackService :
             MediaItem.EMPTY
         }
         
-        // 🌟 ✅ 同步作者防崩溃修复：拦截未授权调用，防止客户端闪退
         return Futures.immediateFuture(
             if (isAllowedCaller) LibraryResult.ofItem(mediaItem, libraryParams)
             else LibraryResult.ofError(SessionError.ERROR_PERMISSION_DENIED)
@@ -586,7 +583,6 @@ class PlaybackService :
     private fun <T : Any> MediaSession.denyUntrusted(
         controller: MediaSession.ControllerInfo
     ): ListenableFuture<LibraryResult<T>>? =
-        // 🌟 ✅ 同步作者注释与安全校验，额外增加 CarWith 放行避免歌单为空
         if (isTrustedController(controller) ||
             controller.packageName == "com.miui.carlink" ||
             controller.packageName == "com.baidu.carlife.xiaomi" ||
@@ -1165,7 +1161,7 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
-    private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
+    private suspend fun awaitRestoration() = suspendCCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
 
@@ -1467,20 +1463,24 @@ class PlaybackService :
     }
 
     private var bluetoothConnectedRegistered = false
+    // 🌟 融合作者更新：添加 BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED 监听
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+        addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) 
         addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
         addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
     }
     private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
             when (intent?.action) {
-                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                // 🌟 融合作者更新：合并 A2DP 和 Headset 的监听回调，并使用更通用的 BluetoothProfile.EXTRA_STATE
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
+                BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
                     when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
-                        BluetoothA2dp.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
+                        BluetoothProfile.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
                             if (!player.isPlaying) player.play()
                         }
-                        BluetoothA2dp.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
+                        BluetoothProfile.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
                             if (player.isPlaying) player.pause()
                         }
                     }
