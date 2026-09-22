@@ -153,13 +153,17 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
-    
     private val lyricsRepository: LyricsRepository by inject()
     private val playlistRepository: PlaylistRepository by inject()
 
     private val queueStateHolder: QueueStateHolder by inject()
     private val isInTimelineUpdate = AtomicBoolean(false)
     private var generateQueueJob: Job? = null
+	
+	// 🌟 L0 级歌词内存缓存
+    private var cachedLrcSongId: Long = -1L
+    private var cachedLrcText: String = ""
+    private var cachedLrcRadioUrl: String = ""
 
     private val libraryProvider = LibraryProvider(repository)
     private val songPlayCountHelper = SongPlayCountHelper()
@@ -193,17 +197,13 @@ class PlaybackService :
     private var mediaSession: MediaLibrarySession? = null
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
-    
-    // 🌟 CarWith 专用控制变量
+
+    private var bluetoothLyricManager: BluetoothLyricManager? = null
     private var carWithUpdateJob: Job? = null
-    private var metadataSequence = 0
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
 
-    // 🌟 L0 级物理内存缓存：彻底斩断切换状态时的冗余 IO 和正则计算
-    private var cachedLrcSongId: Long = -1L
-    private var cachedLrcText: String = ""
-    private var cachedLrcRadioUrl: String = ""
+    private var metadataSequence = 0
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -257,11 +257,7 @@ class PlaybackService :
         get() = player.isPlaying
 
     private val shuffleCommand: CommandButton
-        get() = if (player.shuffleModeEnabled) {
-            customCommands[1]
-        } else {
-            customCommands[0]
-        }
+        get() = if (player.shuffleModeEnabled) customCommands[1] else customCommands[0]
 
     private val repeatCommand: CommandButton
         get() = when (player.repeatMode) {
@@ -277,7 +273,7 @@ class PlaybackService :
     private val handleAudioFocus: Boolean
         get() = preferences.getBoolean(IGNORE_AUDIO_FOCUS, false).not()
     private val maxSeekToPreviousMs: Long
-        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else Long.MAX_VALUE
+        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
@@ -408,6 +404,10 @@ class PlaybackService :
             }
         }
 
+        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
+            bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
+        }
+
         preferences.registerOnSharedPreferenceChangeListener(this)
         audioOutputObserver.startObserver()
 
@@ -426,7 +426,9 @@ class PlaybackService :
     override fun onDestroy() {
         super.onDestroy()
         widgets.stop()
+        
         carWithUpdateJob?.cancel()
+        bluetoothLyricManager?.release()
         
         if (bluetoothConnectedRegistered) {
             unregisterReceiver(bluetoothReceiver)
@@ -484,7 +486,6 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
-        // 预埋自定义指令权限
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -493,11 +494,12 @@ class PlaybackService :
             updateCarWithMetadata()
         }
 
-        val playerCommands = if (isCallerAllowed(controller.packageName)) {
-            MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
-        } else {
-            connectionResult.availablePlayerCommands
-        }
+        val playerCommands =
+            if (isCallerAllowed(controller.packageName)) {
+                MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+            } else {
+                connectionResult.availablePlayerCommands
+            }
 
         return Futures.immediateFuture(
             MediaSession.ConnectionResult.accept(
@@ -538,6 +540,7 @@ class PlaybackService :
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
         val isAllowed = isCallerAllowed(browser.packageName)
+                              
         val outExtras = Bundle().apply {
             putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, isAllowed)
         }
@@ -559,6 +562,7 @@ class PlaybackService :
                         )
                         .build()
                 }
+
                 else -> {
                     MediaItem.Builder()
                         .setMediaId(MediaIDs.ROOT)
@@ -738,7 +742,7 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 物理开关拦截指令 1：屏蔽车机专属收藏按键
+            // 🌟 CarWith 开关拦截 1：如果未开启同步，物理屏蔽车机收藏指令
             "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 if (!preferences.getBoolean("enable_carwith_sync", false)) {
                     return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
@@ -748,7 +752,7 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 物理开关拦截指令 2：屏蔽车机专属循环模式按键
+            // 🌟 CarWith 开关拦截 2：如果未开启同步，物理屏蔽车机循环模式指令
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 if (!preferences.getBoolean("enable_carwith_sync", false)) {
                     return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
@@ -771,6 +775,7 @@ class PlaybackService :
                         player.repeatMode = Player.REPEAT_MODE_ALL
                     }
                 }
+                updateCarWithMetadata()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
@@ -954,6 +959,12 @@ class PlaybackService :
 
             withContext(Main) {
                 refreshMediaButtonCustomLayout()
+                
+                val isBtActive = preferences.getBoolean("enable_bluetooth_lyrics", false)
+                if (isBtActive) {
+                    bluetoothLyricManager?.loadLyricsForSong(newSong)
+                }
+                
                 updateCarWithMetadata()
             }
 
@@ -1132,47 +1143,66 @@ class PlaybackService :
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
 
-            // 🌟 热插拔智能缓存管理 1：监听物理开关
+            "enable_bluetooth_lyrics" -> {
+                val enabled = preferences.getBoolean(key, false)
+                if (enabled && bluetoothLyricManager == null) {
+                    bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
+                    val currentIndex = player.currentMediaItemIndex
+                    if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                        val currentMediaItem = player.getMediaItemAt(currentIndex)
+                        serviceScope.launch(IO) {
+                            val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
+                            if (song != Song.emptySong) {
+                                withContext(Main) { bluetoothLyricManager?.loadLyricsForSong(song) }
+                            }
+                        }
+                    }
+                } else if (!enabled) {
+                    bluetoothLyricManager?.release()
+                    bluetoothLyricManager = null
+                    updateCarWithMetadata()
+                }
+            }
+
+            // 🌟 CarWith 开关拦截 3：物理开关状态监听与深层净化
             "enable_carwith_sync" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled) {
                     updateCarWithMetadata()
                 } else {
-                    // 若关闭，瞬间清空缓存并净化底层通道
                     carWithUpdateJob?.cancel()
+					// 🌟 清空缓存
                     cachedLrcSongId = -1L
                     cachedLrcText = ""
                     cachedLrcRadioUrl = ""
-                    
                     serviceScope.launch(Main) {
                         val currentIndex = player.currentMediaItemIndex
                         if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
                             val currentItem = player.getMediaItemAt(currentIndex)
-                            
-                            // 净化：剥离一切车机专属的载荷
-                            val cleanedExtras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY).apply {
-                                remove("ucar.media.metadata.PLAY_MODE")
-                                remove("ucar.media.metadata.COLLECT_STATE")
-                                remove("ucar.media.metadata.LYRICS_WHOLE")
-                                remove("android.media.metadata.LYRIC")
+                            val currentExtras = currentItem.mediaMetadata.extras
+                            if (currentExtras != null) {
+                                // 瞬间抽离所有属于 CarWith 的污染数据包
+                                val cleanedExtras = Bundle(currentExtras).apply {
+                                    remove("ucar.media.metadata.PLAY_MODE")
+                                    remove("ucar.media.metadata.COLLECT_STATE")
+                                    remove("ucar.media.metadata.LYRICS_WHOLE")
+                                    remove("android.media.metadata.LYRIC")
+                                }
+                                val cleanedMetadata = currentItem.mediaMetadata.buildUpon()
+                                    .setExtras(cleanedExtras)
+                                    .build()
+                                val cleanedItem = currentItem.buildUpon()
+                                    .setMediaMetadata(cleanedMetadata)
+                                    .build()
+                                val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+                                realPlayer.replaceMediaItem(currentIndex, cleanedItem)
                             }
-                            val cleanedMetadata = currentItem.mediaMetadata.buildUpon()
-                                .setExtras(cleanedExtras)
-                                .build()
-                            val cleanedItem = currentItem.buildUpon()
-                                .setMediaMetadata(cleanedMetadata)
-                                .build()
-                                
-                            val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
-                            realPlayer.replaceMediaItem(currentIndex, cleanedItem)
                         }
                     }
                 }
             }
 
-            // 🌟 热插拔智能缓存管理 2：如果歌词显示设置变了，强制清除缓存并重新生成
             "preferred_lyrics_file_format", "lyrics_show_translation" -> {
-                cachedLrcSongId = -1L
                 updateCarWithMetadata()
             }
         }
@@ -1496,6 +1526,7 @@ class PlaybackService :
     }
     private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
+            Log.d("PlaybackService", "received bluetooth action: intent=$intent")
             when (intent?.action) {
                 BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
                 BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
@@ -1558,11 +1589,11 @@ class PlaybackService :
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心（带 L0 级内存缓存防爆盾）
+    // 🌟 CarWith 专用信号分发中心
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
-        // 🌟 物理开关拦截：如果未启用同步，坚决不进行数据组装与 IPC 推流
+        // 🌟 物理开关拦截
         if (!preferences.getBoolean("enable_carwith_sync", false)) {
             return
         }
@@ -1598,7 +1629,7 @@ class PlaybackService :
                         cachedLrcText
                     }
                 } else {
-                    // 🌟 L0 级内存缓存校验：同首歌状态变更（切循环/收藏），100% 命中缓存，省去庞大的正则表达式运算！
+                    // 🌟 L0 缓存防御盾：如果没切歌，直接秒读内存，省去成千上万次运算！
                     if (song.id != -1L && song.id == cachedLrcSongId && cachedLrcText.isNotEmpty()) {
                         cachedLrcText
                     } else {
