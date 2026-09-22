@@ -11,6 +11,16 @@
         app:layout="@layout/list_item_view"
         app:widgetLayout="@layout/preference_switch"
         app:key="enable_bluetooth_lyrics" />
+		
+	<!-- 🌟 新增：CarWith 深度同步物理开关（插入在这里） -->
+    <SwitchPreferenceCompat
+        app:iconSpaceReserved="true"
+        app:title="启用 CarWith 同步"
+        app:summary="通过 USB 发送全量歌词与收藏状态。"
+        app:defaultValue="false"
+        app:layout="@layout/list_item_view"
+        app:widgetLayout="@layout/preference_switch"
+        app:key="enable_carwith_sync" />
 
     <SwitchPreferenceCompat
         app:icon="@drawable/ic_match_word_24dp"

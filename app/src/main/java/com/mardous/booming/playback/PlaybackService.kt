@@ -34,6 +34,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.Process
 import android.service.media.MediaBrowserService
+import android.util.Log
 import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.concurrent.futures.CallbackToFutureAdapter
@@ -75,7 +76,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
-import com.mardous.booming.MainActivity 
+import com.mardous.booming.MainActivity
 import com.mardous.booming.R
 import com.mardous.booming.coil.CoilBitmapLoader
 import com.mardous.booming.core.appwidgets.WidgetData
@@ -127,7 +128,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine // 🔥 修复 1：使用正确的系统底层协程库
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -152,6 +153,7 @@ class PlaybackService :
     private val equalizerManager: EqualizerManager by inject()
     private val audioOutputObserver: AudioOutputObserver by inject()
     private val repository: Repository by inject()
+    
     private val lyricsRepository: LyricsRepository by inject()
     private val playlistRepository: PlaylistRepository by inject()
 
@@ -191,13 +193,17 @@ class PlaybackService :
     private var mediaSession: MediaLibrarySession? = null
 
     private var eqStateHandler: Handler = Handler(Looper.getMainLooper())
-
-    private var bluetoothLyricManager: BluetoothLyricManager? = null
+    
+    // 🌟 CarWith 专用控制变量
     private var carWithUpdateJob: Job? = null
+    private var metadataSequence = 0
     private var lastProcessedMediaId: String? = null
     private var currentIsFavorite = false
 
-    private var metadataSequence = 0
+    // 🌟 L0 级物理内存缓存：彻底斩断切换状态时的冗余 IO 和正则计算
+    private var cachedLrcSongId: Long = -1L
+    private var cachedLrcText: String = ""
+    private var cachedLrcRadioUrl: String = ""
 
     private var errorRecoveryRetryCount = 0
     private var pausedByZeroVolume = false
@@ -217,7 +223,6 @@ class PlaybackService :
         }
     }
 
-    // 🌟 修复 2：彻底移除缺失的 PackageValidator，替换为纯净的本地白名单（包含 CarWith）
     private fun isCallerAllowed(packageName: String): Boolean {
         val allowed = setOf(
             this.packageName,
@@ -252,7 +257,11 @@ class PlaybackService :
         get() = player.isPlaying
 
     private val shuffleCommand: CommandButton
-        get() = if (player.shuffleModeEnabled) customCommands[1] else customCommands[0]
+        get() = if (player.shuffleModeEnabled) {
+            customCommands[1]
+        } else {
+            customCommands[0]
+        }
 
     private val repeatCommand: CommandButton
         get() = when (player.repeatMode) {
@@ -268,7 +277,7 @@ class PlaybackService :
     private val handleAudioFocus: Boolean
         get() = preferences.getBoolean(IGNORE_AUDIO_FOCUS, false).not()
     private val maxSeekToPreviousMs: Long
-        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
+        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else Long.MAX_VALUE
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
@@ -399,10 +408,6 @@ class PlaybackService :
             }
         }
 
-        if (preferences.getBoolean("enable_bluetooth_lyrics", false)) {
-            bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
-        }
-
         preferences.registerOnSharedPreferenceChangeListener(this)
         audioOutputObserver.startObserver()
 
@@ -421,9 +426,7 @@ class PlaybackService :
     override fun onDestroy() {
         super.onDestroy()
         widgets.stop()
-        
         carWithUpdateJob?.cancel()
-        bluetoothLyricManager?.release()
         
         if (bluetoothConnectedRegistered) {
             unregisterReceiver(bluetoothReceiver)
@@ -451,7 +454,6 @@ class PlaybackService :
         val myPackageName = this.packageName
         val controllerPackageName = controllerInfo.packageName
         
-        // 🌟 修复 3：统一入口，原生白名单认证
         if (isCallerAllowed(controllerPackageName)) {
             return mediaSession
         }
@@ -482,6 +484,7 @@ class PlaybackService :
             availableSessionCommands.add(SessionCommand(Playback.SET_STOP_POSITION, Bundle.EMPTY))
         }
 
+        // 预埋自定义指令权限
         availableSessionCommands.add(SessionCommand("ucar.media.action.PLAY_MODE", Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand("ucar.media.action.COLLECT", Bundle.EMPTY))
 
@@ -490,12 +493,11 @@ class PlaybackService :
             updateCarWithMetadata()
         }
 
-        val playerCommands =
-            if (isCallerAllowed(controller.packageName)) {
-                MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
-            } else {
-                connectionResult.availablePlayerCommands
-            }
+        val playerCommands = if (isCallerAllowed(controller.packageName)) {
+            MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+        } else {
+            connectionResult.availablePlayerCommands
+        }
 
         return Futures.immediateFuture(
             MediaSession.ConnectionResult.accept(
@@ -536,7 +538,6 @@ class PlaybackService :
         params: LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
         val isAllowed = isCallerAllowed(browser.packageName)
-                              
         val outExtras = Bundle().apply {
             putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, isAllowed)
         }
@@ -558,7 +559,6 @@ class PlaybackService :
                         )
                         .build()
                 }
-
                 else -> {
                     MediaItem.Builder()
                         .setMediaId(MediaIDs.ROOT)
@@ -732,13 +732,27 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS, modesBundle())
             }
 
-            Playback.TOGGLE_FAVORITE, "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
+            Playback.TOGGLE_FAVORITE -> serviceScope.future(Main) {
                 awaitRestoration()
                 toggleFavorite()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
+            // 🌟 物理开关拦截指令 1：屏蔽车机专属收藏按键
+            "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
+                if (!preferences.getBoolean("enable_carwith_sync", false)) {
+                    return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+                }
+                awaitRestoration()
+                toggleFavorite()
+                SessionResult(SessionResult.RESULT_SUCCESS)
+            }
+
+            // 🌟 物理开关拦截指令 2：屏蔽车机专属循环模式按键
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
+                if (!preferences.getBoolean("enable_carwith_sync", false)) {
+                    return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+                }
                 val currentCarMode = args.getString("ucar.media.bundle.PLAY_MODE")?.toIntOrNull()
                     ?: (if (player.shuffleModeEnabled) 0 else if (player.repeatMode == Player.REPEAT_MODE_ONE) 1 else 2)
                 
@@ -757,7 +771,6 @@ class PlaybackService :
                         player.repeatMode = Player.REPEAT_MODE_ALL
                     }
                 }
-                updateCarWithMetadata()
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
@@ -941,12 +954,6 @@ class PlaybackService :
 
             withContext(Main) {
                 refreshMediaButtonCustomLayout()
-                
-                val isBtActive = preferences.getBoolean("enable_bluetooth_lyrics", false)
-                if (isBtActive) {
-                    bluetoothLyricManager?.loadLyricsForSong(newSong)
-                }
-                
                 updateCarWithMetadata()
             }
 
@@ -1125,28 +1132,47 @@ class PlaybackService :
                 player.exoPlayer.setSeekForwardIncrementMs(seekInterval)
             }
 
-            "enable_bluetooth_lyrics" -> {
+            // 🌟 热插拔智能缓存管理 1：监听物理开关
+            "enable_carwith_sync" -> {
                 val enabled = preferences.getBoolean(key, false)
-                if (enabled && bluetoothLyricManager == null) {
-                    bluetoothLyricManager = BluetoothLyricManager(player, serviceScope, lyricsRepository, preferences)
-                    val currentIndex = player.currentMediaItemIndex
-                    if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
-                        val currentMediaItem = player.getMediaItemAt(currentIndex)
-                        serviceScope.launch(IO) {
-                            val song = runCatching { repository.songByMediaItem(currentMediaItem, ignoreBlacklist = true) }.getOrNull() ?: Song.emptySong
-                            if (song != Song.emptySong) {
-                                withContext(Main) { bluetoothLyricManager?.loadLyricsForSong(song) }
+                if (enabled) {
+                    updateCarWithMetadata()
+                } else {
+                    // 若关闭，瞬间清空缓存并净化底层通道
+                    carWithUpdateJob?.cancel()
+                    cachedLrcSongId = -1L
+                    cachedLrcText = ""
+                    cachedLrcRadioUrl = ""
+                    
+                    serviceScope.launch(Main) {
+                        val currentIndex = player.currentMediaItemIndex
+                        if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                            val currentItem = player.getMediaItemAt(currentIndex)
+                            
+                            // 净化：剥离一切车机专属的载荷
+                            val cleanedExtras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY).apply {
+                                remove("ucar.media.metadata.PLAY_MODE")
+                                remove("ucar.media.metadata.COLLECT_STATE")
+                                remove("ucar.media.metadata.LYRICS_WHOLE")
+                                remove("android.media.metadata.LYRIC")
                             }
+                            val cleanedMetadata = currentItem.mediaMetadata.buildUpon()
+                                .setExtras(cleanedExtras)
+                                .build()
+                            val cleanedItem = currentItem.buildUpon()
+                                .setMediaMetadata(cleanedMetadata)
+                                .build()
+                                
+                            val realPlayer = (player as? AdvancedForwardingPlayer)?.exoPlayer ?: player
+                            realPlayer.replaceMediaItem(currentIndex, cleanedItem)
                         }
                     }
-                } else if (!enabled) {
-                    bluetoothLyricManager?.release()
-                    bluetoothLyricManager = null
-                    updateCarWithMetadata()
                 }
             }
 
+            // 🌟 热插拔智能缓存管理 2：如果歌词显示设置变了，强制清除缓存并重新生成
             "preferred_lyrics_file_format", "lyrics_show_translation" -> {
+                cachedLrcSongId = -1L
                 updateCarWithMetadata()
             }
         }
@@ -1160,7 +1186,6 @@ class PlaybackService :
         player.repeatMode = nextRepeatMode(player.repeatMode)
     }
 
-    // 🔥 修复 4：代码拼写错误
     private suspend fun awaitRestoration() = suspendCancellableCoroutine { continuation ->
         persistentStorage.waitForRestoration { continuation.resume(Unit) }
     }
@@ -1533,12 +1558,16 @@ class PlaybackService :
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心（纯净、满血、自带防抖与防爆盾）
+    // 🌟 CarWith 专用信号分发中心（带 L0 级内存缓存防爆盾）
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
+        // 🌟 物理开关拦截：如果未启用同步，坚决不进行数据组装与 IPC 推流
+        if (!preferences.getBoolean("enable_carwith_sync", false)) {
+            return
+        }
+
         carWithUpdateJob = serviceScope.launch(Main) {
-            // 🌟 核心保命符：150ms 协程防抖，彻底消除高频触发带来的 CPU 峰值与发热掉线
             delay(150)
 
             val currentIndex = player.currentMediaItemIndex
@@ -1559,39 +1588,54 @@ class PlaybackService :
                     expectedItem.mediaMetadata.title?.toString() ?: song.title
                 }
 
-                // 🌟 歌词必须完整正常显示！
                 val lrcText = if (isRadioStream) {
-                    "📻 正在收听电台：$resolvedTitle\n📡 节目排期请在手机端查看"
+                    val radioLrc = "📻 正在收听电台：$resolvedTitle\n📡 节目排期请在手机端查看"
+                    if (cachedLrcRadioUrl == streamUrl && cachedLrcText == radioLrc) {
+                        cachedLrcText
+                    } else {
+                        cachedLrcRadioUrl = streamUrl
+                        cachedLrcText = radioLrc
+                        cachedLrcText
+                    }
                 } else {
-                    val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
-                    val rawLyrics = if (song != Song.emptySong) {
-                        runCatching {
-                            lyricsRepository.fileLyrics(song)
-                                ?: lyricsRepository.embeddedLyrics(song)
-                                ?: lyricsRepository.storedLyrics(song, allowDownload = false)
-                        }.getOrNull()
-                    } else null
+                    // 🌟 L0 级内存缓存校验：同首歌状态变更（切循环/收藏），100% 命中缓存，省去庞大的正则表达式运算！
+                    if (song.id != -1L && song.id == cachedLrcSongId && cachedLrcText.isNotEmpty()) {
+                        cachedLrcText
+                    } else {
+                        val showTranslation = preferences.getBoolean("lyrics_show_translation", false)
+                        val rawLyrics = if (song != Song.emptySong) {
+                            runCatching {
+                                lyricsRepository.fileLyrics(song)
+                                    ?: lyricsRepository.embeddedLyrics(song)
+                                    ?: lyricsRepository.storedLyrics(song, allowDownload = false)
+                            }.getOrNull()
+                        } else null
 
-                    val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
+                        val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-                    val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
-                        val timeMs = line.start
-                        val min = timeMs / 60000
-                        val sec = (timeMs % 60000) / 1000
-                        val ms = (timeMs % 1000) / 10
-                        val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
-                        val content = line.content.content 
-                        val translation = line.translation?.content
+                        val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
+                            val timeMs = line.start
+                            val min = timeMs / 60000
+                            val sec = (timeMs % 60000) / 1000
+                            val ms = (timeMs % 1000) / 10
+                            val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                            val content = line.content.content 
+                            val translation = line.translation?.content
+                            
+                            if (showTranslation && !translation.isNullOrBlank()) {
+                                "$timeStr$content 「$translation」"
+                            } else {
+                                "$timeStr$content"
+                            }
+                        } ?: ""
+
+                        val safeLrc = if (rawLrcText.length > 4000) rawLrcText.substring(0, 4000) else rawLrcText
                         
-                        if (showTranslation && !translation.isNullOrBlank()) {
-                            "$timeStr$content 「$translation」"
-                        } else {
-                            "$timeStr$content"
-                        }
-                    } ?: ""
-
-                    // 🌟 安全防爆盾：4000 字符限制，既能完整看歌词，又绝对撑不爆 IPC 通道
-                    if (rawLrcText.length > 4000) rawLrcText.substring(0, 4000) else rawLrcText
+                        // 写入缓存
+                        cachedLrcSongId = song.id
+                        cachedLrcText = safeLrc
+                        safeLrc
+                    }
                 }
 
                 val playMode: Long = when {
@@ -1616,12 +1660,10 @@ class PlaybackService :
                         putString("android.media.metadata.LYRIC", lrcText)
                     }
 
-                    // 🌟 适配蓝牙歌词：尊重并继承当前可能被动态修改的标题
                     val finalTitle = currentMetadata.title?.toString() ?: resolvedTitle.ifBlank { "未知曲目" }
                     val finalArtist = currentMetadata.artist?.toString() ?: if (isRadioStream) "网络电台" else song.artistName.ifEmpty { "未知歌手" }
                     val finalAlbum = currentMetadata.albumTitle?.toString() ?: if (isRadioStream) "网络电台" else song.albumName.ifEmpty { "未知专辑" }
 
-                    // 🌟 合法破壁：利用 discNumber 强推更新给车机
                     metadataSequence = (metadataSequence % 10000) + 1
 
                     val updatedMetadata = currentMetadata.buildUpon()
