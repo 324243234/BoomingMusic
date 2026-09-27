@@ -273,7 +273,7 @@ class PlaybackService :
     private val handleAudioFocus: Boolean
         get() = preferences.getBoolean(IGNORE_AUDIO_FOCUS, false).not()
     private val maxSeekToPreviousMs: Long
-        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else 0
+        get() = if (preferences.getBoolean(REWIND_WITH_BACK, true)) REWIND_INSTEAD_PREVIOUS_MILLIS else Long.MAX_VALUE
     private val seekInterval: Long
         get() = preferences.getInt(SEEK_INTERVAL, 10) * 1000L
 
@@ -337,13 +337,13 @@ class PlaybackService :
                 )
                 .setRenderersFactory(
                     BoomingMusicRenderersFactory(this, balanceProcessor, replayGainProcessor)
-                        .setEnableAudioFloatOutput(equalizerManager.audioFloatOutput.value)
+                        .setEnableAudioFloatOutput(equalizerManager.soundSettings.value.audioFloatOutput)
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                         .setMediaCodecSelector(AlacWorkaroundCodecSelector())
                         .setEnableDecoderFallback(true)
                 )
                 .setMediaSourceFactory(mediaSourceFactory)
-                .setSkipSilenceEnabled(equalizerManager.skipSilence.value)
+                .setSkipSilenceEnabled(equalizerManager.soundSettings.value.skipSilence)
                 .setHandleAudioBecomingNoisy(true)
                 .setMaxSeekToPreviousPositionMs(maxSeekToPreviousMs)
                 .setSeekBackIncrementMs(seekInterval)
@@ -1432,64 +1432,65 @@ class PlaybackService :
     }
 
     private fun restorePlayerVolume() {
-        player.volume = equalizerManager.volumeState.value.currentVolume
+        player.volume = equalizerManager.soundSettings.value.volume.currentVolume
     }
 
     private fun prepareEqualizerAndSoundSettings() {
-        serviceScope.launch {
-            equalizerManager.initializeEqualizer()
+    serviceScope.launch {
+        equalizerManager.initializeEqualizer()
+    }
+    serviceScope.launch {
+        equalizerManager.liveSoundSettings.map { it.volume }.collect { volume ->
+            cancelSleepTimerFadeOut()
+            player.volume = volume.currentVolume
         }
-        serviceScope.launch {
-            equalizerManager.volumeState.collect { volume ->
-                cancelSleepTimerFadeOut()
-                player.volume = volume.currentVolume
-            }
+    }
+    serviceScope.launch {
+        equalizerManager.soundSettings.map { it.replayGain.mode }.distinctUntilChanged()
+            .collect { mode -> if (mode.isOn) submitReplayGain() }
+    }
+    serviceScope.launch {
+        equalizerManager.soundSettings.map { it.audioOffload }.collect { audioOffloadingEnabled ->
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setAudioOffloadPreferences(
+                    AudioOffloadPreferences.Builder()
+                        .setAudioOffloadMode(
+                            if (audioOffloadingEnabled)
+                                AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
+                            else AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
+                        )
+                        .setIsGaplessSupportRequired(true) // 合并作者的新增项
+                        .setIsSpeedChangeSupportRequired(true)
+                        .build()
+                )
+                .build()
         }
-        serviceScope.launch {
-            equalizerManager.replayGainState.map { it.mode }.distinctUntilChanged()
-                .collect { mode -> if (mode.isOn) submitReplayGain() }
+    }
+    serviceScope.launch {
+        equalizerManager.soundSettings.map { it.skipSilence }.collect {
+            player.exoPlayer.skipSilenceEnabled = it
         }
-        serviceScope.launch {
-            equalizerManager.audioOffload.collect { audioOffloadingEnabled ->
-                player.trackSelectionParameters = player.trackSelectionParameters
-                    .buildUpon()
-                    .setAudioOffloadPreferences(
-                        AudioOffloadPreferences.Builder()
-                            .setAudioOffloadMode(
-                                if (audioOffloadingEnabled)
-                                    AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
-                                else AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
-                            )
-                            .setIsSpeedChangeSupportRequired(true)
-                            .build()
-                    )
-                    .build()
-            }
+    }
+    serviceScope.launch {
+        equalizerManager.liveSoundSettings.map { it.tempo }.collect {
+            player.playbackParameters = PlaybackParameters(it.speed, it.actualPitch)
         }
-        serviceScope.launch {
-            equalizerManager.skipSilence.collect {
-                player.exoPlayer.skipSilenceEnabled = it
-            }
-        }
-        serviceScope.launch {
-            equalizerManager.tempoState.collect {
-                player.playbackParameters = PlaybackParameters(it.speed, it.actualPitch)
-            }
-        }
-        serviceScope.launch {
-            audioOutputObserver.systemVolumeState.collect { systemVolume ->
-                if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
-                    if (isPlaying && systemVolume.currentVolume <= 0f) {
-                        player.pause()
-                        pausedByZeroVolume = true
-                    } else if (pausedByZeroVolume && systemVolume.currentVolume >= 0.1f) {
-                        player.play()
-                        pausedByZeroVolume = false
-                    }
+    }
+    serviceScope.launch {
+        audioOutputObserver.systemVolumeState.collect { systemVolume ->
+            if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                if (isPlaying && systemVolume.currentVolume <= 0f) {
+                    player.pause()
+                    pausedByZeroVolume = true
+                } else if (pausedByZeroVolume && systemVolume.currentVolume >= 0.1f) {
+                    player.play()
+                    pausedByZeroVolume = false
                 }
             }
         }
     }
+}
 
     private fun updateEqualizerSessionState(isPlaying: Boolean) {
         eqStateHandler.removeCallbacksAndMessages(null)
@@ -1519,37 +1520,45 @@ class PlaybackService :
 
     private var bluetoothConnectedRegistered = false
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
-        addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
-        addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
-        addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
-        addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
-    }
-    private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent?) {
-            Log.d("PlaybackService", "received bluetooth action: intent=$intent")
-            when (intent?.action) {
-                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED,
-                BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
-                    when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
-                        BluetoothProfile.STATE_CONNECTED -> if (Preferences.isResumeOnConnect(true)) {
-                            if (!player.isPlaying) player.play()
-                        }
-                        BluetoothProfile.STATE_DISCONNECTED -> if (Preferences.isPauseOnDisconnect(true)) {
-                            if (player.isPlaying) player.pause()
-                        }
+    addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+    addAction(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)
+}
+
+private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        Log.d("PlaybackService", "received bluetooth action: intent=$intent")
+        when (intent?.action) {
+            BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                val state = intent.getIntExtra(BluetoothA2dp.EXTRA_STATE, -1)
+                val previousState = intent.getIntExtra(BluetoothA2dp.EXTRA_PREVIOUS_STATE, -1)
+                if (state == BluetoothA2dp.STATE_CONNECTED) {
+                    if (Preferences.isResumeOnConnect(bluetooth = true)) {
+                        player.play()
+                    }
+                } else if (state == BluetoothA2dp.STATE_DISCONNECTED &&
+                    previousState == BluetoothA2dp.STATE_CONNECTED) {
+                    if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
+                        player.pause()
                     }
                 }
-                BluetoothDevice.ACTION_ACL_CONNECTED ->
-                    if (context.isBluetoothA2dpConnected() && Preferences.isResumeOnConnect(true)) {
-                        if (!player.isPlaying) player.play()
+            }
+            BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED -> {
+                val state = intent.getIntExtra(BluetoothHeadset.EXTRA_STATE, -1)
+                val previousState = intent.getIntExtra(BluetoothHeadset.EXTRA_PREVIOUS_STATE, -1)
+                if (state == BluetoothHeadset.STATE_CONNECTED) {
+                    if (Preferences.isResumeOnConnect(bluetooth = true)) {
+                        player.play()
                     }
-                BluetoothDevice.ACTION_ACL_DISCONNECTED ->
-                    if (context.isBluetoothA2dpDisconnected() && Preferences.isPauseOnDisconnect(true)) {
-                        if (player.isPlaying) player.pause()
+                } else if (state == BluetoothHeadset.STATE_DISCONNECTED &&
+                    previousState == BluetoothHeadset.STATE_CONNECTED) {
+                    if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
+                        player.pause()
                     }
+                }
             }
         }
     }
+}
 
     private var receivedHeadsetConnected = false
     private var headsetReceiverRegistered = false
