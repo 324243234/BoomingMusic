@@ -8,6 +8,8 @@ import android.util.LruCache
 import com.mardous.booming.data.local.EditTarget
 import com.mardous.booming.data.local.MetadataReader
 import com.mardous.booming.data.local.MetadataWriter
+import com.mardous.booming.data.local.lyrics.LyricsInfo
+import com.mardous.booming.data.local.lyrics.LyricsParser
 import com.mardous.booming.data.local.lyrics.lrc.LrcLyricsParser
 import com.mardous.booming.data.local.lyrics.ttml.TtmlLyricsParser
 import com.mardous.booming.data.local.room.LyricsDao
@@ -15,22 +17,22 @@ import com.mardous.booming.data.local.room.LyricsEntity
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsFile
 import com.mardous.booming.data.model.lyrics.LyricsSource
+import com.mardous.booming.data.model.lyrics.ParsedLyrics
 import com.mardous.booming.data.model.lyrics.RawLyrics
-import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import com.mardous.booming.data.remote.lyrics.LyricsDownloadService
 import com.mardous.booming.data.remote.lyrics.LyricsProviderParams
 import com.mardous.booming.extensions.hasR
 import com.mardous.booming.extensions.media.isArtistNameUnknown
+import com.mardous.booming.util.MARK_INSTRUMENTAL_TRACKS_BY_TITLE
 import com.mardous.booming.util.Preferences.requireString
 import org.mozilla.universalchardet.UniversalDetector
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
 import java.nio.charset.Charset
-import java.util.regex.Pattern
 
 interface LyricsRepository {
-    suspend fun parseRawLyrics(song: Song, rawLyrics: RawLyrics): SyncedLyrics?
+    suspend fun parseRawLyrics(song: Song, rawLyrics: RawLyrics): ParsedLyrics
 
     suspend fun fileLyrics(song: Song): RawLyrics.File?
     suspend fun embeddedLyrics(song: Song): RawLyrics.Embedded?
@@ -69,38 +71,109 @@ class RealLyricsRepository(
         memoryCache.evictAll()
     }
 
-    override suspend fun parseRawLyrics(song: Song, rawLyrics: RawLyrics): SyncedLyrics? {
+    override suspend fun parseRawLyrics(song: Song, rawLyrics: RawLyrics): ParsedLyrics {
         val ignoreBlankLines = preferences.getBoolean(IGNORE_BLANK_LINES, false)
+        val markInstrumentalByTitle = preferences.getBoolean(MARK_INSTRUMENTAL_TRACKS_BY_TITLE, false)
         try {
             return when (rawLyrics) {
                 is RawLyrics.File -> {
-                    if (rawLyrics.lyrics.isNotEmpty()) {
-                        lyricsParsers.firstOrNull { it.handles(rawLyrics.file) }
-                            ?.parse(rawLyrics.lyrics, song.duration, ignoreBlankLines)
-                    } else null
+                    parseTextLyrics(
+                        song = song,
+                        lyrics = rawLyrics.lyrics,
+                        ignoreBlankLines = ignoreBlankLines,
+                        markInstrumentalByTitle = markInstrumentalByTitle,
+                        lyricsParsers = listOf(
+                            when (rawLyrics.file.format) {
+                                LyricsFile.Format.LRC -> lrcLyricsParser
+                                LyricsFile.Format.TTML -> ttmlLyricsParser
+                            }
+                        )
+                    )
                 }
 
                 is RawLyrics.Embedded -> {
-                    if (!rawLyrics.lyrics.isNullOrEmpty()) {
-                        lyricsParsers.firstOrNull { it.handles(rawLyrics.lyrics) }
-                            ?.parse(rawLyrics.lyrics, song.duration, ignoreBlankLines)
-                    } else null
+                    parseTextLyrics(
+                        song = song,
+                        lyrics = rawLyrics.lyrics,
+                        ignoreBlankLines = ignoreBlankLines,
+                        markInstrumentalByTitle = markInstrumentalByTitle,
+                    )
                 }
 
                 is RawLyrics.Stored -> {
-                    if (!rawLyrics.lyrics.isNullOrEmpty()) {
-                        lyricsParsers.firstOrNull { it.handles(rawLyrics.lyrics) }
-                            ?.parse(rawLyrics.lyrics, song.duration, ignoreBlankLines)
-                            ?.copy(provider = rawLyrics.provider)
-                    } else null
+                    if (rawLyrics.instrumental) {
+                        ParsedLyrics.Instrumental
+                    } else {
+                        parseTextLyrics(
+                            song = song,
+                            lyrics = rawLyrics.lyrics,
+                            ignoreBlankLines = ignoreBlankLines,
+                            markInstrumentalByTitle = markInstrumentalByTitle,
+                            provider = rawLyrics.provider
+                        )
+                    }
                 }
 
-                else -> null
+                is RawLyrics.Edited -> {
+                    if (rawLyrics.instrumental) {
+                        ParsedLyrics.Instrumental
+                    } else {
+                        parseTextLyrics(
+                            song = song,
+                            lyrics = rawLyrics.lyrics,
+                            ignoreBlankLines = ignoreBlankLines,
+                            markInstrumentalByTitle = markInstrumentalByTitle,
+                            provider = rawLyrics.newContentProvider
+                        )
+                    }
+                }
+
+                is RawLyrics.Remote -> {
+                    parseTextLyrics(
+                        song = song,
+                        lyrics = rawLyrics.lyrics,
+                        ignoreBlankLines = ignoreBlankLines,
+                        markInstrumentalByTitle = markInstrumentalByTitle
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Couldn't parse lyrics for song ${song.data}", e)
         }
-        return null
+        return ParsedLyrics.Empty
+    }
+
+    private fun parseTextLyrics(
+        song: Song,
+        lyrics: String?,
+        ignoreBlankLines: Boolean,
+        markInstrumentalByTitle: Boolean,
+        lyricsParsers: List<LyricsParser> = this.lyricsParsers,
+        provider: String? = null
+    ): ParsedLyrics {
+        if (lyrics.isNullOrBlank()) return ParsedLyrics.Empty
+
+        for (parser in lyricsParsers) {
+            return when (val info = parser.getInfo(lyrics)) {
+                is LyricsInfo.Instrumental -> ParsedLyrics.Instrumental
+                is LyricsInfo.Valid -> {
+                    if (info.actuallySynced) {
+                        val synced = parser.parse(lyrics, song.duration, ignoreBlankLines)
+                            ?.let { if (provider != null) it.copy(provider = provider) else it }
+                        if (synced != null) ParsedLyrics.Synced(synced) else ParsedLyrics.Empty
+                    } else {
+                        val plain = parser.parseAsPlain(lyrics)
+                        if (plain != null) ParsedLyrics.Plain(plain) else ParsedLyrics.Empty
+                    }
+                }
+                is LyricsInfo.Invalid -> continue
+            }
+        }
+        return if (markInstrumentalByTitle && INSTRUMENTAL_REGEX.matches(song.title)) {
+            ParsedLyrics.Instrumental
+        } else {
+            ParsedLyrics.Plain(lyrics)
+        }
     }
 
     override suspend fun fileLyrics(song: Song): RawLyrics.File? {
@@ -124,6 +197,7 @@ class RealLyricsRepository(
                 val lyrics = runCatching {
                     actualFile.inputStream().buffered().use { stream ->
                         val charset = detectEncoding(stream)
+                        // ?? ±æµÿ”≈ªØ£∫BOM «Âœ¥
                         stream.reader(charset).use { it.readText() }.replace("\uFEFF", "").trim()
                     }
                 }.getOrNull() ?: continue
@@ -221,7 +295,7 @@ class RealLyricsRepository(
     ): Boolean? {
         try {
             val editedLyrics = newContentBySource.mapNotNull { (source, content) ->
-                // üåü 1. ÊÅ¢Â§çÂéü‰ΩúËÄÖÁöÑÂÆâÂÖ®ÈîÅÔºöÂ¶ÇÊûúÊòØÊú¨Âú∞Êñá‰ª∂ÔºåÁõ¥Êé•Ë∏¢Âá∫ËøôÂ•óÂ§çÊùÇÁöÑ‰øùÂ≠òÊµÅÁ®ãÔºÅ
+                // ?? ÷±Ω”∑≈–––¥»ÎŒÔ¿ÌŒƒº˛µƒ¬ﬂº≠
                 if (source == LyricsSource.File) return@mapNotNull null
                 
                 val originalLyrics = originalLyricsBySource[source] ?: when (source) {
@@ -266,7 +340,7 @@ class RealLyricsRepository(
                         }
                     }
                     
-                    // üåü Êñ∞Â¢ûÔºöÊîØÊåÅÂ∞Ü‰øÆÊîπÁõ¥Êé•ÂÜôÂÖ•Êú¨Âú∞ .lrc Êàñ .ttml Áâ©ÁêÜÊñá‰ª∂
+                    // ?? ≤π»´±æµÿ .lrc / .ttml ±£¥Ê»∆π˝¬ﬂº≠
                     is RawLyrics.File -> {
                         runCatching {
                             val file = java.io.File(it.originalLyrics.file.path)
@@ -334,6 +408,7 @@ class RealLyricsRepository(
         }
     }
 
+    // ?? º´ÀŸ—∞÷∑∑¿ø®∂Ÿ”≈ªØ£®ﬁ∆˙ listFiles£©
     private fun findLyricsFiles(song: Song): List<LyricsFile> {
         val songFile = File(song.data)
         val parentDir = songFile.parentFile ?: return emptyList()
@@ -345,7 +420,6 @@ class RealLyricsRepository(
 
         val validFiles = mutableListOf<LyricsFile>()
 
-        // üåü Ê†∏ÂøÉ‰øÆÂ§çÔºöÊäõÂºÉ listFiles Âíå RegexÔºåÂèåÊ†ºÂºèÁÇπÂ∞ÑÊü•ËØ¢
         for (name in possibleNames) {
             val ttmlFile = File(parentDir, "$name.ttml")
             if (ttmlFile.exists() && ttmlFile.isFile) {
@@ -389,6 +463,8 @@ class RealLyricsRepository(
 
     companion object {
         private const val TAG = "LyricsRepository"
+
+        private val INSTRUMENTAL_REGEX = Regex("""(?i)[(\[\-]\s*(?:acoustic(?:\s+version)?|instr?|instrumental|karaoke|orchestral)(?:\s+version)?\s*[)\]]?\s*$""")
 
         private const val BUFFER_SIZE = 4096
         private const val FORCE_UTF_8_ENCODING = "force_utf8_encoding_for_lyrics"

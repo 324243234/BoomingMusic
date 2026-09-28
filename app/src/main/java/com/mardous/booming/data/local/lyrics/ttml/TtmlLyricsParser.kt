@@ -1,13 +1,14 @@
 package com.mardous.booming.data.local.lyrics.ttml
 
 import android.util.Log
-import com.mardous.booming.data.LyricsParser
-import com.mardous.booming.data.model.lyrics.LyricsFile
+import com.mardous.booming.data.local.lyrics.LyricsInfo
+import com.mardous.booming.data.local.lyrics.LyricsParser
 import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserException
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.Reader
+import java.io.StringReader
 import java.util.regex.Pattern
 
 /**
@@ -23,55 +24,145 @@ import java.util.regex.Pattern
  */
 class TtmlLyricsParser : LyricsParser {
 
-    override fun handles(file: LyricsFile): Boolean =
-        file.format == LyricsFile.Format.TTML
+    override fun getInfo(reader: Reader): LyricsInfo {
+        return try {
+            // 🌟 防御净化：清除导致解析崩溃的 BOM 字符
+            val cleanContent = reader.readText().replace("\uFEFF", "").trim()
+            if (cleanContent.isEmpty()) return LyricsInfo.Invalid
 
-    /**
-     * Quickly checks if the reader content is a valid TTML lyrics file.
-     * It verifies the presence of the `<tt>` root tag and at least one `<div>` inside `<body>`.
-     */
-    // 1. 替换 handles 方法（放宽检测：只需包含 <tt> 和 <body> 即可认为是合法格式）
-    override fun handles(reader: Reader): Boolean {
-    return try {
-        val parser = XmlPullParserFactory.newInstance().newPullParser().apply {
-            setInput(reader)
-        }
+            val parser = XmlPullParserFactory.newInstance().apply {
+                isNamespaceAware = false
+            }.newPullParser().apply {
+                setInput(StringReader(cleanContent))
+            }
 
-        var foundTt = false
-        var foundBody = false
+            var foundTt = false
+            var insideBody = false
+            var hasTime = false
+            var hasParagraphs = false
 
-        var event = parser.eventType
-        while (event != XmlPullParser.END_DOCUMENT) {
-            if (event == XmlPullParser.START_TAG) {
-                when (parser.name) {
-                    "tt" -> foundTt = true
-                    "body" -> {
-                        foundBody = true
-                        break // 只要找到 body 即可安全放行
+            var event = parser.eventType
+            while (event != XmlPullParser.END_DOCUMENT) {
+                when (event) {
+                    XmlPullParser.START_TAG -> {
+                        when (parser.name.lowercase().substringAfterLast(":")) {
+                            "tt" -> foundTt = true
+                            TtmlNode.TAG_BODY -> insideBody = true
+                            TtmlNode.TAG_PARAGRAPH -> {
+                                if (insideBody) {
+                                    hasParagraphs = true
+                                    if (hasTimeAttribute(parser)) {
+                                        hasTime = true
+                                    }
+                                }
+                            }
+                            TtmlNode.TAG_SPAN,
+                            TtmlNode.TAG_DIV -> {
+                                if (insideBody && !hasTime) {
+                                    if (hasTimeAttribute(parser)) {
+                                        hasTime = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    XmlPullParser.END_TAG -> {
+                        val tagName = parser.name.lowercase().substringAfterLast(":")
+                        if (tagName == TtmlNode.TAG_BODY) {
+                            insideBody = false
+                        }
                     }
                 }
+                event = parser.next()
             }
-            event = parser.next()
-        }
-        foundTt && foundBody
-    } catch (_: Exception) {
-        false
-       }
-   }
 
-    /**
-     * Main entry point for parsing TTML content using [XmlPullParser].
-     * It builds a [TtmlNodeTree] by processing start and end tags.
-     * The tree is then converted into [SyncedLyrics].
-     */
-    override fun parse(reader: Reader, trackLength: Long, ignoreBlankLines: Boolean): SyncedLyrics? {
-        try {
-            // 🌟 修复 2：在解析前先暴力清洗一遍流里的隐形 BOM 字符
+            if (foundTt && hasParagraphs) {
+                LyricsInfo.Valid(actuallySynced = hasTime)
+            } else {
+                LyricsInfo.Invalid
+            }
+        } catch (_: Exception) {
+            LyricsInfo.Invalid
+        }
+    }
+
+    override fun parseAsPlain(reader: Reader): String? {
+        return try {
             val cleanContent = reader.readText().replace("\uFEFF", "").trim()
             if (cleanContent.isEmpty()) return null
 
-            val parser = XmlPullParserFactory.newInstance().newPullParser()
-            parser.setInput(java.io.StringReader(cleanContent))
+            val parser = XmlPullParserFactory.newInstance().apply {
+                isNamespaceAware = false
+            }.newPullParser().apply {
+                setInput(StringReader(cleanContent))
+            }
+
+            val builder = StringBuilder()
+            var insideBody = false
+            var insideParagraph = false
+
+            var event = parser.eventType
+            while (event != XmlPullParser.END_DOCUMENT) {
+                when (event) {
+                    XmlPullParser.START_TAG -> {
+                        val tagName = parser.name.lowercase().substringAfterLast(":")
+                        when (tagName) {
+                            TtmlNode.TAG_BODY -> insideBody = true
+                            TtmlNode.TAG_PARAGRAPH -> {
+                                if (insideBody) {
+                                    insideParagraph = true
+                                }
+                            }
+                        }
+                    }
+
+                    XmlPullParser.TEXT -> {
+                        if (insideBody && insideParagraph) {
+                            val text = parser.text.trim()
+                            if (text.isNotEmpty()) {
+                                builder.append(text)
+                            }
+                        }
+                    }
+
+                    XmlPullParser.END_TAG -> {
+                        val tagName = parser.name.lowercase().substringAfterLast(":")
+                        when (tagName) {
+                            TtmlNode.TAG_PARAGRAPH -> {
+                                if (insideBody) {
+                                    insideParagraph = false
+                                    builder.appendLine()
+                                }
+                            }
+
+                            TtmlNode.TAG_DIV -> builder.appendLine()
+                            TtmlNode.TAG_BODY -> insideBody = false
+                        }
+                    }
+                }
+                event = parser.next()
+            }
+
+            parser.setInput(null)
+
+            val result = builder.toString().trim()
+            result.ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun parse(reader: Reader, trackLength: Long, ignoreBlankLines: Boolean): SyncedLyrics? {
+        try {
+            // 🌟 防御净化
+            val cleanContent = reader.readText().replace("\uFEFF", "").trim()
+            if (cleanContent.isEmpty()) return null
+
+            val parser = XmlPullParserFactory.newInstance().apply {
+                isNamespaceAware = false
+            }.newPullParser().apply {
+                setInput(StringReader(cleanContent))
+            }
 
             val nodeTree = TtmlNodeTree()
             var eventType = parser.eventType
@@ -90,29 +181,34 @@ class TtmlLyricsParser : LyricsParser {
                                     type = parser.getAttributeValue(null, "type")
                                 )
                             }
+
                             TtmlNode.TAG_TRANSLITERATION -> {
                                 val lang = parser.getAttributeValue(null, "xml:lang")
                                 if (nodeTree.createTransliteration(lang) == null) {
                                     throw XmlPullParserException("transliteration format isn't valid")
                                 }
                             }
+
                             TtmlNode.TAG_TRANSLATION -> {
                                 val lang = parser.getAttributeValue(null, "xml:lang")
-                                // 🌟 修复 3：移除对 type="subtitle" 的硬性限制，改抛异常为 Log 警告平滑跳过
+                                // 🌟 容错增强：跳过不标准的翻译块，防止整首崩溃
                                 if (lang != null && nodeTree.createTranslation(lang) == null) {
                                     Log.w("TtmlLyricsParser", "Translation format skipped or invalid for lang: $lang")
                                 }
                             }
+
                             TtmlNode.TAG_TEXT -> {
                                 val key = parser.getAttributeValue(null, "for")
                                 if (!nodeTree.prepareAccompanimentText(key)) break
                             }
+
                             TtmlNode.TAG_BODY -> {
                                 val hasRoot = nodeTree.addRoot(
                                     TtmlNode.buildBody(parser.getTimeAttribute("dur"))
                                 )
                                 if (!hasRoot) break
                             }
+
                             TtmlNode.TAG_DIV -> {
                                 val openSection = nodeTree.openSection(
                                     TtmlNode.buildSection(
@@ -123,6 +219,7 @@ class TtmlLyricsParser : LyricsParser {
                                 )
                                 if (!openSection && nodeTree.hasRoot) break
                             }
+
                             TtmlNode.TAG_PARAGRAPH -> {
                                 val agentAttribute = parser.getAttributeValue(null, "ttm:agent")
                                 val openLine = nodeTree.openLine(
@@ -136,6 +233,7 @@ class TtmlLyricsParser : LyricsParser {
                                 )
                                 if (!openLine && nodeTree.hasRoot) break
                             }
+
                             TtmlNode.TAG_SPAN -> {
                                 val role = parser.getAttributeValue(null, "ttm:role")
                                 val lang = parser.getAttributeValue(null, "xml:lang")
@@ -189,10 +287,11 @@ class TtmlLyricsParser : LyricsParser {
                     XmlPullParser.TEXT -> {
                         nodeTree.setText(parser.text)
                     }
-                } 
+                }
                 eventType = parser.next()
             }
             nodeTree.close()
+            parser.setInput(null)
             return nodeTree.toLyrics(trackLength)
         } catch (e: Exception) {
             Log.e("TtmlLyricsParser", "Couldn't parse TTML lyrics", e)
@@ -201,6 +300,16 @@ class TtmlLyricsParser : LyricsParser {
     }
 
     private fun isSupportedTag(name: String?) = TtmlNode.isSupportedTag(name)
+
+    private fun hasTimeAttribute(parser: XmlPullParser): Boolean {
+        for (i in 0 until parser.attributeCount) {
+            val attrName = parser.getAttributeName(i).lowercase().substringAfterLast(":")
+            if (attrName in setOf("begin", "dur", "end")) {
+                return true
+            }
+        }
+        return false
+    }
 
     private fun XmlPullParser.getTimeAttribute(name: String): Long {
         try {
@@ -214,54 +323,46 @@ class TtmlLyricsParser : LyricsParser {
         return -1
     }
 
-    /**
-     * Parses time expressions from TTML attributes.
-     * Supports:
-     * - Simple seconds: `12.34`
-     * - Complex clock time: `00:12:34.56`
-     * - Offset time with units: `100ms`, `2.5s`, `1m`
-     */
-    // 2. 替换 parseTimeExpression 方法（精准补齐 3 位毫秒）
-   @Throws(XmlPullParserException::class)
-   private fun parseTimeExpression(time: String?): Long {
-    if (time == null) return -1
+    @Throws(XmlPullParserException::class)
+    private fun parseTimeExpression(time: String?): Long {
+        if (time == null) return -1
 
-    var matcher = CLOCK_TIME_COMPLEX.matcher(time)
-    if (matcher.matches()) {
-        val hours = matcher.group(1)?.toLong() ?: 0L
-        val minutes = matcher.group(2)?.toLong() ?: 0L
-        val seconds = matcher.group(3)?.toLong() ?: 0L
-        val fractionStr = matcher.group(4)
-        
-        // 🌟 严谨修复：右侧补齐 3 位 '0'。将 .5 秒正确转换为 500 毫秒，.05 转换为 50 毫秒
-        val millis = if (fractionStr != null) {
-            fractionStr.padEnd(3, '0').take(3).toLongOrNull() ?: 0L
-        } else 0L
+        var matcher = CLOCK_TIME_COMPLEX.matcher(time)
+        if (matcher.matches()) {
+            val hours = matcher.group(1)?.toLong() ?: 0L
+            val minutes = matcher.group(2)?.toLong() ?: 0L
+            val seconds = matcher.group(3)?.toLong() ?: 0L
+            val fractionStr = matcher.group(4)
+            
+            // 🌟 核心算法修复：右侧补齐 3 位 '0'，严防时间轴坍塌
+            val millis = if (fractionStr != null) {
+                fractionStr.padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+            } else 0L
 
-        return (hours * 3600_000L) + (minutes * 60_000L) + (seconds * 1000L) + millis
-    }
-
-    matcher = CLOCK_TIME_SIMPLE.matcher(time)
-    if (matcher.matches()) {
-        val seconds = matcher.group(1)?.toLongOrNull() ?: 0L
-        val millis = matcher.group(2)?.padEnd(3, '0')?.take(3)?.toLongOrNull() ?: 0L
-        return (seconds * 1000L) + millis
-    }
-
-    matcher = OFFSET_TIME.matcher(time)
-    if (matcher.matches()) {
-        val timeValue = matcher.group(1)?.toDouble() ?: 0.0
-        val unit = matcher.group(2)
-        return when (unit) {
-            "h" -> (timeValue * 3600_000).toLong()
-            "m" -> (timeValue * 60_000).toLong()
-            "s" -> (timeValue * 1_000).toLong()
-            "ms" -> timeValue.toLong()
-            else -> 0L
+            return (hours * 3600_000L) + (minutes * 60_000L) + (seconds * 1000L) + millis
         }
+
+        matcher = CLOCK_TIME_SIMPLE.matcher(time)
+        if (matcher.matches()) {
+            val seconds = matcher.group(1)?.toLongOrNull() ?: 0L
+            val millis = matcher.group(2)?.padEnd(3, '0')?.take(3)?.toLongOrNull() ?: 0L
+            return (seconds * 1000L) + millis
+        }
+
+        matcher = OFFSET_TIME.matcher(time)
+        if (matcher.matches()) {
+            val timeValue = matcher.group(1)?.toDouble() ?: 0.0
+            val unit = matcher.group(2)
+            return when (unit) {
+                "h" -> (timeValue * 3600_000).toLong()
+                "m" -> (timeValue * 60_000).toLong()
+                "s" -> (timeValue * 1_000).toLong()
+                "ms" -> timeValue.toLong()
+                else -> 0L
+            }
+        }
+        throw XmlPullParserException("Malformed time expression: $time")
     }
-    throw XmlPullParserException("Malformed time expression: $time")
-}
 
     companion object {
         private val CLOCK_TIME_SIMPLE = Pattern.compile("^(\\d+)(?:\\.(\\d{1,3}))?$")

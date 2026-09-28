@@ -1,7 +1,5 @@
 package com.mardous.booming.ui.screen.lyrics
 
-import com.mardous.booming.util.FileTypeVerifier
-import com.mardous.booming.util.FileUtil
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
@@ -9,6 +7,7 @@ import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.graphics.Typeface
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -23,7 +22,6 @@ import androidx.lifecycle.viewModelScope
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.BackgroundEffect
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Key
-import com.mardous.booming.data.local.lyrics.InstrumentalDetector
 import com.mardous.booming.data.model.Song
 import com.mardous.booming.data.model.lyrics.LyricsSource
 import com.mardous.booming.data.model.lyrics.RawLyrics
@@ -33,6 +31,8 @@ import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.extensions.files.belongsTo
 import com.mardous.booming.extensions.media.isArtistNameUnknown
 import com.mardous.booming.extensions.utilities.sanitize
+import com.mardous.booming.util.FileTypeVerifier
+import com.mardous.booming.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Job
@@ -48,7 +48,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import com.mardous.booming.core.model.lyrics.LyricsViewSettings.Mode as LyricsViewMode
 
-// ?? 新增：导入目标枚举，区分常规字体和加粗字体
 enum class FontTarget {
     REGULAR,
     BOLD
@@ -62,8 +61,6 @@ class LyricsViewModel(
     private val preferences: SharedPreferences,
     private val repository: LyricsRepository
 ) : AndroidViewModel(application), OnSharedPreferenceChangeListener {
-
-    private var instrumentalDetector: InstrumentalDetector
 
     private val _lyricsUiState = MutableStateFlow<LyricsUiState>(LyricsUiState.Empty(-1))
     val lyricsUiState = _lyricsUiState.asStateFlow()
@@ -89,7 +86,6 @@ class LyricsViewModel(
     private var lyricsJob: Job? = null
 
     init {
-        instrumentalDetector = createInstrumentalDetector()
         preferences.registerOnSharedPreferenceChangeListener(this)
     }
 
@@ -148,7 +144,6 @@ class LyricsViewModel(
         }
     }
 
-    // ?? 完美融入作者最新更新：传递 providers 选择列表并无视全局网络设置
     fun downloadLyrics(song: Song, title: String, artist: String, providers: List<LyricsProvider>) =
         viewModelScope.launch(IO) {
             val uiState = _lyricsEditorUiState.updateAndGet {
@@ -180,7 +175,6 @@ class LyricsViewModel(
         repository.deleteAllLyrics()
     }
 
-    // ?? 升级版字体导入：融合你的 FontTarget 参数与作者的安全审查
     fun importCustomFont(context: Context, uri: Uri, target: FontTarget = FontTarget.REGULAR) = liveData(IO) {
         try {
             val targetName = target.name.lowercase()
@@ -194,12 +188,10 @@ class LyricsViewModel(
                     } else null
                 } ?: defaultName
 
-            // 作者新版文件名清洗
             val fileName = File(rawFileName).name.sanitize().ifBlank { defaultName }
 
             var isValid = fileName.lowercase().endsWith(".ttf") || fileName.lowercase().endsWith(".otf")
 
-            // ?? 作者新版：调用独立验证器替代本地硬编码 Hex 匹配
             if (isValid) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     isValid = with(FileTypeVerifier) { input.isFontFile() }
@@ -213,7 +205,6 @@ class LyricsViewModel(
 
             val targetPrefKey = if (target == FontTarget.BOLD) PREF_CUSTOM_FONT_BOLD else PREF_CUSTOM_FONT_REGULAR
 
-            // ?? 清理旧的字重物理文件
             val oldPath = preferences.getString(targetPrefKey, null)
             if (!oldPath.isNullOrBlank()) {
                 val oldFile = File(oldPath)
@@ -223,7 +214,7 @@ class LyricsViewModel(
             }
 
             val outFile = File(fontsDir, "font_${targetName}_$fileName")
-            if (!outFile.belongsTo(fontsDir)) { // 作者防穿越检查
+            if (!outFile.belongsTo(fontsDir)) { 
                 emit(false)
                 return@liveData
             }
@@ -234,12 +225,10 @@ class LyricsViewModel(
                 }
             }
 
-            // ?? 存储配置
             preferences.edit(commit = true) {
                 putBoolean(Key.USE_CUSTOM_FONT, true)
                 putString(targetPrefKey, outFile.absolutePath)
                 
-                // 为了兼容旧版逻辑，如果是导入 Regular，同时更新一下旧 Key
                 if (target == FontTarget.REGULAR) {
                     putString(Key.SELECTED_CUSTOM_FONT, outFile.absolutePath)
                 }
@@ -262,18 +251,14 @@ class LyricsViewModel(
             
             _lyricsUiState.value = LyricsUiState.Loading(song.id)
 
-            // 🌟 新增：拦截电台流，为其加载专属的 EPG 节目单
+            // 🌟 拦截电台流，注入 EPG 节目单
             val streamUrl = song.data
             val isRadioStream = song.duration <= 0L && streamUrl.startsWith("http")
             
             if (isRadioStream) {
-                // 1. 重置 ICY 状态
                 com.mardous.booming.data.local.lyrics.RadioEpgFetcher.currentIcyMetadata.value = ""
-                
-                // 2. 获取纯净排版格式的节目单
                 val baseEpgText = com.mardous.booming.data.local.lyrics.RadioEpgFetcher.fetchEpgForRadio(song.title)
                 
-                // 3. 响应式监听实时 ICY 歌名并刷新面板
                 com.mardous.booming.data.local.lyrics.RadioEpgFetcher.currentIcyMetadata.collect { icyText ->
                     val finalDisplayText = if (icyText.isNotBlank()) {
                         "$baseEpgText\n\n🎶 当前播放：$icyText"
@@ -288,7 +273,7 @@ class LyricsViewModel(
                 return@launch
             }
 
-            // 常规本地歌曲的歌词加载逻辑（保留不变）
+            // 作者新版架构的获取方式
             val lyricsState = getBestLyricsFromSources(
                 song = song,
                 sources = listOf(
@@ -319,53 +304,19 @@ class LyricsViewModel(
         sources: List<LyricsSource>
     ): LyricsUiState = withContext(IO) {
         var plainLyrics: String? = null
-        if (instrumentalDetector.byTitle(song.title)) {
-            return@withContext LyricsUiState.Instrumental(song.id)
-        }
         for (source in sources) {
-            when (source) {
-                LyricsSource.File -> {
-                    val fileLyrics = repository.fileLyrics(song)
-                    if (fileLyrics != null) {
-                        val lyrics = repository.parseRawLyrics(song, fileLyrics)
-                        if (lyrics?.hasContent == true) {
-                            return@withContext LyricsUiState.Synced(song.id, lyrics)
-                        }
-                    }
-                }
-
-                LyricsSource.Embedded -> {
-                    val embeddedLyrics = repository.embeddedLyrics(song)
-                    if (embeddedLyrics != null) {
-                        if (instrumentalDetector.byLyrics(embeddedLyrics.lyrics)) {
-                            return@withContext LyricsUiState.Instrumental(song.id)
-                        }
-                        val lyrics = repository.parseRawLyrics(song, embeddedLyrics)
-                        if (lyrics?.hasContent == true) {
-                            return@withContext LyricsUiState.Synced(song.id, lyrics)
-                        } else {
-                            if (plainLyrics.isNullOrEmpty()) {
-                                plainLyrics = embeddedLyrics.lyrics
-                            }
-                        }
-                    }
-                }
-
-                LyricsSource.Downloaded -> {
-                    val downloadedLyrics = repository.storedLyrics(song, true)
-                    if (downloadedLyrics != null) {
-                        if (downloadedLyrics.instrumental) {
-                            return@withContext LyricsUiState.Instrumental(song.id)
-                        }
-                        val lyrics = repository.parseRawLyrics(song, downloadedLyrics)
-                        if (lyrics?.hasContent == true) {
-                            return@withContext LyricsUiState.Synced(song.id, lyrics)
-                        } else {
-                            if (plainLyrics.isNullOrEmpty()) {
-                                plainLyrics = downloadedLyrics.lyrics
-                            }
-                        }
-                    }
+            val rawLyrics = when (source) {
+                LyricsSource.File -> repository.fileLyrics(song)
+                LyricsSource.Embedded -> repository.embeddedLyrics(song)
+                LyricsSource.Downloaded -> repository.storedLyrics(song, true)
+            } ?: continue
+            
+            when (val parsed = repository.parseRawLyrics(song, rawLyrics)) {
+                is com.mardous.booming.data.model.lyrics.ParsedLyrics.Instrumental -> return@withContext LyricsUiState.Instrumental(song.id)
+                is com.mardous.booming.data.model.lyrics.ParsedLyrics.Synced -> return@withContext LyricsUiState.Synced(song.id, parsed.lyrics)
+                is com.mardous.booming.data.model.lyrics.ParsedLyrics.Plain -> if (plainLyrics.isNullOrEmpty()) plainLyrics = parsed.lyrics
+                is com.mardous.booming.data.model.lyrics.ParsedLyrics.Empty -> {
+                    Log.d("LyricsViewModel", "No lyrics found for song ${song.data} in source $source")
                 }
             }
         }
@@ -375,13 +326,12 @@ class LyricsViewModel(
         return@withContext LyricsUiState.Empty(song.id)
     }
 
-    // ?? 你的 createViewSettings (维持了原本注释掉 if (!mode.isFull) 的行为与双字重合并算法)
     private fun createViewSettings(mode: LyricsViewMode): LyricsViewSettings {
         val background: BackgroundEffect =
-            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { // 本地：移除了 if (!mode.isFull)
+            when (preferences.getString(Key.BACKGROUND_EFFECT, null)) { 
                 "gradient" -> BackgroundEffect.Gradient
                 "blur" -> BackgroundEffect.Blur
-                "aurora" -> BackgroundEffect.Aurora // 你的本地新增枚举
+                "aurora" -> BackgroundEffect.Aurora 
                 else -> BackgroundEffect.None
             }
         val enableSyllableLyrics = preferences.getBoolean(Key.ENABLE_SYLLABLE_LYRICS, false)
@@ -393,7 +343,6 @@ class LyricsViewModel(
         val blurEffect = !background.isNone && preferences.getBoolean(Key.BLUR_EFFECT, false)
         val shadowEffect = !background.isNone && preferences.getBoolean(Key.SHADOW_EFFECT, false)
         
-        // ?? 重构字体构建逻辑：智能组合原生双字重
         val fontFamily: FontFamily = if (preferences.getBoolean(Key.USE_CUSTOM_FONT, false)) {
             try {
                 val regularPath = preferences.getString(PREF_CUSTOM_FONT_REGULAR, null)
@@ -435,7 +384,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = syncedFontSize.sp,
             fontWeight = if (syncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // ?? 兜底保障：哪怕用户只导了一个常规字体，这行也能让它自动算法加粗！
+            fontSynthesis = FontSynthesis.Weight,
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         val unsyncedBoldFont = preferences.getBoolean(Key.UNSYNCED_BOLD_FONT, false)
@@ -443,7 +392,7 @@ class LyricsViewModel(
             fontFamily = fontFamily,
             fontSize = unsyncedFontSize.sp,
             fontWeight = if (unsyncedBoldFont) FontWeight.Bold else FontWeight.Normal,
-            fontSynthesis = FontSynthesis.Weight, // 同上
+            fontSynthesis = FontSynthesis.Weight, 
             lineHeight = (1f + (lineSpacing / 100f)).em
         )
         
@@ -466,13 +415,11 @@ class LyricsViewModel(
         )
     }
     
-    // ?? 新增：智能时间轴平移算法
     fun shiftTimeline(content: String, offsetMs: Long): String {
         if (offsetMs == 0L || content.isBlank()) return content
 
         var newContent = content
 
-        // 1. 处理 LRC 时间轴 [mm:ss.xx] 或 [mm:ss.xxx]
         val lrcRegex = Regex("""\[(\d{2,}):(\d{2})\.(\d{2,3})\]""")
         newContent = lrcRegex.replace(newContent) { match ->
             val m = match.groupValues[1].toLong()
@@ -492,7 +439,6 @@ class LyricsViewModel(
             }
         }
 
-        // 2. 处理 TTML 时间轴 (HH:MM:SS.mmm)
         val ttmlRegex = Regex("""(begin|end)="(\d{2,}):(\d{2}):(\d{2})\.(\d{3})"""")
         newContent = ttmlRegex.replace(newContent) { match ->
             val attr = match.groupValues[1]
@@ -515,7 +461,6 @@ class LyricsViewModel(
         return newContent
     }
 
-    // ?? 新增：完全独立的本地文件覆盖逻辑，不走原作者复杂的数据通道
     fun saveLocalLyricsFile(context: android.content.Context, song: Song, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -533,7 +478,6 @@ class LyricsViewModel(
                 
                 for (name in possibleNames) {
                     val targetFile = java.io.File(parentDir, "$name$ext")
-                    // 如果存在同名文件，或者当前尝试保存的就是主文件名，直接覆盖
                     if (targetFile.exists() || name == songFile.nameWithoutExtension) {
                         targetFile.writeText(content)
                         saved = true
@@ -569,8 +513,6 @@ class LyricsViewModel(
                     _fullLyricsViewSettings.value = createViewSettings(LyricsViewMode.Full)
                 }
             }
-
-            // ?? 监听双字重 Key 变动，实时刷新界面
             PREF_CUSTOM_FONT_REGULAR,
             PREF_CUSTOM_FONT_BOLD,
             Key.USE_CUSTOM_FONT,
@@ -600,27 +542,10 @@ class LyricsViewModel(
             Key.UNSYNCED_FONT_SIZE_FULL -> {
                 _fullLyricsViewSettings.value = createViewSettings(LyricsViewMode.Full)
             }
-            INSTRUMENTAL_TRACK_IDENTIFIERS,
-            MARK_INSTRUMENTAL_BY_TITLE -> {
-                instrumentalDetector = createInstrumentalDetector()
-            }
         }
     }
 
-    private fun createInstrumentalDetector() =
-        InstrumentalDetector(
-            identifiers = preferences.getString(INSTRUMENTAL_TRACK_IDENTIFIERS, null)
-                ?.split(",").orEmpty().toSet(),
-            markByTitle = preferences.getBoolean(MARK_INSTRUMENTAL_BY_TITLE, false),
-            maxLength = INSTRUMENTAL_IDENTIFIER_MAX_LENGTH
-        )
-
     companion object {
-        private const val INSTRUMENTAL_IDENTIFIER_MAX_LENGTH = 50
-        private const val INSTRUMENTAL_TRACK_IDENTIFIERS = "instrumental_track_identifiers"
-        private const val MARK_INSTRUMENTAL_BY_TITLE = "mark_instrumental_tracks_by_title"
-        
-        // ?? 存储双字重路径的常量 Key
         const val PREF_CUSTOM_FONT_REGULAR = "selected_custom_font_regular"
         const val PREF_CUSTOM_FONT_BOLD = "selected_custom_font_bold"
     }
