@@ -7,6 +7,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.mardous.booming.data.repository.LyricsRepository
 import com.mardous.booming.data.model.Song
+import com.mardous.booming.data.model.lyrics.ParsedLyrics // ?? 新增导入作者的新类
 import com.mardous.booming.data.model.lyrics.SyncedLyrics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -96,8 +97,12 @@ class BluetoothLyricManager(
             fetchJob = coroutineScope.launch(Dispatchers.IO) {
                 try {
                     val rawLyrics = lyricsRepository.fileLyrics(song) ?: lyricsRepository.embeddedLyrics(song) ?: lyricsRepository.storedLyrics(song, allowDownload = true)
+                    
+                    // ?? 核心修复 1：适配作者的 ParsedLyrics 密封类
                     val parsedLyrics = rawLyrics?.let { lyricsRepository.parseRawLyrics(song, it) }
-                    withContext(Dispatchers.Main) { handleLyricsResult(parsedLyrics) }
+                    val syncedLyrics = (parsedLyrics as? ParsedLyrics.Synced)?.lyrics
+
+                    withContext(Dispatchers.Main) { handleLyricsResult(syncedLyrics) }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { handleLyricsResult(null) }
                 }
@@ -189,7 +194,6 @@ class BluetoothLyricManager(
         val currentItem = player.getMediaItemAt(currentIndex)
         if (currentItem.mediaId != hookedMediaId) return
 
-        // 🌟 深度保护：继承所有已有的 CarWith 装甲 Extras，绝不抹除
         val extras = Bundle(currentItem.mediaMetadata.extras ?: Bundle.EMPTY)
         val cleanTitle = extras.getString("BT_ORIGINAL_TITLE") ?: currentItem.mediaMetadata.title?.toString() ?: "未知歌曲"
         val cleanArtist = extras.getString("BT_ORIGINAL_ARTIST") ?: currentItem.mediaMetadata.artist?.toString() ?: "未知歌手"

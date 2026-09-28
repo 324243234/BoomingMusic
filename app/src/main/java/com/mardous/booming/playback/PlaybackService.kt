@@ -89,6 +89,7 @@ import com.mardous.booming.data.local.MediaStoreObserver
 import com.mardous.booming.data.local.ReplayGainTagExtractor
 import com.mardous.booming.data.model.QueueSong
 import com.mardous.booming.data.model.Song
+import com.mardous.booming.data.model.lyrics.ParsedLyrics // 🌟 导入新类
 import com.mardous.booming.data.model.network.NetworkFeature
 import com.mardous.booming.data.model.network.ScrobblingService
 import com.mardous.booming.data.repository.LyricsRepository
@@ -159,8 +160,8 @@ class PlaybackService :
     private val queueStateHolder: QueueStateHolder by inject()
     private val isInTimelineUpdate = AtomicBoolean(false)
     private var generateQueueJob: Job? = null
-	
-	// 🌟 L0 级歌词内存缓存
+    
+    // 🌟 L0 级歌词内存缓存
     private var cachedLrcSongId: Long = -1L
     private var cachedLrcText: String = ""
     private var cachedLrcRadioUrl: String = ""
@@ -742,7 +743,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 CarWith 开关拦截 1：如果未开启同步，物理屏蔽车机收藏指令
             "ucar.media.action.COLLECT" -> serviceScope.future(Main) {
                 if (!preferences.getBoolean("enable_carwith_sync", false)) {
                     return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
@@ -752,7 +752,6 @@ class PlaybackService :
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
 
-            // 🌟 CarWith 开关拦截 2：如果未开启同步，物理屏蔽车机循环模式指令
             "ucar.media.action.PLAY_MODE" -> serviceScope.future(Main) {
                 if (!preferences.getBoolean("enable_carwith_sync", false)) {
                     return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
@@ -1164,14 +1163,12 @@ class PlaybackService :
                 }
             }
 
-            // 🌟 CarWith 开关拦截 3：物理开关状态监听与深层净化
             "enable_carwith_sync" -> {
                 val enabled = preferences.getBoolean(key, false)
                 if (enabled) {
                     updateCarWithMetadata()
                 } else {
                     carWithUpdateJob?.cancel()
-					// 🌟 清空缓存
                     cachedLrcSongId = -1L
                     cachedLrcText = ""
                     cachedLrcRadioUrl = ""
@@ -1181,7 +1178,6 @@ class PlaybackService :
                             val currentItem = player.getMediaItemAt(currentIndex)
                             val currentExtras = currentItem.mediaMetadata.extras
                             if (currentExtras != null) {
-                                // 瞬间抽离所有属于 CarWith 的污染数据包
                                 val cleanedExtras = Bundle(currentExtras).apply {
                                     remove("ucar.media.metadata.PLAY_MODE")
                                     remove("ucar.media.metadata.COLLECT_STATE")
@@ -1203,6 +1199,7 @@ class PlaybackService :
             }
 
             "preferred_lyrics_file_format", "lyrics_show_translation" -> {
+                cachedLrcSongId = -1L
                 updateCarWithMetadata()
             }
         }
@@ -1436,61 +1433,61 @@ class PlaybackService :
     }
 
     private fun prepareEqualizerAndSoundSettings() {
-    serviceScope.launch {
-        equalizerManager.initializeEqualizer()
-    }
-    serviceScope.launch {
-        equalizerManager.liveSoundSettings.map { it.volume }.collect { volume ->
-            cancelSleepTimerFadeOut()
-            player.volume = volume.currentVolume
+        serviceScope.launch {
+            equalizerManager.initializeEqualizer()
         }
-    }
-    serviceScope.launch {
-        equalizerManager.soundSettings.map { it.replayGain.mode }.distinctUntilChanged()
-            .collect { mode -> if (mode.isOn) submitReplayGain() }
-    }
-    serviceScope.launch {
-        equalizerManager.soundSettings.map { it.audioOffload }.collect { audioOffloadingEnabled ->
-            player.trackSelectionParameters = player.trackSelectionParameters
-                .buildUpon()
-                .setAudioOffloadPreferences(
-                    AudioOffloadPreferences.Builder()
-                        .setAudioOffloadMode(
-                            if (audioOffloadingEnabled)
-                                AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
-                            else AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
-                        )
-                        .setIsGaplessSupportRequired(true) // 合并作者的新增项
-                        .setIsSpeedChangeSupportRequired(true)
-                        .build()
-                )
-                .build()
+        serviceScope.launch {
+            equalizerManager.liveSoundSettings.map { it.volume }.collect { volume ->
+                cancelSleepTimerFadeOut()
+                player.volume = volume.currentVolume
+            }
         }
-    }
-    serviceScope.launch {
-        equalizerManager.soundSettings.map { it.skipSilence }.collect {
-            player.exoPlayer.skipSilenceEnabled = it
+        serviceScope.launch {
+            equalizerManager.soundSettings.map { it.replayGain.mode }.distinctUntilChanged()
+                .collect { mode -> if (mode.isOn) submitReplayGain() }
         }
-    }
-    serviceScope.launch {
-        equalizerManager.liveSoundSettings.map { it.tempo }.collect {
-            player.playbackParameters = PlaybackParameters(it.speed, it.actualPitch)
+        serviceScope.launch {
+            equalizerManager.soundSettings.map { it.audioOffload }.collect { audioOffloadingEnabled ->
+                player.trackSelectionParameters = player.trackSelectionParameters
+                    .buildUpon()
+                    .setAudioOffloadPreferences(
+                        AudioOffloadPreferences.Builder()
+                            .setAudioOffloadMode(
+                                if (audioOffloadingEnabled)
+                                    AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
+                                else AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
+                            )
+                            .setIsGaplessSupportRequired(true)
+                            .setIsSpeedChangeSupportRequired(true)
+                            .build()
+                    )
+                    .build()
+            }
         }
-    }
-    serviceScope.launch {
-        audioOutputObserver.systemVolumeState.collect { systemVolume ->
-            if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
-                if (isPlaying && systemVolume.currentVolume <= 0f) {
-                    player.pause()
-                    pausedByZeroVolume = true
-                } else if (pausedByZeroVolume && systemVolume.currentVolume >= 0.1f) {
-                    player.play()
-                    pausedByZeroVolume = false
+        serviceScope.launch {
+            equalizerManager.soundSettings.map { it.skipSilence }.collect {
+                player.exoPlayer.skipSilenceEnabled = it
+            }
+        }
+        serviceScope.launch {
+            equalizerManager.liveSoundSettings.map { it.tempo }.collect {
+                player.playbackParameters = PlaybackParameters(it.speed, it.actualPitch)
+            }
+        }
+        serviceScope.launch {
+            audioOutputObserver.systemVolumeState.collect { systemVolume ->
+                if (pauseOnZeroVolume && persistentStorage.restorationState.isRestored) {
+                    if (isPlaying && systemVolume.currentVolume <= 0f) {
+                        player.pause()
+                        pausedByZeroVolume = true
+                    } else if (pausedByZeroVolume && systemVolume.currentVolume >= 0.1f) {
+                        player.play()
+                        pausedByZeroVolume = false
+                    }
                 }
             }
         }
     }
-}
 
     private fun updateEqualizerSessionState(isPlaying: Boolean) {
         eqStateHandler.removeCallbacksAndMessages(null)
@@ -1520,45 +1517,44 @@ class PlaybackService :
 
     private var bluetoothConnectedRegistered = false
     private val bluetoothConnectedIntentFilter = IntentFilter().apply {
-    addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
-    addAction(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)
-}
-
-private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent?) {
-        Log.d("PlaybackService", "received bluetooth action: intent=$intent")
-        when (intent?.action) {
-            BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
-                val state = intent.getIntExtra(BluetoothA2dp.EXTRA_STATE, -1)
-                val previousState = intent.getIntExtra(BluetoothA2dp.EXTRA_PREVIOUS_STATE, -1)
-                if (state == BluetoothA2dp.STATE_CONNECTED) {
-                    if (Preferences.isResumeOnConnect(bluetooth = true)) {
-                        player.play()
-                    }
-                } else if (state == BluetoothA2dp.STATE_DISCONNECTED &&
-                    previousState == BluetoothA2dp.STATE_CONNECTED) {
-                    if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
-                        player.pause()
+        addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+        addAction(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)
+    }
+    private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            Log.d("PlaybackService", "received bluetooth action: intent=$intent")
+            when (intent?.action) {
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothA2dp.EXTRA_STATE, -1)
+                    val previousState = intent.getIntExtra(BluetoothA2dp.EXTRA_PREVIOUS_STATE, -1)
+                    if (state == BluetoothA2dp.STATE_CONNECTED) {
+                        if (Preferences.isResumeOnConnect(bluetooth = true)) {
+                            if (!player.isPlaying) player.play()
+                        }
+                    } else if (state == BluetoothA2dp.STATE_DISCONNECTED &&
+                        previousState == BluetoothA2dp.STATE_CONNECTED) {
+                        if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
+                            if (player.isPlaying) player.pause()
+                        }
                     }
                 }
-            }
-            BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED -> {
-                val state = intent.getIntExtra(BluetoothHeadset.EXTRA_STATE, -1)
-                val previousState = intent.getIntExtra(BluetoothHeadset.EXTRA_PREVIOUS_STATE, -1)
-                if (state == BluetoothHeadset.STATE_CONNECTED) {
-                    if (Preferences.isResumeOnConnect(bluetooth = true)) {
-                        player.play()
-                    }
-                } else if (state == BluetoothHeadset.STATE_DISCONNECTED &&
-                    previousState == BluetoothHeadset.STATE_CONNECTED) {
-                    if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
-                        player.pause()
+                BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothHeadset.EXTRA_STATE, -1)
+                    val previousState = intent.getIntExtra(BluetoothHeadset.EXTRA_PREVIOUS_STATE, -1)
+                    if (state == BluetoothHeadset.STATE_CONNECTED) {
+                        if (Preferences.isResumeOnConnect(bluetooth = true)) {
+                            if (!player.isPlaying) player.play()
+                        }
+                    } else if (state == BluetoothHeadset.STATE_DISCONNECTED &&
+                        previousState == BluetoothHeadset.STATE_CONNECTED) {
+                        if (Preferences.isPauseOnDisconnect(bluetooth = true)) {
+                            if (player.isPlaying) player.pause()
+                        }
                     }
                 }
             }
         }
     }
-}
 
     private var receivedHeadsetConnected = false
     private var headsetReceiverRegistered = false
@@ -1598,11 +1594,10 @@ private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() 
         return radioSong?.title?.ifBlank { null }
     }
 
-    // 🌟 CarWith 专用信号分发中心
+    // 🌟 CarWith 专用信号分发中心（带解包修复）
     private fun updateCarWithMetadata() {
         carWithUpdateJob?.cancel()
 
-        // 🌟 物理开关拦截
         if (!preferences.getBoolean("enable_carwith_sync", false)) {
             return
         }
@@ -1638,7 +1633,6 @@ private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() 
                         cachedLrcText
                     }
                 } else {
-                    // 🌟 L0 缓存防御盾：如果没切歌，直接秒读内存，省去成千上万次运算！
                     if (song.id != -1L && song.id == cachedLrcSongId && cachedLrcText.isNotEmpty()) {
                         cachedLrcText
                     } else {
@@ -1651,27 +1645,35 @@ private val bluetoothReceiver: BroadcastReceiver = object : BroadcastReceiver() 
                             }.getOrNull()
                         } else null
 
+                        // 🌟 核心修复 2：适配作者的 ParsedLyrics 密封类解包
                         val parsedLyrics = rawLyrics?.let { runCatching { lyricsRepository.parseRawLyrics(song, it) }.getOrNull() }
 
-                        val rawLrcText = parsedLyrics?.lines?.joinToString("\n") { line ->
-                            val timeMs = line.start
-                            val min = timeMs / 60000
-                            val sec = (timeMs % 60000) / 1000
-                            val ms = (timeMs % 1000) / 10
-                            val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
-                            val content = line.content.content 
-                            val translation = line.translation?.content
-                            
-                            if (showTranslation && !translation.isNullOrBlank()) {
-                                "$timeStr$content 「$translation」"
-                            } else {
-                                "$timeStr$content"
+                        val rawLrcText = when (parsedLyrics) {
+                            is ParsedLyrics.Synced -> {
+                                parsedLyrics.lyrics.lines.joinToString("\n") { line ->
+                                    val timeMs = line.start
+                                    val min = timeMs / 60000
+                                    val sec = (timeMs % 60000) / 1000
+                                    val ms = (timeMs % 1000) / 10
+                                    val timeStr = String.format("[%02d:%02d.%02d]", min, sec, ms)
+                                    val content = line.content.content 
+                                    val translation = line.translation?.content
+                                    
+                                    if (showTranslation && !translation.isNullOrBlank()) {
+                                        "$timeStr$content 「$translation」"
+                                    } else {
+                                        "$timeStr$content"
+                                    }
+                                }
                             }
-                        } ?: ""
+                            is ParsedLyrics.Plain -> {
+                                parsedLyrics.lyrics
+                            }
+                            else -> ""
+                        }
 
                         val safeLrc = if (rawLrcText.length > 4000) rawLrcText.substring(0, 4000) else rawLrcText
                         
-                        // 写入缓存
                         cachedLrcSongId = song.id
                         cachedLrcText = safeLrc
                         safeLrc
