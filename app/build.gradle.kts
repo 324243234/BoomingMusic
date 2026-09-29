@@ -74,7 +74,7 @@ sealed class Version(
 val currentVersion: Version = Version.Stable(
     versionMajor = 1,
     versionMinor = 4,
-    versionPatch = 1,
+    versionPatch = 2,
 )
 val currentVersionCode = currentVersion.code
 
@@ -93,7 +93,7 @@ android {
         //applicationId = "com.kugou.android.lite"
         
         // 🌟 同步作者更新：versionCode 升至 1400103
-        versionCode = 1410300
+        versionCode = 1420300
         versionName = currentVersion.name
         check(versionCode == currentVersionCode)
     }
